@@ -7,6 +7,8 @@ export interface ProductConfig {
   category: string;
   price: number;
   mockupUrl: string;
+  /** Imagen de mockup opcional para la cara trasera (si el producto es de doble cara) */
+  mockupBackUrl?: string;
   canvasWidth: number;
   canvasHeight: number;
   printArea: {
@@ -26,7 +28,8 @@ export const PRODUCTS: ProductConfig[] = [
     name: 'Playera Personalizada',
     category: 'Ropa',
     price: 24.99,
-    mockupUrl: 'https://picsum.photos/id/10/800/800', // Playera genérica
+    mockupUrl: 'https://picsum.photos/id/10/800/800', // Playera genérica (frente)
+    mockupBackUrl: 'https://picsum.photos/id/11/800/800', // Playera genérica (espalda)
     canvasWidth: 800,
     canvasHeight: 800,
     printArea: {

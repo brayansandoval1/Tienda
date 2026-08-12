@@ -8,7 +8,7 @@ import Header from '@/components/editor/Header';
 import SidebarIcons from '@/components/editor/SidebarIcons';
 import SidebarPanel from '@/components/editor/SidebarPanel';
 import TextToolbar from '@/components/editor/TextToolbar';
-import { PRODUCTS, type ProductConfig } from './products';
+import { PRODUCTS, type ProductConfig } from '@/src/config/products';
 import ViewSelector from '@/components/editor/ViewSelector';
 
 const EditorCanvas = dynamic(() => import('@/components/editor/EditorCanvas'), { ssr: false });

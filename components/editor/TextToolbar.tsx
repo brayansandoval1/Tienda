@@ -14,7 +14,6 @@ interface ObjectStyle {
 export default function TextToolbar() {
   const [isVisible, setIsVisible] = useState(false);
   const [isTextObject, setIsTextObject] = useState(false);
-  const [isImageObject, setIsImageObject] = useState(false);
   const [style, setStyle] = useState<ObjectStyle>({
     fill: '#000000',
     fontFamily: 'Arial',
@@ -53,7 +52,6 @@ export default function TextToolbar() {
       const isText = selectedObject.type === 'i-text' || selectedObject.type === 'text';
       const isImage = selectedObject.type === 'image';
       setIsTextObject(isText);
-      setIsImageObject(isImage);
 
       // Actualizar estilos con valores seguros
       setStyle({
@@ -137,16 +135,6 @@ export default function TextToolbar() {
             </select>
           </div>
         </>
-      )}
-
-      {isImageObject && (
-        <button
-          type="button"
-          onClick={() => window.dispatchEvent(new CustomEvent('editor:start-crop'))}
-          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-        >
-          ✂️ Recortar imagen
-        </button>
       )}
     </div>
   );
