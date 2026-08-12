@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TextOptions } from '../../types/product';
 import type { ProductConfig } from './products';
 
@@ -16,6 +16,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   const redoStackRef = useRef<string[]>([]);
   const isRedoingUndoRef = useRef(false);
   const isUpdatingHistory = useRef(false);
+  const [isCropping, setIsCropping] = useState(false);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -35,7 +36,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleClear: () => void,
       handleUndo: () => void,
       handleRedo: () => void,
-      handleAddShape: (e: Event) => void;
+      handleAddShape: (e: Event) => void,
+      handleStartCrop: () => void,
+      handleConfirmCrop: () => void,
+      handleCancelCrop: () => void,
+      handleCropStart: () => void,
+      handleCropEnd: () => void;
 
     // Carga dinámica de Fabric solo en el cliente
     import('fabric').then((fabricModule) => {
@@ -61,7 +67,10 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       const saveState = () => {
         if (isRedoingUndoRef.current || isUpdatingHistory.current || !fabricCanvasRef.current) return;
-        const userObjects = canvas.getObjects().filter((obj: any) => !obj.isGuide);
+        // Filtrar objetos normales excluyendo la guía y el overlay de recorte temporal
+        const userObjects = canvas
+          .getObjects()
+          .filter((obj: any) => !obj.isGuide && !obj.isCropOverlay);
         const jsonState = userObjects.map((obj: any) => obj.toJSON());
         historyRef.current.push(JSON.stringify(jsonState));
         redoStackRef.current = [];
@@ -366,6 +375,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       };
 
       handleUndo = () => {
+        cancelCropMode();
         if (historyRef.current.length <= 1) return;
         isRedoingUndoRef.current = true;
 
@@ -380,6 +390,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       };
 
       handleRedo = () => {
+        cancelCropMode();
         if (redoStackRef.current.length === 0) return;
         isRedoingUndoRef.current = true;
 
@@ -414,6 +425,140 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       };
 
       // Listener para agregar formas geométricas
+      let cropOverlayRef: any = null;
+      let targetImageRef: any = null;
+
+      // Limpia cualquier proceso de recorte activo (overlays colgados, refs y estado React)
+      const cancelCropMode = () => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
+
+        // Remover overlays de recorte que hayan quedado colgados
+        const cropOverlays = canvas.getObjects().filter((obj: any) => obj.isCropOverlay);
+        cropOverlays.forEach((obj: any) => canvas.remove(obj));
+
+        // Limpiar referencias
+        cropOverlayRef = null;
+        targetImageRef = null;
+
+        // Restablecer el estado booleano de React
+        setIsCropping(false);
+
+        canvas.requestRenderAll();
+      };
+
+      handleStartCrop = () => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
+
+        const activeObject = canvas.getActiveObject();
+        if (!activeObject || activeObject.type !== 'image') return;
+
+        targetImageRef = activeObject;
+
+        // Crear overlay de recorte sobre la imagen
+        const cropOverlay = new fabric.Rect({
+          left: activeObject.left,
+          top: activeObject.top,
+          width: activeObject.getScaledWidth(),
+          height: activeObject.getScaledHeight(),
+          fill: 'rgba(0,0,0,0.3)',
+          stroke: '#3B82F6',
+          strokeWidth: 2,
+          strokeDashArray: [6, 6],
+          cornerColor: '#FFFFFF',
+          cornerStrokeColor: '#3B82F6',
+          cornerStyle: 'circle',
+          transparentCorners: false,
+          hasRotatingPoint: false,
+          lockRotation: true,
+          isCropOverlay: true,
+        } as any);
+
+        cropOverlayRef = cropOverlay;
+        canvas.add(cropOverlay);
+        canvas.setActiveObject(cropOverlay);
+        canvas.requestRenderAll();
+
+        // Mostrar botones de confirmar/cancelar
+        window.dispatchEvent(new CustomEvent('editor:crop-mode-active'));
+      };
+
+      handleConfirmCrop = () => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas || !cropOverlayRef || !targetImageRef) return;
+
+        const img = targetImageRef;
+        const rect = cropOverlayRef;
+
+        // 1. Obtener coordenadas relativas del recuadro respecto a la imagen
+        const imgElement = img._element;
+        if (!imgElement) return;
+
+        // Calcular la escala actual de la imagen
+        const scaleX = img.scaleX || 1;
+        const scaleY = img.scaleY || 1;
+
+        // Calcular origen y tamaño del corte en píxeles reales de la imagen
+        const cropX = Math.max(0, (rect.left - img.left) / scaleX);
+        const cropY = Math.max(0, (rect.top - img.top) / scaleY);
+        const cropWidth = (rect.width * rect.scaleX) / scaleX;
+        const cropHeight = (rect.height * rect.scaleY) / scaleY;
+
+        // 2. Crear un canvas auxiliar en memoria para recortar la imagen real
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = cropWidth;
+        tempCanvas.height = cropHeight;
+        const ctx = tempCanvas.getContext('2d');
+
+        if (ctx) {
+          ctx.drawImage(
+            imgElement,
+            cropX, cropY, cropWidth, cropHeight, // Zona origen
+            0, 0, cropWidth, cropHeight          // Zona destino
+          );
+
+          const croppedDataUrl = tempCanvas.toDataURL('image/png');
+
+          // 3. Actualizar la fuente de la imagen en Fabric.js
+          img.setSrc(croppedDataUrl, () => {
+            img.set({
+              left: rect.left,
+              top: rect.top,
+              width: cropWidth,
+              height: cropHeight,
+              scaleX: scaleX,
+              scaleY: scaleY,
+            });
+            
+            // Limpiar rectángulo de recorte
+            canvas.remove(rect);
+            cropOverlayRef = null;
+            targetImageRef = null;
+
+            canvas.setActiveObject(img);
+            canvas.requestRenderAll();
+            if (typeof saveState === 'function') saveState();
+            
+            window.dispatchEvent(new CustomEvent('editor:crop-mode-inactive'));
+          });
+        }
+      };
+
+      handleCancelCrop = () => {
+        cancelCropMode();
+        window.dispatchEvent(new CustomEvent('editor:crop-mode-inactive'));
+      };
+
+      // Listeners para el estado de recorte
+      handleCropStart = () => setIsCropping(true);
+      handleCropEnd = () => setIsCropping(false);
+
+      window.addEventListener('editor:crop-mode-active', handleCropStart);
+      window.addEventListener('editor:crop-mode-inactive', handleCropEnd);
+
+
+
       handleAddShape = (e: any) => {
         const canvas = fabricCanvasRef.current;
         if (!canvas) return;
@@ -483,6 +628,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:add-shape', handleAddShape);
       window.addEventListener('editor:undo', handleUndo);
       window.addEventListener('editor:redo', handleRedo);
+      window.addEventListener('editor:start-crop', handleStartCrop);
+      window.addEventListener('editor:confirm-crop', handleConfirmCrop);
+      window.addEventListener('editor:cancel-crop', handleCancelCrop);
 
       canvas.on('object:added', saveState);
       canvas.on('object:modified', saveState);
@@ -530,18 +678,51 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       if (handleAddShape) {
         window.removeEventListener('editor:add-shape', handleAddShape);
       }
+      if (handleStartCrop) {
+        window.removeEventListener('editor:start-crop', handleStartCrop);
+      }
+      if (handleConfirmCrop) {
+        window.removeEventListener('editor:confirm-crop', handleConfirmCrop);
+      }
+      if (handleCancelCrop) {
+        window.removeEventListener('editor:cancel-crop', handleCancelCrop);
+      }
+      if (handleCropStart) {
+        window.removeEventListener('editor:crop-mode-active', handleCropStart);
+      }
+      if (handleCropEnd) {
+        window.removeEventListener('editor:crop-mode-inactive', handleCropEnd);
+      }
       if (fabricCanvasRef.current) {
         fabricCanvasRef.current.dispose();
         fabricCanvasRef.current = null;
       }
     };
-  }, []);
+  }, []); // Dependencia vacía para que se ejecute solo una vez al montar
 
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[32px] border border-slate-200 bg-[#F4F5F7] p-0 shadow-sm">
       <div className="overflow-hidden rounded-md shadow-inner">
         <canvas ref={canvasRef} width={initialProduct.canvasWidth} height={initialProduct.canvasHeight} />
       </div>
+      {isCropping && (
+        <div className="absolute top-4 z-20 flex items-center gap-3 rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur-sm">
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('editor:confirm-crop'))}
+            className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+          >
+            Confirmar Recorte
+          </button>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('editor:cancel-crop'))}
+            className="rounded-full bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200"
+          >
+            Cancelar
+          </button>
+        </div>
+      )}
     </div>
   );
 }

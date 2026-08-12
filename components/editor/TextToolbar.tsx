@@ -8,16 +8,19 @@ interface ObjectStyle {
   fontFamily?: string;
   fontSize?: number;
   isText: boolean;
+  isImage: boolean;
 }
 
 export default function TextToolbar() {
   const [isVisible, setIsVisible] = useState(false);
   const [isTextObject, setIsTextObject] = useState(false);
+  const [isImageObject, setIsImageObject] = useState(false);
   const [style, setStyle] = useState<ObjectStyle>({
     fill: '#000000',
     fontFamily: 'Arial',
     fontSize: 24,
     isText: false,
+    isImage: false,
   });
 
   useEffect(() => {
@@ -35,9 +38,17 @@ export default function TextToolbar() {
 
       setIsVisible(true);
       
-      // Verificar si es un objeto de texto
+      // Ignorar overlay de recorte
+      if (selectedObject.isCropOverlay) {
+        setIsVisible(false);
+        return;
+      }
+
+      // Verificar tipo de objeto
       const isText = selectedObject.type === 'i-text' || selectedObject.type === 'text';
+      const isImage = selectedObject.type === 'image';
       setIsTextObject(isText);
+      setIsImageObject(isImage);
 
       // Actualizar estilos con valores seguros
       setStyle({
@@ -45,6 +56,7 @@ export default function TextToolbar() {
         fontFamily: selectedObject.fontFamily ?? 'Arial',
         fontSize: selectedObject.fontSize ?? 24,
         isText: isText,
+        isImage: isImage,
       });
     };
 
@@ -120,6 +132,16 @@ export default function TextToolbar() {
             </select>
           </div>
         </>
+      )}
+
+      {isImageObject && (
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent('editor:start-crop'))}
+          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+        >
+          ✂️ Recortar imagen
+        </button>
       )}
     </div>
   );
