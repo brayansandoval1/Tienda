@@ -44,6 +44,11 @@ export default function TextToolbar() {
         return;
       }
 
+      // Asegurar que el selector de color esté VISIBLE para grupos/iconos SVG
+      if (selectedObject.type === 'group' || selectedObject.type === 'path') {
+        setIsVisible(true);
+      }
+
       // Verificar tipo de objeto
       const isText = selectedObject.type === 'i-text' || selectedObject.type === 'text';
       const isImage = selectedObject.type === 'image';

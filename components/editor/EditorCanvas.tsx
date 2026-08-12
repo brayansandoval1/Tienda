@@ -37,6 +37,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleUndo: () => void,
       handleRedo: () => void,
       handleAddShape: (e: Event) => void,
+      handleAddSVG: (e: Event) => void,
       handleStartCrop: () => void,
       handleConfirmCrop: () => void,
       handleCancelCrop: () => void,
@@ -134,12 +135,26 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       const emitSelection = () => {
         const activeObject = canvas.getActiveObject();
 
+        let fill: string | undefined = activeObject ? activeObject.get('fill') : undefined;
+
+        // Para grupos (SVG importado), tomar el color del primer hijo con relleno visible
+        if (activeObject && (activeObject.type === 'group' || activeObject._objects)) {
+          const children =
+            activeObject.getObjects && typeof activeObject.getObjects === 'function'
+              ? activeObject.getObjects()
+              : [];
+          const firstFilled = children.find(
+            (c: any) => c.fill && c.fill !== 'none' && c.fill !== 'transparent' && c.fill !== '',
+          );
+          fill = (firstFilled ? firstFilled.fill : children[0]?.fill) ?? fill;
+        }
+
         // Emitir evento unificado de cambio de selección (SIEMPRE con detail)
         window.dispatchEvent(new CustomEvent('editor:selection-changed', {
           detail: {
             selectedObject: activeObject ? {
               type: activeObject.type,
-              fill: activeObject.get('fill') ?? '#000000',
+              fill: fill ?? '#000000',
               fontFamily: activeObject.get('fontFamily'),
               fontSize: activeObject.get('fontSize'),
             } : null
@@ -157,23 +172,38 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       // --- Listeners para recibir cambios desde la barra de herramientas ---
       handleColorChange = (e: Event) => {
+        const customEvent = e as CustomEvent<{ color?: string }>;
+        const newColor = customEvent.detail?.color;
         const canvas = fabricCanvasRef.current;
-        if (!canvas) return;
+        if (!canvas || !newColor) return;
 
-        const customEvent = e as CustomEvent;
         const activeObjects = canvas.getActiveObjects();
         if (!activeObjects || activeObjects.length === 0) return;
 
-        const color = customEvent.detail?.color;
-        if (!color) return;
+        activeObjects.forEach((activeObject: any) => {
+          if (!activeObject || !activeObject.set) return;
 
-        activeObjects.forEach((obj: any) => {
-          if (obj.set) {
-            if (obj.type === 'line') {
-              obj.set({ stroke: color });
-            } else {
-              obj.set({ fill: color });
-            }
+          // Si el objeto seleccionado es un Grupo (como un SVG importado)
+          if (activeObject.type === 'group' || activeObject._objects) {
+            activeObject.forEachObject((obj: any) => {
+              if (!obj || !obj.set) return;
+              // Cambiar fill si el objeto tiene relleno original o no está transparente
+              if (obj.fill && obj.fill !== 'none' && obj.fill !== 'transparent') {
+                obj.set('fill', newColor);
+              }
+              // Cambiar stroke si es una línea o trazo con borde
+              if (obj.stroke && obj.stroke !== 'none' && obj.stroke !== 'transparent') {
+                obj.set('stroke', newColor);
+              }
+            });
+            return;
+          }
+
+          // Si es un objeto individual (Rect, Circle, Path simple o línea)
+          if (activeObject.type === 'line') {
+            activeObject.set({ stroke: newColor });
+          } else {
+            activeObject.set({ fill: newColor });
           }
         });
 
@@ -613,6 +643,41 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         });
       };
 
+      // Listener para agregar un ícono SVG desde la barra de recursos (Iconify)
+      handleAddSVG = async (e: Event) => {
+        const customEvent = e as CustomEvent<{ svgUrl?: string }>;
+        const url = customEvent.detail?.svgUrl;
+        const canvas = fabricCanvasRef.current;
+        if (!url || !canvas) return;
+
+        try {
+          // Usar fetch + loadSVGFromString para evitar bloqueos de CORS o métodos obsoletos
+          const res = await fetch(url);
+          const svgText = await res.text();
+
+          const targetCanvas = fabricCanvasRef.current;
+          if (!targetCanvas) return;
+
+          fabric.loadSVGFromString(svgText, (objects: any, options: any) => {
+            if (!fabricCanvasRef.current) return;
+            const svgGroup = fabric.util.groupSVGElements(objects, options);
+            svgGroup.set({
+              left: targetCanvas.width / 2 - 25,
+              top: targetCanvas.height / 2 - 25,
+              scaleX: 1.5,
+              scaleY: 1.5,
+            });
+
+            targetCanvas.add(svgGroup);
+            targetCanvas.setActiveObject(svgGroup);
+            targetCanvas.requestRenderAll();
+            if (typeof saveState === 'function') saveState();
+          });
+        } catch (err) {
+          console.error('Error cargando el SVG:', err);
+        }
+      };
+
       window.addEventListener('editor:add-text', handleAddText);
       window.addEventListener('editor:change-color', handleColorChange);
       window.addEventListener('editor:change-font', handleFontChange);
@@ -626,6 +691,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:send-backward', handleSendBackward);
       window.addEventListener('keydown', handleKeyDown);
       window.addEventListener('editor:add-shape', handleAddShape);
+      window.addEventListener('editor:add-svg', handleAddSVG);
       window.addEventListener('editor:undo', handleUndo);
       window.addEventListener('editor:redo', handleRedo);
       window.addEventListener('editor:start-crop', handleStartCrop);
@@ -677,6 +743,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleAddShape) {
         window.removeEventListener('editor:add-shape', handleAddShape);
+      }
+      if (handleAddSVG) {
+        window.removeEventListener('editor:add-svg', handleAddSVG);
       }
       if (handleStartCrop) {
         window.removeEventListener('editor:start-crop', handleStartCrop);
