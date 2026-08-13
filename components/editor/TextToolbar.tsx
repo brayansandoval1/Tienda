@@ -2,6 +2,15 @@
 
 import { useState, useEffect } from 'react';
 import { GOOGLE_FONTS } from '../../lib/fonts';
+import {
+  AlignCenter,
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignLeft,
+  AlignRight,
+  AlignStartVertical,
+  AlignEndVertical,
+} from 'lucide-react';
 
 interface ObjectStyle {
   fill: string;
@@ -111,6 +120,32 @@ export default function TextToolbar() {
           onMouseDown={(e) => e.stopPropagation()}
           className="h-10 w-14 cursor-pointer rounded-xl border border-slate-200 bg-white"
         />
+      </div>
+
+      <div className="flex items-center gap-1 rounded-2xl border border-slate-200 bg-slate-50 p-1">
+        <span className="px-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Alinear</span>
+        {[
+          { alignment: 'center-h', icon: AlignCenterHorizontal, title: 'Centrar horizontalmente' },
+          { alignment: 'center-v', icon: AlignCenterVertical, title: 'Centrar verticalmente' },
+          { alignment: 'center-both', icon: AlignCenter, title: 'Centrar (ambos ejes)' },
+          { alignment: 'left', icon: AlignLeft, title: 'Alinear a la izquierda' },
+          { alignment: 'right', icon: AlignRight, title: 'Alinear a la derecha' },
+          { alignment: 'top', icon: AlignStartVertical, title: 'Alinear arriba' },
+          { alignment: 'bottom', icon: AlignEndVertical, title: 'Alinear abajo' },
+        ].map(({ alignment, icon: Icon, title }) => (
+          <button
+            key={alignment}
+            type="button"
+            title={title}
+            aria-label={title}
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent('editor:align', { detail: { alignment } }))
+            }
+            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-700 transition hover:bg-white hover:text-slate-900 hover:shadow-sm"
+          >
+            <Icon size={17} />
+          </button>
+        ))}
       </div>
 
       {isTextObject && (

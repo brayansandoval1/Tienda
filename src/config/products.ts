@@ -8,7 +8,7 @@ export interface ProductView {
   id: string;
   label: string;
   /** Imagen del producto (ej: taza o funda con fondo/cámara) */
-  overlayImage: string;
+        overlayImage: string;
   /** Máscara opcional para formas complejas */
   maskImage?: string;
   printArea: {
@@ -66,7 +66,7 @@ export const PRODUCTS: ProductConfig[] = [
       {
         id: 'back',
         label: 'Reverso',
-        overlayImage: '/mockups/case-back.png',
+        overlayImage: 'https://placehold.co/800x800/png?text=Funda+iPhone',
         printArea: { x: 200, y: 100, width: 300, height: 600 },
       },
     ],
@@ -82,7 +82,7 @@ export const PRODUCTS: ProductConfig[] = [
       {
         id: 'front',
         label: 'Vista Panorámica',
-        overlayImage: '/mockups/mug-overlay.png',
+        overlayImage: 'https://placehold.co/800x800/png?text=Taza+11oz',
         printArea: { x: 150, y: 180, width: 500, height: 250 },
       },
     ],

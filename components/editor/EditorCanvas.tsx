@@ -51,7 +51,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleCropStart: () => void,
       handleCropEnd: () => void,
       handleRequestExport: () => void,
-      handleResetCrop: () => void;
+      handleResetCrop: () => void,
+      handleAlign: (e: Event) => void;
 
     // Carga dinámica de Fabric solo en el cliente
     import('fabric').then((fabricModule) => {
@@ -60,9 +61,36 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       const fabric = fabricModule.fabric || fabricModule;
       const canvas = new (fabric as any).Canvas(canvasRef.current, {
         backgroundColor: '#F4F5F7',
+        selection: true,
+        interactive: true,
       });
 
+      // Forzar interactividad global del lienzo
+      canvas.set({
+        selection: true, // Permite seleccionar objetos con cuadro azul
+        interactive: true, // Permite arrastrar, escalar y rotar
+        defaultCursor: 'default',
+        hoverCursor: 'move',
+        moveCursor: 'move',
+      });
+
+      // Recalcular coordenadas del mouse respecto a la pantalla
+      canvas.calcOffset();
+
       fabricCanvasRef.current = canvas;
+
+      // Propiedades por defecto para que todos los objetos sean libremente movibles/redimensionables
+      const defaultObjectProps = {
+        selectable: true,
+        evented: true,
+        lockMovementX: false,
+        lockMovementY: false,
+        lockRotation: false,
+        lockScalingX: false,
+        lockScalingY: false,
+        hasControls: true,
+        hasBorders: true,
+      };
 
       const updateHistoryButtons = () => {
         window.dispatchEvent(
@@ -94,44 +122,86 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         activeProduct.views.find((v) => v.id === viewId) || activeProduct.views[0];
 
       const loadOverlay = (view: ProductView) => {
-        // Cargar el overlay del artículo (taza, funda, playera...) según la vista activa
+        // Cargar el overlay del artículo (taza, funda, playera...) según la vista activa.
+        // La imagen se usa como fondo del canvas (setBackgroundImage): no pertenece a
+        // getObjects() y, por defecto, es no interactiva (selectable/evented = false),
+        // por lo que no puede bloquear el ratón sobre los textos/imágenes del usuario.
+        // La carga se envuelve en try/catch y el callback verifica !img para que un
+        // error de red (404, CORS bloqueado) nunca congele el flujo de la vista.
         return new Promise<void>((resolve) => {
-          fabric.Image.fromURL(view.overlayImage, (img) => {
-            img.scaleToWidth(canvas.getWidth()); // Escalar para que se ajuste al ancho del canvas
-            canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas), {
-              originX: 'left',
-              originY: 'top',
-              scaleX: img.scaleX,
-              scaleY: img.scaleY,
-            });
+          if (!view?.overlayImage) {
+            // Sin overlay: limpiar fondo residual y continuar sin bloquear el lienzo.
+            canvas.setBackgroundImage(null, canvas.renderAll.bind(canvas));
             resolve();
-          });
+            return;
+          }
+          try {
+            fabric.Image.fromURL(
+              view.overlayImage,
+              (img) => {
+                if (!img) {
+                  // La red falló (404, CORS...). Limpiar el fondo y no congelar el lienzo.
+                  canvas.setBackgroundImage(null, canvas.renderAll.bind(canvas));
+                  resolve();
+                  return;
+                }
+                img.scaleToWidth(canvas.getWidth()); // Ajustar al ancho del canvas
+                canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas), {
+                  originX: 'left',
+                  originY: 'top',
+                  scaleX: img.scaleX,
+                  scaleY: img.scaleY,
+                });
+                resolve();
+              },
+              { crossOrigin: 'anonymous' },
+            );
+          } catch (err) {
+            // Error síncrono inesperado: limpiar fondo y seguir con el flujo de la vista.
+            canvas.setBackgroundImage(null, canvas.renderAll.bind(canvas));
+            resolve();
+          }
         });
       };
 
-      const applySafeZone = (view: ProductView) => {
-        // Eliminar la zona segura anterior si existe
-        if (safeZoneRef.current) {
-          canvas.remove(safeZoneRef.current);
-        }
+      const drawSafeArea = (view: ProductView) => {
+        // Zona de diseño seguro (caja punteada verde). Invisible para el puntero del
+        // mouse: selectable/evented = false y enviada al fondo (sendToBack) para que
+        // nunca tape ni bloquee los textos/imágenes agregados por el usuario.
+        const c = fabricCanvasRef.current;
+        if (!c) return;
 
-        // Dibujar la nueva zona segura según el printArea de la vista activa
+        // Eliminar guías/zonas de diseño previas
+        const oldGuides = c.getObjects().filter((obj: any) => obj.isGuideLine);
+        oldGuides.forEach((g: any) => c.remove(g));
+
+        const printArea = view?.printArea || { x: 150, y: 150, width: 400, height: 300 };
+
         const safeZone = new fabric.Rect({
-          left: view.printArea.x,
-          top: view.printArea.y,
-          width: view.printArea.width,
-          height: view.printArea.height,
+          left: printArea.x,
+          top: printArea.y,
+          width: printArea.width,
+          height: printArea.height,
           fill: 'transparent',
-          stroke: '#16a34a', // Verde
+          stroke: '#22c55e',
+          strokeDashArray: [6, 6],
           strokeWidth: 2,
-          strokeDashArray: [8, 8],
+          // PROPIEDADES CLAVE PARA QUE NO BLOQUEE EL MOUSE:
           selectable: false,
           evented: false,
+          hasControls: false,
+          hasBorders: false,
+          excludeFromExport: true,
         });
-        // Marcar como objeto de guía (propiedad personalizada)
+
+        // Marcar como guía para excluirla de saveState/ensureObjectsInteractable
+        (safeZone as any).isGuideLine = true;
         (safeZone as any).isGuide = true;
+
         safeZoneRef.current = safeZone;
-        canvas.add(safeZone);
+        c.add(safeZone);
+        c.sendToBack(safeZone); // Siempre detrás de los objetos del usuario
+        c.requestRenderAll();
       };
 
       // Restringe los objetos del usuario para que no se dibujen fuera del printArea
@@ -159,12 +229,34 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         return JSON.stringify(userObjects.map((o: any) => o.toJSON()));
       };
 
+      // Garantiza que ningún objeto quede bloqueado para arrastrar/escalar
+      const ensureObjectsInteractable = () => {
+        const c = fabricCanvasRef.current;
+        if (!c) return;
+        c.forEachObject((obj: any) => {
+          if (obj && obj !== safeZoneRef.current && !obj.isGuide) {
+            obj.set({
+              selectable: true,
+              evented: true,
+              lockMovementX: false,
+              lockMovementY: false,
+              lockRotation: false,
+              lockScalingX: false,
+              lockScalingY: false,
+              hasControls: true,
+              hasBorders: true,
+            });
+          }
+        });
+      };
+
       const setupProduct = (product: ProductConfig) => {
         activeProduct = product;
         activeView = product.views[0];
         // Ajustar dimensiones del canvas de Fabric.js
         canvas.setWidth(product.canvasWidth);
         canvas.setHeight(product.canvasHeight);
+        canvas.calcOffset();
 
         canvasDataRef.current = {};
         currentViewIdRef.current = activeView.id;
@@ -174,10 +266,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // Limpiar el canvas reconstruyendo fondo + zona segura según la nueva vista
         isUpdatingHistory.current = true;
         canvas.clear();
-        applySafeZone(activeView);
+        drawSafeArea(activeView);
         loadOverlay(activeView);
         canvas.requestRenderAll();
         isUpdatingHistory.current = false;
+        ensureObjectsInteractable();
 
         historyRef.current = [snapshotCurrentObjects()];
         redoStackRef.current = [];
@@ -214,7 +307,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         // Limpiar el canvas actual conservando la zona segura de la nueva vista
         c.clear();
-        applySafeZone(getView(viewId));
+        drawSafeArea(getView(viewId));
 
         // Cargar el diseño existente de la nueva vista (si existe)
         const stored = canvasDataRef.current[viewId];
@@ -222,12 +315,19 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           // @ts-ignore Fabric.js types mismatch
           fabric.util.enlivenObjects(JSON.parse(stored), (enlivened: any[]) => {
             enlivened.forEach((obj: any) => c.add(obj));
-            if (safeZoneRef.current) c.bringToFront(safeZoneRef.current);
+            ensureObjectsInteractable();
+            // Reafirmar interactividad global tras cargar objetos
+            c.selection = true;
+            c.calcOffset();
+            if (safeZoneRef.current) c.sendToBack(safeZoneRef.current); // guía siempre detrás
             c.requestRenderAll();
             finishViewSwitch(viewId);
           });
+
         } else {
-          if (safeZoneRef.current) c.bringToFront(safeZoneRef.current);
+          c.selection = true;
+          c.calcOffset();
+          if (safeZoneRef.current) c.sendToBack(safeZoneRef.current); // guía siempre detrás
           finishViewSwitch(viewId);
         }
       };
@@ -249,7 +349,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const userObjects = c.getObjects().filter((o: any) => o !== safeZoneRef.current);
         userObjects.forEach((o: any) => c.remove(o));
         await loadOverlay(view);
-        applySafeZone(view);
+        drawSafeArea(view);
 
         const stored = canvasDataRef.current[view.id];
         if (!stored) {
@@ -260,10 +360,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           // @ts-ignore Fabric.js types mismatch
           fabric.util.enlivenObjects(JSON.parse(stored), (enlivened: any[]) => {
             enlivened.forEach((obj: any) => c.add(obj));
+            ensureObjectsInteractable();
+            // Reafirmar interactividad global tras cargar objetos
+            c.selection = true;
+            c.calcOffset();
             c.requestRenderAll();
             isUpdatingHistory.current = false;
             resolve();
           });
+
         });
       };
 
@@ -295,6 +400,67 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleRequestExport = async () => {
         const renders = await exportAll();
         window.dispatchEvent(new CustomEvent('editor:export-sides', { detail: renders }));
+      };
+
+      // Alineación / centrado del objeto dentro de la Zona Segura (printArea) de la
+      // vista activa. Versión limpia: garantiza que el objeto conserve los permisos de
+      // arrastre y reafirma la interactividad global del lienzo al terminar.
+      handleAlign = (e: Event) => {
+        const customEvent = e as CustomEvent<{ alignment?: string }>;
+        const alignment = customEvent.detail?.alignment;
+        const canvas = fabricCanvasRef.current;
+        if (!canvas || !alignment) return;
+
+        const obj = canvas.getActiveObject();
+        if (!obj || (obj as any).isGuide) return;
+
+        const printArea = activeView.printArea || { x: 150, y: 150, width: 400, height: 300 };
+
+        // Forzar que el objeto conserve los permisos de arrastre del ratón
+        obj.set({
+          selectable: true,
+          evented: true,
+          lockMovementX: false,
+          lockMovementY: false,
+          lockRotation: false,
+          lockScalingX: false,
+          lockScalingY: false,
+        });
+
+        const objBounds = obj.getBoundingRect();
+        const objWidth = objBounds.width;
+        const objHeight = objBounds.height;
+        const originOffsetX = obj.left - objBounds.left;
+        const originOffsetY = obj.top - objBounds.top;
+
+        const centerX = printArea.x + printArea.width / 2;
+        const centerY = printArea.y + printArea.height / 2;
+
+        if (alignment === 'center-h' || alignment === 'center-both') {
+          obj.set('left', centerX - objWidth / 2 + originOffsetX);
+        }
+        if (alignment === 'center-v' || alignment === 'center-both') {
+          obj.set('top', centerY - objHeight / 2 + originOffsetY);
+        }
+        if (alignment === 'left') {
+          obj.set('left', printArea.x);
+        } else if (alignment === 'right') {
+          obj.set('left', printArea.x + printArea.width - objWidth + originOffsetX);
+        } else if (alignment === 'top') {
+          obj.set('top', printArea.y);
+        } else if (alignment === 'bottom') {
+          obj.set('top', printArea.y + printArea.height - objHeight + originOffsetY);
+        }
+
+        obj.setCoords();
+        canvas.setActiveObject(obj);
+
+        // Reafirmar la interactividad global del lienzo tras alinear
+        canvas.selection = true;
+        canvas.calcOffset();
+        canvas.requestRenderAll();
+
+        saveState();
       };
 
       // Helper para cargar Google Fonts dinámicamente
@@ -445,7 +611,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           fontWeight: fontWeight || 'normal',
           fill: '#1e293b',
           editable: true,
-          selectable: true,
+          ...defaultObjectProps,
         });
 
         fabricCanvasRef.current.add(newText);
@@ -472,6 +638,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             top: 100,
             cornerStyle: 'circle',
             transparentCorners: false,
+            ...defaultObjectProps,
           });
 
           // Escalar si es muy grande
@@ -541,11 +708,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const activeObject = fabricCanvasRef.current?.getActiveObject();
         if (activeObject) {
           fabricCanvasRef.current.sendToBack(activeObject);
-          // Re-traer la zona segura al frente para que siempre sea visible
+          // Mantener la zona segura detrás de los objetos para que no bloquee el mouse
           if (safeZoneRef.current) {
-            fabricCanvasRef.current.bringToFront(safeZoneRef.current);
+            fabricCanvasRef.current.sendToBack(safeZoneRef.current);
           }
           fabricCanvasRef.current.renderAll();
+          fabricCanvasRef.current.selection = true;
         }
       };
 
@@ -576,6 +744,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           enlivenedObjects.forEach((obj) => {
             canvas.add(obj);
           });
+          ensureObjectsInteractable();
           canvas.renderAll();
           // Reset flag after render
           setTimeout(() => {
@@ -808,6 +977,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             strokeWidth: 0,
             cornerStyle: 'circle' as const,
             transparentCorners: false,
+            ...defaultObjectProps,
           };
 
           if (type === 'rect') {
@@ -867,6 +1037,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
               top: targetCanvas.height / 2 - 25,
               scaleX: 1.5,
               scaleY: 1.5,
+              ...defaultObjectProps,
             });
 
             targetCanvas.add(svgGroup);
@@ -900,6 +1071,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:cancel-crop', handleCancelCrop);
       window.addEventListener('editor:reset-crop', handleResetCrop);
       window.addEventListener('editor:request-export', handleRequestExport);
+      window.addEventListener('editor:align', handleAlign);
 
       canvas.on('object:added', saveState);
       canvas.on('object:modified', saveState);
@@ -971,6 +1143,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       if (handleRequestExport) {
         window.removeEventListener('editor:request-export', handleRequestExport);
       }
+      if (handleAlign) {
+        window.removeEventListener('editor:align', handleAlign);
+      }
       if (fabricCanvasRef.current) {
         fabricCanvasRef.current.dispose();
         fabricCanvasRef.current = null;
@@ -980,18 +1155,18 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[32px] border border-slate-200 bg-[#F4F5F7] p-0 shadow-sm">
-      <div className="overflow-hidden rounded-md shadow-inner">
-        <canvas ref={canvasRef} width={initialProduct.canvasWidth} height={initialProduct.canvasHeight} />
+      <div className="pointer-events-none overflow-hidden rounded-md shadow-inner">
+        <canvas ref={canvasRef} width={initialProduct.canvasWidth} height={initialProduct.canvasHeight} style={{ pointerEvents: 'auto' }} />
       </div>
       {!isCropping ? (
-        <div className="absolute left-1/2 top-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full border border-slate-200 bg-white/95 p-1 shadow-lg backdrop-blur-sm">
+        <div className="pointer-events-none absolute left-1/2 top-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full border border-slate-200 bg-white/95 p-1 shadow-lg backdrop-blur-sm">
           {productViews.length > 1 &&
             productViews.map((view) => (
               <button
                 key={view.id}
                 type="button"
                 onClick={() => switchViewRef.current?.(view.id)}
-                className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
+                className={`pointer-events-auto rounded-full px-4 py-1.5 text-sm font-semibold transition ${
                   currentViewId === view.id
                     ? 'bg-blue-600 text-white shadow-sm'
                     : 'text-slate-600 hover:bg-slate-100'
@@ -1004,18 +1179,18 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             <button
               type="button"
               onClick={() => window.dispatchEvent(new CustomEvent('editor:start-crop'))}
-              className="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100"
+              className="pointer-events-auto flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100"
             >
               ✂️ Recortar
             </button>
           )}
         </div>
       ) : (
-        <div className="absolute bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-100/95 p-2 shadow-lg backdrop-blur-sm">
+        <div className="pointer-events-none absolute bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-100/95 p-2 shadow-lg backdrop-blur-sm">
           <button
             type="button"
             onClick={() => window.dispatchEvent(new CustomEvent('editor:confirm-crop'))}
-            className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+            className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
           >
             <Check size={16} />
             Confirmar
@@ -1023,7 +1198,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           <button
             type="button"
             onClick={() => window.dispatchEvent(new CustomEvent('editor:cancel-crop'))}
-            className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
+            className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
           >
             <X size={16} />
             Cancelar
@@ -1031,7 +1206,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           <button
             type="button"
             onClick={() => window.dispatchEvent(new CustomEvent('editor:reset-crop'))}
-            className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
+            className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
           >
             <Trash2 size={16} />
             Limpiar Recorte
