@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { type Product, PRODUCTS as initialProducts } from '@/src/config/products';
 
-export type { Product, ProductView } from '@/src/config/products';
+export type { ColorVariant, Product, ProductView } from '@/src/config/products';
 
 export interface ProductState {
   products: Product[];

@@ -4,6 +4,13 @@
  * con su imagen de overlay (el propio artículo) y su zona de diseño activa.
  */
 
+export interface ColorVariant {
+  id: string;
+  name: string;
+  hexColor: string;
+  mockupUrl: string;
+}
+
 export interface ProductView {
   id: string;
   /** Nombre visible de la cara: Frente, Espalda, Lateral, etc. */
@@ -12,6 +19,8 @@ export interface ProductView {
   label?: string;
   /** Imagen base del mockup que se muestra en el editor. */
   mockupUrl: string;
+  /** Variantes visuales del mismo producto para esta vista. */
+  colorVariants?: ColorVariant[];
   /** Capa opcional para composiciones de mockup más complejas. */
   overlayUrl?: string;
   printArea: {
@@ -132,6 +141,11 @@ export const PRODUCTS: Product[] = [
         name: 'Vista Principal',
         label: 'Vista Principal',
         mockupUrl: 'https://picsum.photos/id/30/800/800',
+        colorVariants: [
+          { id: 'acero', name: 'Acero', hexColor: '#d1d5db', mockupUrl: 'https://picsum.photos/id/30/800/800' },
+          { id: 'negro', name: 'Negro', hexColor: '#111827', mockupUrl: 'https://picsum.photos/id/31/800/800' },
+          { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://picsum.photos/id/32/800/800' },
+        ],
         printArea: { x: 300, y: 175, width: 200, height: 450 },
       },
     ],

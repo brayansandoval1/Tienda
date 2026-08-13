@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, X, Trash2 } from 'lucide-react';
 import type { TextOptions } from '../../types/product';
-import type { Product, ProductView } from '@/src/store/useProductStore';
+import type { ColorVariant, Product, ProductView } from '@/src/store/useProductStore';
 import type { SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
 
 type PrintArea = ProductView['printArea'];
@@ -26,9 +26,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   const [canvasAspectRatio, setCanvasAspectRatio] = useState(1);
   const [currentViewId, setCurrentViewId] = useState<string>(initialProduct.views[0]?.id ?? 'front');
   const [productViews, setProductViews] = useState<ProductView[]>(initialProduct.views);
+  const [selectedColorIds, setSelectedColorIds] = useState<Record<string, string>>({});
+  const selectedColorIdsRef = useRef<Record<string, string>>({});
   const currentViewIdRef = useRef<string>(initialProduct.views[0]?.id ?? 'front');
   const canvasDataRef = useRef<Record<string, string | null>>({});
   const switchViewRef = useRef<(viewId: string) => void>(null);
+  const changeProductColorRef = useRef<((variant: ColorVariant) => void) | null>(null);
   const setupProductRef = useRef<((product: Product) => void) | null>(null);
 
   // El canvas de Fabric se conserva montado; al cambiar el producto sólo se
@@ -253,6 +256,10 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       };
 
       const loadProductMockup = (view: ProductView) => {
+        const selectedVariant = view.colorVariants?.find(
+          (variant) => variant.id === selectedColorIdsRef.current[view.id],
+        );
+        const mockupUrl = selectedVariant?.mockupUrl || view.mockupUrl;
         // Cargar el overlay del artículo (taza, funda, playera...) según la vista activa.
         // La imagen se usa como fondo del canvas (setBackgroundImage): no pertenece a
         // getObjects() y, por defecto, es no interactiva (selectable/evented = false),
@@ -268,7 +275,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           // Eliminar cualquier fondo anterior antes de iniciar la carga. El
           // callback de Fabric garantiza que no quede un frame obsoleto.
           canvas.setBackgroundImage(null, () => canvas.requestRenderAll());
-          if (!view?.mockupUrl) {
+          if (!mockupUrl) {
             // Sin mockup: dejar el lienzo utilizable y mostrar su zona segura.
             drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
             resolve();
@@ -276,13 +283,13 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           }
           try {
             fabric.Image.fromURL(
-              view.mockupUrl,
+              mockupUrl,
               (img) => {
                 // Fabric devuelve `null` ante un 404/CORS y algunas fuentes
                 // pueden crear el objeto sin dimensiones. No redimensionar en
                 // ninguno de esos casos evita dejar el canvas vacío o inválido.
                 if (!img || !img.width || !img.height) {
-                  console.error(`❌ Error al cargar la imagen del mockup en la ruta: ${view.mockupUrl}`);
+                  console.error(`❌ Error al cargar la imagen del mockup en la ruta: ${mockupUrl}`);
                   drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
                   canvas.requestRenderAll();
                   resolve();
@@ -291,7 +298,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                 const rawWidth = img.width;
                 const rawHeight = img.height;
                 console.log('📸 MOCKUP CARGADO CON ÉXITO:', {
-                  url: view.mockupUrl,
+                  url: mockupUrl,
                   dimensiones: `${rawWidth}x${rawHeight}`,
                 });
                 // El plano interno adopta la proporción natural del mockup.
@@ -306,7 +313,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                 canvas.calcOffset();
                 setCanvasAspectRatio(rawWidth / rawHeight);
                 console.log('📐 DIAGNÓSTICO DE ESCALADO MOCKUP:', {
-                  url: view.mockupUrl,
+                  url: mockupUrl,
                   dimensionesOriginales: `${rawWidth}x${rawHeight}`,
                   tamanoCanvas: `${rawWidth}x${rawHeight}`,
                   escalaCalculada: 1,
@@ -343,12 +350,54 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           } catch (err) {
             // Error síncrono inesperado: conservar el editor interactivo y
             // mostrar una guía, en vez de abortar el cambio de vista.
-            console.error(`❌ Error al iniciar la carga del mockup: ${view.mockupUrl}`, err);
+            console.error(`❌ Error al iniciar la carga del mockup: ${mockupUrl}`, err);
             drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
             canvas.requestRenderAll();
             resolve();
           }
         });
+      };
+
+      /**
+       * Sustituye exclusivamente el fondo del mockup. El lienzo y sus objetos
+       * no se limpian ni se reescalan, por lo que el diseño del cliente se
+       * conserva exactamente en la misma posición al cambiar de color.
+       */
+      const changeProductColor = (variant: ColorVariant) => {
+        const c = fabricCanvasRef.current;
+        if (!c || !variant.mockupUrl) return;
+
+        fabric.Image.fromURL(
+          variant.mockupUrl,
+          (img: any) => {
+            if (!img || !img.width || !img.height) return;
+
+            // El área de impresión usa las dimensiones actuales del canvas.
+            // Ajustar el fondo a ese mismo plano evita mover el arte existente
+            // incluso si el archivo del mockup tiene otra resolución.
+            img.set({
+              originX: 'left',
+              originY: 'top',
+              left: 0,
+              top: 0,
+              scaleX: c.getWidth() / img.width,
+              scaleY: c.getHeight() / img.height,
+              selectable: false,
+              evented: false,
+              excludeFromExport: true,
+            });
+
+            c.setBackgroundImage(img, () => {
+              applyPrintAreaClipping(activeView);
+              c.renderAll();
+              c.requestRenderAll();
+              const nextSelectedColors = { ...selectedColorIdsRef.current, [activeView.id]: variant.id };
+              selectedColorIdsRef.current = nextSelectedColors;
+              setSelectedColorIds(nextSelectedColors);
+            });
+          },
+          { crossOrigin: 'anonymous' },
+        );
       };
 
       const drawSafeArea = (canvasWidth: number, canvasHeight: number, printArea: PrintArea) => {
@@ -471,6 +520,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         canvas.calcOffset();
 
         canvasDataRef.current = {};
+        selectedColorIdsRef.current = {};
+        setSelectedColorIds({});
         currentViewIdRef.current = activeView.id;
         setCurrentViewId(activeView.id);
         setProductViews(product.views);
@@ -491,6 +542,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       setupProductRef.current = setupProduct;
       setupProduct(initialProduct);
+      changeProductColorRef.current = changeProductColor;
 
       // --- Vistas de producto (frente, espalda, etc.) ---
       const finishViewSwitch = (viewId: string) => {
@@ -1648,6 +1700,34 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           </button>
         </div>
       )}
+      {!isCropping && productViews.find((view) => view.id === currentViewId)?.colorVariants?.length ? (
+        <div className="absolute bottom-4 right-4 z-30 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur-sm">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Color del producto</p>
+          <div className="flex items-center gap-2">
+            {productViews
+              .find((view) => view.id === currentViewId)
+              ?.colorVariants?.map((variant) => {
+                const selected = selectedColorIds[currentViewId]
+                  ? selectedColorIds[currentViewId] === variant.id
+                  : variant.mockupUrl === productViews.find((view) => view.id === currentViewId)?.mockupUrl;
+                return (
+                  <button
+                    key={variant.id}
+                    type="button"
+                    onClick={() => changeProductColorRef.current?.(variant)}
+                    title={variant.name}
+                    aria-label={`Seleccionar color ${variant.name}`}
+                    aria-pressed={selected}
+                    className={`h-8 w-8 rounded-full border-2 transition focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 ${
+                      selected ? 'border-slate-900 ring-2 ring-slate-300' : 'border-white shadow-sm hover:scale-110'
+                    }`}
+                    style={{ backgroundColor: variant.hexColor }}
+                  />
+                );
+              })}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
