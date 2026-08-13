@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { PRODUCTS, type ProductConfig } from '@/src/config/products';
+import { useProductStore, type Product } from '@/src/store/useProductStore';
 
 interface ProductSelectorProps {
   selectedId?: string;
-  onSelect?: (product: ProductConfig) => void;
+  onSelect?: (product: Product) => void;
 }
 
 /**
@@ -17,20 +17,21 @@ export default function ProductSelector({
   onSelect,
 }: ProductSelectorProps) {
   const [internalId, setInternalId] = useState<string | undefined>(selectedId);
+  const products = useProductStore((state) => state.products);
 
   const activeId = selectedId ?? internalId;
 
-  const handleSelect = (product: ProductConfig) => {
+  const handleSelect = (product: Product) => {
     if (onSelect) onSelect(product);
     setInternalId(product.id);
     window.dispatchEvent(new CustomEvent('editor:switch-product', { detail: { product } }));
   };
 
-  const preview = (product: ProductConfig) => product.views[0]?.overlayImage ?? '';
+  const preview = (product: Product) => product.views[0]?.mockupUrl ?? '';
 
   return (
     <div className="grid grid-cols-2 gap-2">
-      {PRODUCTS.map((p) => (
+      {products.map((p) => (
         <div
           key={p.id}
           onClick={() => handleSelect(p)}

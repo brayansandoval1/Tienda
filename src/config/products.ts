@@ -7,19 +7,21 @@
 export interface ProductView {
   id: string;
   label: string;
-  /** Imagen del producto (ej: taza o funda con fondo/cámara) */
-        overlayImage: string;
-  /** Máscara opcional para formas complejas */
-  maskImage?: string;
+  /** Imagen base del mockup que se muestra en el editor. */
+  mockupUrl: string;
+  /** Capa opcional para composiciones de mockup más complejas. */
+  overlayUrl?: string;
   printArea: {
     x: number;
     y: number;
     width: number;
     height: number;
   };
+  /** Las áreas creadas desde el panel actual se guardan relativas al mockup. */
+  printAreaUnit?: 'pixels' | 'percent';
 }
 
-export interface ProductConfig {
+export interface Product {
   id: string;
   name: string;
   category: string;
@@ -29,10 +31,13 @@ export interface ProductConfig {
   views: ProductView[];
 }
 
+/** Alias temporal para los componentes existentes del editor. */
+export type ProductConfig = Product;
+
 /**
  * Catálogo de productos personalizables disponibles en la tienda.
  */
-export const PRODUCTS: ProductConfig[] = [
+export const PRODUCTS: Product[] = [
   {
     id: 'playera-algodon-unisex',
     name: 'Playera Personalizada',
@@ -44,13 +49,13 @@ export const PRODUCTS: ProductConfig[] = [
       {
         id: 'front',
         label: 'Frente',
-        overlayImage: 'https://picsum.photos/id/10/800/800',
+        mockupUrl: 'https://picsum.photos/id/10/800/800',
         printArea: { x: 250, y: 200, width: 300, height: 400 },
       },
       {
         id: 'back',
         label: 'Espalda',
-        overlayImage: 'https://picsum.photos/id/11/800/800',
+        mockupUrl: 'https://picsum.photos/id/11/800/800',
         printArea: { x: 250, y: 200, width: 300, height: 400 },
       },
     ],
@@ -66,7 +71,7 @@ export const PRODUCTS: ProductConfig[] = [
       {
         id: 'back',
         label: 'Reverso',
-        overlayImage: 'https://placehold.co/800x800/png?text=Funda+iPhone',
+        mockupUrl: 'https://placehold.co/800x800/png?text=Funda+iPhone',
         printArea: { x: 200, y: 100, width: 300, height: 600 },
       },
     ],
@@ -82,7 +87,7 @@ export const PRODUCTS: ProductConfig[] = [
       {
         id: 'front',
         label: 'Vista Panorámica',
-        overlayImage: 'https://placehold.co/800x800/png?text=Taza+11oz',
+        mockupUrl: 'https://placehold.co/800x800/png?text=Taza+11oz',
         printArea: { x: 150, y: 180, width: 500, height: 250 },
       },
     ],
@@ -98,7 +103,7 @@ export const PRODUCTS: ProductConfig[] = [
       {
         id: 'front',
         label: 'Vista Principal',
-        overlayImage: 'https://picsum.photos/id/20/800/800',
+        mockupUrl: 'https://picsum.photos/id/20/800/800',
         printArea: { x: 150, y: 250, width: 500, height: 300 },
       },
     ],
@@ -114,7 +119,7 @@ export const PRODUCTS: ProductConfig[] = [
       {
         id: 'front',
         label: 'Vista Principal',
-        overlayImage: 'https://picsum.photos/id/30/800/800',
+        mockupUrl: 'https://picsum.photos/id/30/800/800',
         printArea: { x: 300, y: 175, width: 200, height: 450 },
       },
     ],
@@ -130,7 +135,7 @@ export const PRODUCTS: ProductConfig[] = [
       {
         id: 'front',
         label: 'Vista Principal',
-        overlayImage: 'https://picsum.photos/id/40/800/800',
+        mockupUrl: 'https://picsum.photos/id/40/800/800',
         printArea: { x: 275, y: 100, width: 250, height: 600 },
       },
     ],

@@ -8,19 +8,25 @@ import Header from '@/components/editor/Header';
 import SidebarIcons from '@/components/editor/SidebarIcons';
 import SidebarPanel from '@/components/editor/SidebarPanel';
 import TextToolbar from '@/components/editor/TextToolbar';
-import { PRODUCTS, type ProductConfig } from '@/src/config/products';
+import { useProductStore, type Product } from '@/src/store/useProductStore';
 import ViewSelector from '@/components/editor/ViewSelector';
 
 const EditorCanvas = dynamic(() => import('@/components/editor/EditorCanvas'), { ssr: false });
 
 export default function EditorShell({ producto }: { producto: Producto }) {
+  const products = useProductStore((state) => state.products);
   // Estado para el producto actualmente seleccionado en el editor
-  const [currentProduct, setCurrentProduct] = useState(PRODUCTS.find(p => p.id === producto.id) || PRODUCTS[0]);
+  const [currentProduct, setCurrentProduct] = useState<Product>(products.find((p) => p.id === producto.id) || products[0]);
+
+  useEffect(() => {
+    const matchingProduct = products.find((p) => p.id === producto.id);
+    if (matchingProduct) setCurrentProduct(matchingProduct);
+  }, [products, producto.id]);
 
   // Listener para el evento de cambio de producto desde ViewSelector
   useEffect(() => {
     const handleSwitchProduct = (e: Event) => {
-      const customEvent = e as CustomEvent<{ product: ProductConfig }>;
+      const customEvent = e as CustomEvent<{ product: Product }>;
       setCurrentProduct(customEvent.detail.product);
     };
     window.addEventListener('editor:switch-product', handleSwitchProduct);

@@ -1,22 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Producto } from '@/types/product';
-import { PRODUCTS, type ProductConfig } from '@/src/config/products';
+import { type Product } from '@/src/store/useProductStore';
 import ProductSelector from '@/components/editor/ProductSelector';
 
-export default function ViewSelector({ producto, initialProduct }: { producto: Producto; initialProduct?: ProductConfig }) {
+export default function ViewSelector({ producto, initialProduct }: { producto: Producto; initialProduct?: Product }) {
   // Usa initialProduct para el estado inicial, pero luego gestiona los cambios internamente
-  const [selectedProduct, setSelectedProduct] = useState<ProductConfig>(
-    initialProduct || PRODUCTS.find((p) => p.id === producto.id) || PRODUCTS[0],
-  );
+  const [selectedProduct, setSelectedProduct] = useState<Product>(initialProduct!);
+
+  useEffect(() => {
+    if (initialProduct) setSelectedProduct(initialProduct);
+  }, [initialProduct]);
   
-  const handleProductSelect = (product: ProductConfig) => {
+  const handleProductSelect = (product: Product) => {
     setSelectedProduct(product);
-    window.dispatchEvent(new CustomEvent('editor:switch-product', { detail: { product } }));
   };
 
-  const previewImage = selectedProduct.views[0]?.overlayImage ?? '';
+  const previewImage = selectedProduct.views[0]?.mockupUrl ?? '';
 
   return (
     <aside className="w-full max-w-[320px] space-y-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">

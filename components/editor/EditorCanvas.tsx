@@ -3,10 +3,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, X, Trash2 } from 'lucide-react';
 import type { TextOptions } from '../../types/product';
-import type { ProductConfig, ProductView } from '@/src/config/products';
+import type { Product, ProductView } from '@/src/store/useProductStore';
+
+type PrintArea = ProductView['printArea'];
+const ADMIN_BASE_SIZE = 800;
 
 interface EditorCanvasProps {
-  product: ProductConfig;
+  product: Product;
 }
 
 export default function EditorCanvas({ product: initialProduct }: EditorCanvasProps) {
@@ -24,6 +27,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   const currentViewIdRef = useRef<string>(initialProduct.views[0]?.id ?? 'front');
   const canvasDataRef = useRef<Record<string, string | null>>({});
   const switchViewRef = useRef<(viewId: string) => void>(null);
+  const setupProductRef = useRef<((product: Product) => void) | null>(null);
+
+  // El canvas de Fabric se conserva montado; al cambiar el producto sólo se
+  // reconstruyen su mockup y guía. Esto evita renderizados sobre un contexto
+  // ya destruido por React.
+  useEffect(() => {
+    setupProductRef.current?.(initialProduct);
+  }, [initialProduct]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -34,7 +45,6 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleFontChange: (e: Event) => void,
       handleFontSizeChange: (e: Event) => void,
       handleAddImage: (e: Event) => void,
-      handleSwitchProduct: (e: Event) => void,
       handleDelete: () => void,
       handleDuplicate: () => void,
       handleBringForward: () => void,
@@ -64,6 +74,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         selection: true,
         interactive: true,
       });
+      // Admin y editor comparten un único plano interno de 800×800 px.
+      canvas.setWidth(ADMIN_BASE_SIZE);
+      canvas.setHeight(ADMIN_BASE_SIZE);
+      // Sólo el tamaño visual se adapta al contenedor; el buffer y las
+      // coordenadas internas conservan siempre 800×800.
+      canvas.setDimensions({ width: '100%', height: '100%' }, { cssOnly: true });
 
       // Forzar interactividad global del lienzo
       canvas.set({
@@ -83,12 +99,13 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       const defaultObjectProps = {
         selectable: true,
         evented: true,
+        hasControls: true,
+        lockUniScaling: false,
         lockMovementX: false,
         lockMovementY: false,
         lockRotation: false,
         lockScalingX: false,
         lockScalingY: false,
-        hasControls: true,
         hasBorders: true,
       };
 
@@ -115,11 +132,47 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         updateHistoryButtons();
       };
 
-      let activeProduct: ProductConfig = initialProduct;
+      let activeProduct: Product = initialProduct;
       let activeView: ProductView = initialProduct.views[0];
 
       const getView = (viewId: string): ProductView =>
         activeProduct.views.find((v) => v.id === viewId) || activeProduct.views[0];
+
+      const getPercentPrintArea = (view: ProductView): PrintArea => {
+        if (view.printAreaUnit === 'percent') {
+          return view.printArea;
+        }
+        // Compatibilidad con el catálogo creado antes de usar porcentajes.
+        return {
+          x: (view.printArea.x * 100) / ADMIN_BASE_SIZE,
+          y: (view.printArea.y * 100) / ADMIN_BASE_SIZE,
+          width: (view.printArea.width * 100) / ADMIN_BASE_SIZE,
+          height: (view.printArea.height * 100) / ADMIN_BASE_SIZE,
+        };
+      };
+
+      const getRenderedPrintArea = (view: ProductView): PrintArea => {
+        const area = getPercentPrintArea(view);
+        const backgroundImage = canvas.backgroundImage as any;
+        if (!backgroundImage?.width || !backgroundImage?.height) {
+          return {
+            x: (area.x / 100) * canvas.getWidth(), y: (area.y / 100) * canvas.getHeight(),
+            width: (area.width / 100) * canvas.getWidth(), height: (area.height / 100) * canvas.getHeight(),
+          };
+        }
+        const scaleX = backgroundImage.scaleX || 1;
+        const scaleY = backgroundImage.scaleY || scaleX;
+        const renderedWidth = backgroundImage.width * scaleX;
+        const renderedHeight = backgroundImage.height * scaleY;
+        const imgLeft = backgroundImage.left - renderedWidth / 2;
+        const imgTop = backgroundImage.top - renderedHeight / 2;
+        return {
+          x: imgLeft + (area.x / 100) * renderedWidth,
+          y: imgTop + (area.y / 100) * renderedHeight,
+          width: (area.width / 100) * renderedWidth,
+          height: (area.height / 100) * renderedHeight,
+        };
+      };
 
       const loadOverlay = (view: ProductView) => {
         // Cargar el overlay del artículo (taza, funda, playera...) según la vista activa.
@@ -129,29 +182,41 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // La carga se envuelve en try/catch y el callback verifica !img para que un
         // error de red (404, CORS bloqueado) nunca congele el flujo de la vista.
         return new Promise<void>((resolve) => {
-          if (!view?.overlayImage) {
+          if (!view?.mockupUrl) {
             // Sin overlay: limpiar fondo residual y continuar sin bloquear el lienzo.
             canvas.setBackgroundImage(null, canvas.renderAll.bind(canvas));
+            drawSafeArea(getPercentPrintArea(view));
             resolve();
             return;
           }
           try {
             fabric.Image.fromURL(
-              view.overlayImage,
+              view.mockupUrl,
               (img) => {
                 if (!img) {
                   // La red falló (404, CORS...). Limpiar el fondo y no congelar el lienzo.
                   canvas.setBackgroundImage(null, canvas.renderAll.bind(canvas));
+                  drawSafeArea(getPercentPrintArea(view));
                   resolve();
                   return;
                 }
-                img.scaleToWidth(canvas.getWidth()); // Ajustar al ancho del canvas
-                canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas), {
-                  originX: 'left',
-                  originY: 'top',
-                  scaleX: img.scaleX,
-                  scaleY: img.scaleY,
+                const canvasWidth = canvas.getWidth();
+                const canvasHeight = canvas.getHeight();
+                const imageWidth = img.width || canvasWidth;
+                const imageHeight = img.height || canvasHeight;
+                const scale = Math.min(canvasWidth / imageWidth, canvasHeight / imageHeight);
+                img.set({
+                  scaleX: scale,
+                  scaleY: scale,
+                  left: canvasWidth / 2,
+                  top: canvasHeight / 2,
+                  originX: 'center',
+                  originY: 'center',
+                  selectable: false,
+                  evented: false,
                 });
+                canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas));
+                drawSafeArea(getPercentPrintArea(view));
                 resolve();
               },
               { crossOrigin: 'anonymous' },
@@ -164,25 +229,30 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         });
       };
 
-      const drawSafeArea = (view: ProductView) => {
+      const drawSafeArea = (printArea: PrintArea) => {
         // Zona de diseño seguro (caja punteada verde). Invisible para el puntero del
         // mouse: selectable/evented = false y enviada al fondo (sendToBack) para que
         // nunca tape ni bloquee los textos/imágenes agregados por el usuario.
         const c = fabricCanvasRef.current;
-        if (!c) return;
+        const backgroundImage = c?.backgroundImage as any;
+        if (!c || !printArea || !backgroundImage?.width || !backgroundImage?.height) return;
 
         // Eliminar guías/zonas de diseño previas
         const oldGuides = c.getObjects().filter((obj: any) => obj.isGuideLine);
         oldGuides.forEach((g: any) => c.remove(g));
 
-        const printArea = view?.printArea || { x: 150, y: 150, width: 400, height: 300 };
-
+        const imgScale = backgroundImage.scaleX || 1;
+        const scaleY = backgroundImage.scaleY || imgScale;
+        const renderedWidth = backgroundImage.width * imgScale;
+        const renderedHeight = backgroundImage.height * scaleY;
+        const imgLeft = backgroundImage.left - renderedWidth / 2;
+        const imgTop = backgroundImage.top - renderedHeight / 2;
         const safeZone = new fabric.Rect({
-          left: printArea.x,
-          top: printArea.y,
-          width: printArea.width,
-          height: printArea.height,
-          fill: 'transparent',
+          left: imgLeft + (Number(printArea.x) / 100) * renderedWidth,
+          top: imgTop + (Number(printArea.y) / 100) * renderedHeight,
+          width: (Number(printArea.width) / 100) * renderedWidth,
+          height: (Number(printArea.height) / 100) * renderedHeight,
+          fill: 'rgba(34, 197, 94, 0.05)',
           stroke: '#22c55e',
           strokeDashArray: [6, 6],
           strokeWidth: 2,
@@ -207,7 +277,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       // Restringe los objetos del usuario para que no se dibujen fuera del printArea
       const clampToPrintArea = (obj: any) => {
         if (!obj || obj.isGuide || !activeView) return;
-        const area = activeView.printArea;
+        const area = getRenderedPrintArea(activeView);
         const left = area.x;
         const top = area.y;
         const right = area.x + area.width;
@@ -250,12 +320,13 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         });
       };
 
-      const setupProduct = (product: ProductConfig) => {
+      const setupProduct = (product: Product) => {
         activeProduct = product;
         activeView = product.views[0];
         // Ajustar dimensiones del canvas de Fabric.js
-        canvas.setWidth(product.canvasWidth);
-        canvas.setHeight(product.canvasHeight);
+        // El admin define printArea sobre este mismo sistema de coordenadas.
+        canvas.setWidth(ADMIN_BASE_SIZE);
+        canvas.setHeight(ADMIN_BASE_SIZE);
         canvas.calcOffset();
 
         canvasDataRef.current = {};
@@ -266,7 +337,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // Limpiar el canvas reconstruyendo fondo + zona segura según la nueva vista
         isUpdatingHistory.current = true;
         canvas.clear();
-        drawSafeArea(activeView);
+        drawSafeArea(getPercentPrintArea(activeView));
         loadOverlay(activeView);
         canvas.requestRenderAll();
         isUpdatingHistory.current = false;
@@ -277,11 +348,13 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         updateHistoryButtons();
       };
 
+      setupProductRef.current = setupProduct;
       setupProduct(initialProduct);
 
       // --- Vistas de producto (frente, espalda, etc.) ---
       const finishViewSwitch = (viewId: string) => {
         const view = getView(viewId);
+        activeView = view;
         // Cambiar el overlay según la vista seleccionada
         loadOverlay(view);
 
@@ -307,7 +380,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         // Limpiar el canvas actual conservando la zona segura de la nueva vista
         c.clear();
-        drawSafeArea(getView(viewId));
+        drawSafeArea(getPercentPrintArea(getView(viewId)));
 
         // Cargar el diseño existente de la nueva vista (si existe)
         const stored = canvasDataRef.current[viewId];
@@ -349,7 +422,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const userObjects = c.getObjects().filter((o: any) => o !== safeZoneRef.current);
         userObjects.forEach((o: any) => c.remove(o));
         await loadOverlay(view);
-        drawSafeArea(view);
+        drawSafeArea(getPercentPrintArea(view));
 
         const stored = canvasDataRef.current[view.id];
         if (!stored) {
@@ -414,7 +487,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const obj = canvas.getActiveObject();
         if (!obj || (obj as any).isGuide) return;
 
-        const printArea = activeView.printArea || { x: 150, y: 150, width: 400, height: 300 };
+        const printArea = getRenderedPrintArea(activeView);
 
         // Forzar que el objeto conserve los permisos de arrastre del ratón
         obj.set({
@@ -652,15 +725,6 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           fabricCanvasRef.current.renderAll();
         };
       };
-      // Listener para cambiar de producto
-      handleSwitchProduct = (e: Event) => {
-        const customEvent = e as CustomEvent<{ product: ProductConfig }>;
-        const newProduct = customEvent.detail.product;
-        if (newProduct) {
-          setupProduct(newProduct);
-        }
-      };
-
       // --- Listeners para manipulación de objetos ---
       handleDelete = () => {
         if (!fabricCanvasRef.current) return;
@@ -1055,7 +1119,6 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:change-font', handleFontChange);
       window.addEventListener('editor:change-fontSize', handleFontSizeChange);
       window.addEventListener('editor:add-image', handleAddImage);
-      window.addEventListener('editor:switch-product', handleSwitchProduct);
       window.addEventListener('editor:delete-active', handleDelete);
       window.addEventListener('editor:clear-canvas', handleClear);
       window.addEventListener('editor:duplicate-active', handleDuplicate);
@@ -1094,9 +1157,6 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleAddImage) {
         window.removeEventListener('editor:add-image', handleAddImage);
-      }
-      if (handleSwitchProduct) {
-        window.removeEventListener('editor:switch-product', handleSwitchProduct);
       }
       if (handleDelete) {
         window.removeEventListener('editor:delete-active', handleDelete);
@@ -1150,13 +1210,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         fabricCanvasRef.current.dispose();
         fabricCanvasRef.current = null;
       }
+      setupProductRef.current = null;
     };
-  }, []); // Dependencia vacía para que se ejecute solo una vez al montar
+  }, []);
 
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[32px] border border-slate-200 bg-[#F4F5F7] p-0 shadow-sm">
-      <div className="pointer-events-none overflow-hidden rounded-md shadow-inner">
-        <canvas ref={canvasRef} width={initialProduct.canvasWidth} height={initialProduct.canvasHeight} style={{ pointerEvents: 'auto' }} />
+      <div className="pointer-events-none mx-auto flex aspect-square w-full max-w-[600px] items-center justify-center overflow-hidden rounded-md shadow-inner">
+        <canvas ref={canvasRef} width={800} height={800} style={{ width: '100%', height: '100%', pointerEvents: 'auto' }} />
       </div>
       {!isCropping ? (
         <div className="pointer-events-none absolute left-1/2 top-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full border border-slate-200 bg-white/95 p-1 shadow-lg backdrop-blur-sm">

@@ -13,7 +13,8 @@
     "lucide-react": "^0.470.0",
     "next": "^15.2.0",
     "react": "^18.3.0",
-    "react-dom": "^18.3.0"
+    "react-dom": "^18.3.0",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@types/fabric": "^5.3.11",
