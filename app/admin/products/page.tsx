@@ -18,20 +18,27 @@ type ProductForm = {
 const emptyForm: ProductForm = {
   name: '', price: '', category: '', mockupUrl: '', x: '200', y: '200', width: '400', height: '400',
 };
-const REFERENCE_SIZE = 800;
+// Los valores que el administrador captura siempre pertenecen a este lienzo,
+// independientemente del tamaño original del archivo del mockup.
+const REFERENCE_WIDTH = 800;
+const REFERENCE_HEIGHT = 800;
+
+const referencePixelsToPercent = (value: number, referenceDimension: number) =>
+  (value * 100) / referenceDimension;
 
 const toForm = (product: Product): ProductForm => {
   const view = product.views[0];
-  const scale = view?.printAreaUnit === 'percent' ? REFERENCE_SIZE / 100 : 1;
+  const xScale = view?.printAreaUnit === 'percent' ? REFERENCE_WIDTH / 100 : 1;
+  const yScale = view?.printAreaUnit === 'percent' ? REFERENCE_HEIGHT / 100 : 1;
   return {
     name: product.name,
     price: String(product.price),
     category: product.category,
     mockupUrl: view?.mockupUrl ?? '',
-    x: String((view?.printArea.x ?? 0) * scale),
-    y: String((view?.printArea.y ?? 0) * scale),
-    width: String((view?.printArea.width ?? 0) * scale),
-    height: String((view?.printArea.height ?? 0) * scale),
+    x: String((view?.printArea.x ?? 0) * xScale),
+    y: String((view?.printArea.y ?? 0) * yScale),
+    width: String((view?.printArea.width ?? 0) * xScale),
+    height: String((view?.printArea.height ?? 0) * yScale),
   };
 };
 
@@ -91,19 +98,20 @@ export default function AdminProductsPage() {
       name: form.name.trim(),
       price: Number(form.price),
       category: form.category.trim(),
-      canvasWidth: 800,
-      canvasHeight: 800,
+      canvasWidth: REFERENCE_WIDTH,
+      canvasHeight: REFERENCE_HEIGHT,
       views: [{
         id: 'front',
         label: 'Frente',
         mockupUrl: form.mockupUrl.trim(),
-        // El formulario opera sobre una cuadrícula de referencia de 800 px;
-        // el producto guarda coordenadas relativas reutilizables para cualquier mockup.
+        // El formulario opera sobre una cuadrícula de referencia. Al persistir,
+        // se normaliza contra ella para que el área sea relativa a la imagen
+        // completa (incluidos sus bordes transparentes o vacíos).
         printArea: {
-          x: (area.x * 100) / REFERENCE_SIZE,
-          y: (area.y * 100) / REFERENCE_SIZE,
-          width: (area.width * 100) / REFERENCE_SIZE,
-          height: (area.height * 100) / REFERENCE_SIZE,
+          x: referencePixelsToPercent(area.x, REFERENCE_WIDTH),
+          y: referencePixelsToPercent(area.y, REFERENCE_HEIGHT),
+          width: referencePixelsToPercent(area.width, REFERENCE_WIDTH),
+          height: referencePixelsToPercent(area.height, REFERENCE_HEIGHT),
         },
         printAreaUnit: 'percent',
       }],
@@ -137,7 +145,7 @@ export default function AdminProductsPage() {
               {imageDimensions && <p className="text-xs text-slate-500">Dimensiones originales detectadas: {imageDimensions.width} × {imageDimensions.height} px</p>}
             </div>
             <fieldset className="mt-6 rounded-lg border border-slate-200 p-4">
-              <legend className="px-2 text-sm font-semibold text-slate-700">Zona segura de impresión (px sobre un canvas de 800 × 800)</legend>
+              <legend className="px-2 text-sm font-semibold text-slate-700">Zona segura de impresión (px sobre un canvas de {REFERENCE_WIDTH} × {REFERENCE_HEIGHT})</legend>
               <div className="mt-2 grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <Field label="X" type="number" min="0" value={form.x} onChange={(value) => setField('x', value)} required />
                 <Field label="Y" type="number" min="0" value={form.y} onChange={(value) => setField('y', value)} required />
@@ -151,8 +159,8 @@ export default function AdminProductsPage() {
           <section className="rounded-lg bg-white p-6 shadow">
             <h2 className="text-lg font-semibold text-slate-900">Vista previa</h2>
             <div className="relative mt-4 aspect-square overflow-hidden rounded-md bg-slate-100">
-              {form.mockupUrl ? <img src={form.mockupUrl} alt="Vista previa del mockup" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center p-8 text-center text-sm text-slate-400">Añade la URL del mockup para visualizarlo.</div>}
-              <div className="pointer-events-none absolute border-2 border-dashed border-emerald-500 bg-emerald-400/10" style={{ left: `${area.x / 8}%`, top: `${area.y / 8}%`, width: `${area.width / 8}%`, height: `${area.height / 8}%` }} />
+              {form.mockupUrl ? <img src={form.mockupUrl} alt="Vista previa del mockup" className="h-full w-full" /> : <div className="flex h-full items-center justify-center p-8 text-center text-sm text-slate-400">Añade la URL del mockup para visualizarlo.</div>}
+              <div className="pointer-events-none absolute border-2 border-dashed border-emerald-500 bg-emerald-400/10" style={{ left: `${referencePixelsToPercent(area.x, REFERENCE_WIDTH)}%`, top: `${referencePixelsToPercent(area.y, REFERENCE_HEIGHT)}%`, width: `${referencePixelsToPercent(area.width, REFERENCE_WIDTH)}%`, height: `${referencePixelsToPercent(area.height, REFERENCE_HEIGHT)}%` }} />
             </div>
           </section>
         </div>

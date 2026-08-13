@@ -160,10 +160,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             width: (area.width / 100) * canvas.getWidth(), height: (area.height / 100) * canvas.getHeight(),
           };
         }
-        const scaleX = backgroundImage.scaleX || 1;
-        const scaleY = backgroundImage.scaleY || scaleX;
-        const renderedWidth = backgroundImage.width * scaleX;
-        const renderedHeight = backgroundImage.height * scaleY;
+        // El mockup siempre se carga con contain, por lo que su escala es
+        // uniforme en ambos ejes.
+        const imgScale = backgroundImage.scaleX || 1;
+        const renderedWidth = backgroundImage.width * imgScale;
+        const renderedHeight = backgroundImage.height * imgScale;
         const imgLeft = backgroundImage.left - renderedWidth / 2;
         const imgTop = backgroundImage.top - renderedHeight / 2;
         return {
@@ -241,17 +242,17 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const oldGuides = c.getObjects().filter((obj: any) => obj.isGuideLine);
         oldGuides.forEach((g: any) => c.remove(g));
 
+        // `loadOverlay` aplica contain y centra la imagen. La zona segura se
+        // calcula dentro del rectángulo realmente ocupado por el mockup, no
+        // sobre el canvas de 800×800 que puede incluir franjas vacías.
         const imgScale = backgroundImage.scaleX || 1;
-        const scaleY = backgroundImage.scaleY || imgScale;
-        const renderedWidth = backgroundImage.width * imgScale;
-        const renderedHeight = backgroundImage.height * scaleY;
-        const imgLeft = backgroundImage.left - renderedWidth / 2;
-        const imgTop = backgroundImage.top - renderedHeight / 2;
+        const imgLeft = backgroundImage.left - (backgroundImage.width * imgScale / 2);
+        const imgTop = backgroundImage.top - (backgroundImage.height * imgScale / 2);
         const safeZone = new fabric.Rect({
-          left: imgLeft + (Number(printArea.x) / 100) * renderedWidth,
-          top: imgTop + (Number(printArea.y) / 100) * renderedHeight,
-          width: (Number(printArea.width) / 100) * renderedWidth,
-          height: (Number(printArea.height) / 100) * renderedHeight,
+          left: imgLeft + ((Number(printArea.x) / 100) * (backgroundImage.width * imgScale)),
+          top: imgTop + ((Number(printArea.y) / 100) * (backgroundImage.height * imgScale)),
+          width: (Number(printArea.width) / 100) * (backgroundImage.width * imgScale),
+          height: (Number(printArea.height) / 100) * (backgroundImage.height * imgScale),
           fill: 'rgba(34, 197, 94, 0.05)',
           stroke: '#22c55e',
           strokeDashArray: [6, 6],
@@ -259,10 +260,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           // PROPIEDADES CLAVE PARA QUE NO BLOQUEE EL MOUSE:
           selectable: false,
           evented: false,
+          isGuideLine: true,
           hasControls: false,
           hasBorders: false,
           excludeFromExport: true,
-        });
+        } as any);
 
         // Marcar como guía para excluirla de saveState/ensureObjectsInteractable
         (safeZone as any).isGuideLine = true;
