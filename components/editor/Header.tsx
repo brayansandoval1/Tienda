@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Download } from 'lucide-react';
 
 export default function Header() {
   return (
@@ -25,10 +25,20 @@ export default function Header() {
           </button>
         </div>
 
-        <button className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800">
-          Siguiente: Opciones
-          <ChevronRight size={16} />
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('editor:export-print'))}
+            className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+          >
+            <Download size={16} />
+            📥 Descargar para Imprenta (HD)
+          </button>
+          <button className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800">
+            Siguiente: Opciones
+            <ChevronRight size={16} />
+          </button>
+        </div>
       </div>
     </div>
   );

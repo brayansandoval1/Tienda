@@ -2,10 +2,10 @@
 
 import { useState, useEffect } from 'react'; // Import useState and useEffect
 import {
-  Share2,
   Trash2,
   RefreshCcw,
   Copy,
+  Download,
   Undo2,
   Redo2,
 } from 'lucide-react';
@@ -84,9 +84,9 @@ export default function FloatingFooter({ onReset }: FloatingFooterProps) { // Re
             Reiniciar
           </button>
 
-          <button className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800" type="button">
-            <Share2 size={16} />
-            Compartir
+          <button onClick={() => window.dispatchEvent(new CustomEvent('editor:export-print'))} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800" type="button">
+            <Download size={16} />
+            Descargar impresión
           </button>
         </div>
       </div>

@@ -62,6 +62,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleCropStart: () => void,
       handleCropEnd: () => void,
       handleRequestExport: () => void,
+      handleExportPrint: () => void,
       handleResetCrop: () => void,
       handleAlign: (e: Event) => void;
 
@@ -624,6 +625,58 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const renders = await exportAll();
         window.dispatchEvent(new CustomEvent('editor:export-sides', { detail: renders }));
       };
+
+      // Exporta sólo el arte del usuario, recortado al área imprimible de la
+      // cara actual. El canvas vuelve exactamente a su estado visual previo
+      // incluso si la generación del PNG falla.
+      const exportToPrint = () => {
+        const c = fabricCanvasRef.current;
+        if (!c || !activeView) return;
+
+        const printArea = getRenderedPrintArea(activeView);
+        if (printArea.width <= 0 || printArea.height <= 0) return;
+
+        const guides = c.getObjects().filter((object: any) => object.isGuideLine);
+        const guideVisibility = guides.map((guide: any) => guide.visible);
+        const originalBackground = c.backgroundImage;
+        const originalBackgroundColor = c.backgroundColor;
+        const originalClipPath = c.clipPath;
+
+        try {
+          // La guía, el mockup y el color de fondo son sólo ayudas visuales;
+          // la imprenta recibe un PNG transparente con el diseño plano.
+          guides.forEach((guide: any) => guide.set('visible', false));
+          c.backgroundImage = null;
+          c.backgroundColor = '';
+          c.clipPath = undefined;
+          c.getObjects().forEach((object: any) => object.setCoords());
+          c.renderAll();
+
+          const highResDataUrl = c.toDataURL({
+            format: 'png',
+            left: printArea.x,
+            top: printArea.y,
+            width: printArea.width,
+            height: printArea.height,
+            multiplier: 3,
+            quality: 1,
+          });
+
+          const link = document.createElement('a');
+          link.download = `diseno-impresion-${activeView.id}.png`;
+          link.href = highResDataUrl;
+          link.click();
+        } finally {
+          c.backgroundImage = originalBackground;
+          c.backgroundColor = originalBackgroundColor;
+          c.clipPath = originalClipPath;
+          guides.forEach((guide: any, index: number) => guide.set('visible', guideVisibility[index]));
+          c.renderAll();
+          c.requestRenderAll();
+        }
+      };
+
+      handleExportPrint = exportToPrint;
 
       // Alineación / centrado del objeto dentro de la Zona Segura (printArea) de la
       // vista activa. Versión limpia: garantiza que el objeto conserve los permisos de
@@ -1331,6 +1384,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:cancel-crop', handleCancelCrop);
       window.addEventListener('editor:reset-crop', handleResetCrop);
       window.addEventListener('editor:request-export', handleRequestExport);
+      window.addEventListener('editor:export-print', handleExportPrint);
       window.addEventListener('editor:align', handleAlign);
 
       canvas.on('object:added', saveState);
@@ -1399,6 +1453,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleRequestExport) {
         window.removeEventListener('editor:request-export', handleRequestExport);
+      }
+      if (handleExportPrint) {
+        window.removeEventListener('editor:export-print', handleExportPrint);
       }
       if (handleAlign) {
         window.removeEventListener('editor:align', handleAlign);
