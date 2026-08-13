@@ -1041,6 +1041,66 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       let cropOverlayRef: any = null;
       let targetImageRef: any = null;
 
+      const startCroppingImage = (activeObject: any) => {
+        const c = fabricCanvasRef.current;
+        if (!c || !activeObject || activeObject.type !== 'image') return;
+
+        // Sincronizar la matriz antes de leer posición/tamaño. Esto evita que
+        // el overlay use coordenadas previas al último arrastre o escalado.
+        activeObject.setCoords();
+
+        // Todas las imágenes de usuario usan un origen superior izquierdo al
+        // recortar. Se conserva exactamente su posición visual al convertir
+        // el origen desde center (el valor usado al insertarlas).
+        const center = activeObject.getCenterPoint();
+        activeObject.set({ originX: 'left', originY: 'top' });
+        activeObject.setPositionByOrigin(center, 'center', 'center');
+
+        if (!activeObject.originalWidth) {
+          activeObject.originalWidth = activeObject.width;
+          activeObject.originalHeight = activeObject.height;
+        }
+
+        c.setActiveObject(activeObject);
+        activeObject.setCoords();
+        c.calcOffset();
+        c.requestRenderAll();
+
+        targetImageRef = activeObject;
+        // El bounding rect usa la posición global ya transformada por Fabric;
+        // es la referencia visual exacta para dibujar el control de recorte.
+        const bound = activeObject.getBoundingRect(true, true);
+        const cropOverlay = new fabric.Rect({
+          // Rectángulo global: se superpone a los bordes visibles de la foto
+          // incluso si acaba de ser escalada, volteada o reposicionada.
+          left: bound.left,
+          top: bound.top,
+          width: bound.width,
+          height: bound.height,
+          originX: 'left',
+          originY: 'top',
+          fill: 'rgba(59, 130, 246, 0.15)',
+          stroke: '#3B82F6',
+          strokeWidth: 2,
+          strokeDashArray: [6, 6],
+          cornerColor: '#FFFFFF',
+          cornerStrokeColor: '#3B82F6',
+          cornerStyle: 'circle',
+          cornerSize: 12,
+          transparentCorners: false,
+          hasRotatingPoint: false,
+          lockRotation: true,
+          isCropOverlay: true,
+        } as any);
+
+        cropOverlay.setCoords();
+        cropOverlayRef = cropOverlay;
+        c.add(cropOverlay);
+        c.setActiveObject(cropOverlay);
+        c.requestRenderAll();
+        window.dispatchEvent(new CustomEvent('editor:crop-mode-active'));
+      };
+
       // Limpia cualquier proceso de recorte activo (overlays colgados, refs y estado React)
       const cancelCropMode = () => {
         const canvas = fabricCanvasRef.current;
@@ -1066,97 +1126,50 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         const activeObject = canvas.getActiveObject();
         if (!activeObject || activeObject.type !== 'image') return;
+        startCroppingImage(activeObject);
+      };
 
-        targetImageRef = activeObject;
+      const applyImageCrop = (targetImg: any, cropRect: any) => {
+        const c = fabricCanvasRef.current;
+        if (!c || !targetImg || !cropRect) return;
 
-        // Crear overlay de recorte sobre la imagen
-        const cropOverlay = new fabric.Rect({
-          left: activeObject.left,
-          top: activeObject.top,
-          width: activeObject.getScaledWidth(),
-          height: activeObject.getScaledHeight(),
-          fill: 'transparent',
-          stroke: '#3B82F6',
-          strokeWidth: 2,
-          strokeDashArray: [6, 6],
-          cornerColor: '#FFFFFF',
-          cornerStrokeColor: '#3B82F6',
-          cornerStyle: 'circle',
-          cornerSize: 12,
-          transparentCorners: false,
-          hasRotatingPoint: false,
-          lockRotation: true,
-          isCropOverlay: true,
-        } as any);
+        const scaleX = targetImg.scaleX || 1;
+        const scaleY = targetImg.scaleY || 1;
+        const cropRectLeft = cropRect.left || 0;
+        const cropRectTop = cropRect.top || 0;
+        const imageLeft = targetImg.left || 0;
+        const imageTop = targetImg.top || 0;
 
-        cropOverlayRef = cropOverlay;
-        canvas.add(cropOverlay);
-        canvas.setActiveObject(cropOverlay);
-        canvas.requestRenderAll();
+        // Convertir las coordenadas visuales del control a píxeles de la
+        // imagen fuente. `getScaledWidth` incluye cualquier ajuste aplicado
+        // por el usuario a los tiradores del rectángulo azul.
+        const relativeLeft = (cropRectLeft - imageLeft) / scaleX;
+        const relativeTop = (cropRectTop - imageTop) / scaleY;
+        const newCropX = Math.max(0, (targetImg.cropX || 0) + relativeLeft);
+        const newCropY = Math.max(0, (targetImg.cropY || 0) + relativeTop);
+        const newWidth = Math.max(1, cropRect.getScaledWidth() / scaleX);
+        const newHeight = Math.max(1, cropRect.getScaledHeight() / scaleY);
 
-        // Mostrar botones de confirmar/cancelar
-        window.dispatchEvent(new CustomEvent('editor:crop-mode-active'));
+        targetImg.set({
+          cropX: newCropX,
+          cropY: newCropY,
+          width: newWidth,
+          height: newHeight,
+          left: cropRectLeft,
+          top: cropRectTop,
+        });
+        targetImg.setCoords();
+        c.remove(cropRect);
+        cropOverlayRef = null;
+        targetImageRef = null;
+        c.setActiveObject(targetImg);
+        c.requestRenderAll();
+        saveState();
+        window.dispatchEvent(new CustomEvent('editor:crop-mode-inactive'));
       };
 
       handleConfirmCrop = () => {
-        const canvas = fabricCanvasRef.current;
-        if (!canvas || !cropOverlayRef || !targetImageRef) return;
-
-        const img = targetImageRef;
-        const rect = cropOverlayRef;
-
-        // 1. Obtener coordenadas relativas del recuadro respecto a la imagen
-        const imgElement = img._element;
-        if (!imgElement) return;
-
-        // Calcular la escala actual de la imagen
-        const scaleX = img.scaleX || 1;
-        const scaleY = img.scaleY || 1;
-
-        // Calcular origen y tamaño del corte en píxeles reales de la imagen
-        const cropX = Math.max(0, (rect.left - img.left) / scaleX);
-        const cropY = Math.max(0, (rect.top - img.top) / scaleY);
-        const cropWidth = (rect.width * rect.scaleX) / scaleX;
-        const cropHeight = (rect.height * rect.scaleY) / scaleY;
-
-        // 2. Crear un canvas auxiliar en memoria para recortar la imagen real
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = cropWidth;
-        tempCanvas.height = cropHeight;
-        const ctx = tempCanvas.getContext('2d');
-
-        if (ctx) {
-          ctx.drawImage(
-            imgElement,
-            cropX, cropY, cropWidth, cropHeight, // Zona origen
-            0, 0, cropWidth, cropHeight          // Zona destino
-          );
-
-          const croppedDataUrl = tempCanvas.toDataURL('image/png');
-
-          // 3. Actualizar la fuente de la imagen en Fabric.js
-          img.setSrc(croppedDataUrl, () => {
-            img.set({
-              left: rect.left,
-              top: rect.top,
-              width: cropWidth,
-              height: cropHeight,
-              scaleX: scaleX,
-              scaleY: scaleY,
-            });
-            
-            // Limpiar rectángulo de recorte
-            canvas.remove(rect);
-            cropOverlayRef = null;
-            targetImageRef = null;
-
-            canvas.setActiveObject(img);
-            canvas.requestRenderAll();
-            if (typeof saveState === 'function') saveState();
-            
-            window.dispatchEvent(new CustomEvent('editor:crop-mode-inactive'));
-          });
-        }
+        applyImageCrop(targetImageRef, cropOverlayRef);
       };
 
       handleCancelCrop = () => {
@@ -1170,13 +1183,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         const img = targetImageRef;
         const rect = cropOverlayRef;
+        img.setCoords();
+        const bound = img.getBoundingRect(true, true);
 
         // Restablecer el recuadro de recorte a los límites completos de la imagen
         rect.set({
-          left: img.left,
-          top: img.top,
-          width: img.getScaledWidth(),
-          height: img.getScaledHeight(),
+          left: bound.left,
+          top: bound.top,
+          width: bound.width,
+          height: bound.height,
           scaleX: 1,
           scaleY: 1,
         });
