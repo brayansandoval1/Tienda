@@ -6,7 +6,10 @@
 
 export interface ProductView {
   id: string;
-  label: string;
+  /** Nombre visible de la cara: Frente, Espalda, Lateral, etc. */
+  name: string;
+  /** Alias heredado para los productos persistidos antes de `name`. */
+  label?: string;
   /** Imagen base del mockup que se muestra en el editor. */
   mockupUrl: string;
   /** Capa opcional para composiciones de mockup más complejas. */
@@ -48,12 +51,14 @@ export const PRODUCTS: Product[] = [
     views: [
       {
         id: 'front',
+        name: 'Frente',
         label: 'Frente',
         mockupUrl: 'https://picsum.photos/id/10/800/800',
         printArea: { x: 250, y: 200, width: 300, height: 400 },
       },
       {
         id: 'back',
+        name: 'Espalda',
         label: 'Espalda',
         mockupUrl: 'https://picsum.photos/id/11/800/800',
         printArea: { x: 250, y: 200, width: 300, height: 400 },
@@ -70,6 +75,7 @@ export const PRODUCTS: Product[] = [
     views: [
       {
         id: 'back',
+        name: 'Reverso',
         label: 'Reverso',
         mockupUrl: 'https://placehold.co/800x800/png?text=Funda+iPhone',
         printArea: { x: 200, y: 100, width: 300, height: 600 },
@@ -86,6 +92,7 @@ export const PRODUCTS: Product[] = [
     views: [
       {
         id: 'front',
+        name: 'Vista Panorámica',
         label: 'Vista Panorámica',
         mockupUrl: 'https://placehold.co/800x800/png?text=Taza+11oz',
         printArea: { x: 150, y: 180, width: 500, height: 250 },
@@ -102,6 +109,7 @@ export const PRODUCTS: Product[] = [
     views: [
       {
         id: 'front',
+        name: 'Vista Principal',
         label: 'Vista Principal',
         mockupUrl: 'https://picsum.photos/id/20/800/800',
         printArea: { x: 150, y: 250, width: 500, height: 300 },
@@ -118,6 +126,7 @@ export const PRODUCTS: Product[] = [
     views: [
       {
         id: 'front',
+        name: 'Vista Principal',
         label: 'Vista Principal',
         mockupUrl: 'https://picsum.photos/id/30/800/800',
         printArea: { x: 300, y: 175, width: 200, height: 450 },
@@ -134,6 +143,7 @@ export const PRODUCTS: Product[] = [
     views: [
       {
         id: 'front',
+        name: 'Vista Principal',
         label: 'Vista Principal',
         mockupUrl: 'https://picsum.photos/id/40/800/800',
         printArea: { x: 275, y: 100, width: 250, height: 600 },

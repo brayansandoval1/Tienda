@@ -76,14 +76,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         fabricCanvasRef.current.dispose();
         fabricCanvasRef.current = null;
       }
-      // El canvas se muestra a 800×800 CSS px. Desactivar el buffer Retina
-      // evita que Fabric duplique sus coordenadas internas y desincronice el
-      // hit testing respecto al puntero.
-      (fabric as any).devicePixelRatio = 1;
+      // Conserva las coordenadas lógicas del editor, pero aumenta el buffer
+      // interno para que texto y vectores se rendericen nítidos en pantallas
+      // de alta densidad (también en monitores de densidad estándar).
+      (fabric as any).devicePixelRatio = Math.max(window.devicePixelRatio || 1, 2);
       const canvas = new (fabric as any).Canvas(canvasRef.current, {
         width: ADMIN_BASE_SIZE,
         height: ADMIN_BASE_SIZE,
-        enableRetinaScaling: false,
+        enableRetinaScaling: true,
+        imageSmoothingEnabled: true,
         backgroundColor: '#F4F5F7',
         selection: true,
         interactive: true,
@@ -248,7 +249,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         canvas.getObjects().forEach((object: any) => applyPrintAreaClip(object, view));
       };
 
-      const loadOverlay = (view: ProductView) => {
+      const loadProductMockup = (view: ProductView) => {
         // Cargar el overlay del artículo (taza, funda, playera...) según la vista activa.
         // La imagen se usa como fondo del canvas (setBackgroundImage): no pertenece a
         // getObjects() y, por defecto, es no interactiva (selectable/evented = false),
@@ -261,9 +262,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
           canvas.setZoom(1);
           canvas.calcOffset();
+          // Eliminar cualquier fondo anterior antes de iniciar la carga. El
+          // callback de Fabric garantiza que no quede un frame obsoleto.
+          canvas.setBackgroundImage(null, () => canvas.requestRenderAll());
           if (!view?.mockupUrl) {
-            // Sin overlay: limpiar fondo residual y continuar sin bloquear el lienzo.
-            canvas.setBackgroundImage(null, canvas.renderAll.bind(canvas));
+            // Sin mockup: dejar el lienzo utilizable y mostrar su zona segura.
             drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
             resolve();
             return;
@@ -272,29 +275,40 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             fabric.Image.fromURL(
               view.mockupUrl,
               (img) => {
-                if (!img) {
-                  // La red falló (404, CORS...). Limpiar el fondo y no congelar el lienzo.
-                  console.error('❌ Error: No se pudo cargar la imagen del mockup');
-                  canvas.setBackgroundImage(null, canvas.renderAll.bind(canvas));
+                // Fabric devuelve `null` ante un 404/CORS y algunas fuentes
+                // pueden crear el objeto sin dimensiones. No redimensionar en
+                // ninguno de esos casos evita dejar el canvas vacío o inválido.
+                if (!img || !img.width || !img.height) {
+                  console.error(`❌ Error al cargar la imagen del mockup en la ruta: ${view.mockupUrl}`);
                   drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
+                  canvas.requestRenderAll();
                   resolve();
                   return;
                 }
-                const imageWidth = img.width || ADMIN_BASE_SIZE;
-                const imageHeight = img.height || ADMIN_BASE_SIZE;
+                const rawWidth = img.width;
+                const rawHeight = img.height;
+                console.log('📸 MOCKUP CARGADO CON ÉXITO:', {
+                  url: view.mockupUrl,
+                  dimensiones: `${rawWidth}x${rawHeight}`,
+                });
                 // El plano interno adopta la proporción natural del mockup.
+                // Con Retina activo, Fabric conserva estas coordenadas lógicas
+                // y escala solamente el buffer de dibujo para ganar nitidez.
+                canvas.setDimensions({ width: rawWidth, height: rawHeight });
+                // Forzar el recálculo de bordes de textos y vectores tras el
+                // cambio de resolución interna.
+                canvas.requestRenderAll();
                 // El CSS sigue siendo responsive, sin deformar el render.
-                canvas.setDimensions({ width: imageWidth, height: imageHeight });
                 canvas.setDimensions({ width: '100%', height: '100%' }, { cssOnly: true });
                 canvas.calcOffset();
-                setCanvasAspectRatio(imageWidth / imageHeight);
+                setCanvasAspectRatio(rawWidth / rawHeight);
                 console.log('📐 DIAGNÓSTICO DE ESCALADO MOCKUP:', {
                   url: view.mockupUrl,
-                  dimensionesOriginales: `${imageWidth}x${imageHeight}`,
-                  tamanoCanvas: `${imageWidth}x${imageHeight}`,
+                  dimensionesOriginales: `${rawWidth}x${rawHeight}`,
+                  tamanoCanvas: `${rawWidth}x${rawHeight}`,
                   escalaCalculada: 1,
-                  anchoFinalEnCanvas: imageWidth,
-                  altoFinalEnCanvas: imageHeight,
+                  anchoFinalEnCanvas: rawWidth,
+                  altoFinalEnCanvas: rawHeight,
                 });
                 img.set({
                   scaleX: 1,
@@ -317,14 +331,18 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                   // La guía y los recortes usan la matriz final del fondo.
                   setupSafeAreaAndClipping(view);
                   canvas.renderAll();
+                  canvas.requestRenderAll();
                   resolve();
                 });
               },
               { crossOrigin: 'anonymous' },
             );
           } catch (err) {
-            // Error síncrono inesperado: limpiar fondo y seguir con el flujo de la vista.
-            canvas.setBackgroundImage(null, canvas.renderAll.bind(canvas));
+            // Error síncrono inesperado: conservar el editor interactivo y
+            // mostrar una guía, en vez de abortar el cambio de vista.
+            console.error(`❌ Error al iniciar la carga del mockup: ${view.mockupUrl}`, err);
+            drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
+            canvas.requestRenderAll();
             resolve();
           }
         });
@@ -411,8 +429,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       const snapshotCurrentObjects = () => {
         const c = fabricCanvasRef.current;
-        const userObjects = c ? c.getObjects().filter((o: any) => !o.isGuide) : [];
-        return JSON.stringify(userObjects.map((o: any) => o.toJSON()));
+        if (!c) return '[]';
+        // `toJSON()` conserva todas las propiedades necesarias para volver a
+        // enlivenar textos, imágenes y vectores de esta cara. Las guías no se
+        // incluyen porque se marcan con `excludeFromExport`.
+        const serializedCanvas = c.toJSON();
+        return JSON.stringify(serializedCanvas.objects || []);
       };
 
       // Garantiza que ningún objeto quede bloqueado para arrastrar/escalar
@@ -454,7 +476,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         isUpdatingHistory.current = true;
         canvas.clear();
         drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(activeView));
-        loadOverlay(activeView);
+        loadProductMockup(activeView);
         canvas.requestRenderAll();
         isUpdatingHistory.current = false;
         ensureObjectsInteractable();
@@ -471,8 +493,6 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       const finishViewSwitch = (viewId: string) => {
         const view = getView(viewId);
         activeView = view;
-        // Cambiar el overlay según la vista seleccionada
-        loadOverlay(view);
 
         currentViewIdRef.current = viewId;
         setCurrentViewId(viewId); // Actualizar el estado
@@ -485,40 +505,37 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         canvas.requestRenderAll();
       };
 
-      const switchView = (viewId: string) => {
+      const switchView = async (viewId: string) => {
         const c = fabricCanvasRef.current;
         if (!c || viewId === currentViewIdRef.current) return;
 
-        // Guardar el estado actual en la vista previa
+        // Persistir los objetos de la cara actual antes de cambiar de mockup.
         canvasDataRef.current[currentViewIdRef.current] = snapshotCurrentObjects();
-
         isUpdatingHistory.current = true;
+        const nextView = getView(viewId);
+        activeView = nextView;
 
-        // Limpiar el canvas actual conservando la zona segura de la nueva vista
+        // 1) Limpiar la cara actual. 2) Esperar su nuevo fondo y zona segura.
+        // Sólo entonces se rehidratan los objetos guardados para esa vista.
         c.clear();
-        drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(getView(viewId)));
+        await loadProductMockup(nextView);
 
-        // Cargar el diseño existente de la nueva vista (si existe)
         const stored = canvasDataRef.current[viewId];
         if (stored) {
-          // @ts-ignore Fabric.js types mismatch
-          fabric.util.enlivenObjects(JSON.parse(stored), (enlivened: any[]) => {
-            enlivened.forEach((obj: any) => c.add(obj));
-            ensureObjectsInteractable();
-            // Reafirmar interactividad global tras cargar objetos
-            c.selection = true;
-            c.calcOffset();
-            if (safeZoneRef.current) c.sendToBack(safeZoneRef.current); // guía siempre detrás
-            c.requestRenderAll();
-            finishViewSwitch(viewId);
+          await new Promise<void>((resolve) => {
+            // @ts-ignore Fabric.js types mismatch
+            fabric.util.enlivenObjects(JSON.parse(stored), (enlivened: any[]) => {
+              enlivened.forEach((obj: any) => c.add(makeObjectInteractive(obj)));
+              resolve();
+            });
           });
-
-        } else {
-          c.selection = true;
-          c.calcOffset();
-          if (safeZoneRef.current) c.sendToBack(safeZoneRef.current); // guía siempre detrás
-          finishViewSwitch(viewId);
         }
+        ensureObjectsInteractable();
+        c.selection = true;
+        c.calcOffset();
+        if (safeZoneRef.current) c.sendToBack(safeZoneRef.current);
+        c.requestRenderAll();
+        finishViewSwitch(viewId);
       };
       // @ts-ignore ref assignment for React 19 readonly typing
       (switchViewRef as any).current = switchView;
@@ -554,7 +571,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // Limpiar solo objetos de usuario (conservando la zona segura)
         const userObjects = c.getObjects().filter((o: any) => o !== safeZoneRef.current);
         userObjects.forEach((o: any) => c.remove(o));
-        await loadOverlay(view);
+        await loadProductMockup(view);
         drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
 
         const stored = canvasDataRef.current[view.id];
@@ -813,25 +830,29 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleAddText = (e: Event) => {
         if (!fabricCanvasRef.current) return;
         const customEvent = e as CustomEvent;
-        const { text, fontSize, fontWeight } = customEvent.detail || {};
+        const { text, fontSize, fontWeight, fontFamily } = customEvent.detail || {};
+        // Estas dimensiones son las coordenadas lógicas reales del mockup.
+        // Fabric aplica el multiplicador HDPI solamente a su buffer interno.
+        const rawWidth = canvas.getWidth();
+        const rawHeight = canvas.getHeight();
 
         const newText = makeObjectInteractive(new fabric.IText(text || 'Texto', {
-          left: canvas.getWidth() / 2,
-          top: canvas.getHeight() / 2,
+          left: rawWidth / 2,
+          top: rawHeight / 3,
           originX: 'center',
           originY: 'center',
           fontSize: fontSize || 24,
           fontWeight: fontWeight || 'normal',
           fill: '#1e293b',
+          fontFamily: fontFamily || 'Arial',
           editable: true,
           ...defaultObjectProps,
         }));
 
         fabricCanvasRef.current.add(newText);
-        fabricCanvasRef.current.centerObject(newText);
         fabricCanvasRef.current.setActiveObject(newText);
         fabricCanvasRef.current.bringToFront(newText);
-        fabricCanvasRef.current.renderAll();
+        fabricCanvasRef.current.requestRenderAll();
       };
 
       // Listener para agregar imagen vía CustomEvent
@@ -1387,20 +1408,22 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         <canvas ref={canvasRef} className="block max-h-full max-w-full object-contain" style={{ width: '100%', height: '100%', pointerEvents: 'auto' }} />
       </div>
       {!isCropping ? (
-        <div className="pointer-events-none absolute left-1/2 top-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full border border-slate-200 bg-white/95 p-1 shadow-lg backdrop-blur-sm">
+        <div className="pointer-events-none absolute left-4 top-1/2 z-30 flex -translate-y-1/2 flex-col gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur-sm">
           {productViews.length > 1 &&
             productViews.map((view) => (
               <button
                 key={view.id}
                 type="button"
                 onClick={() => switchViewRef.current?.(view.id)}
-                className={`pointer-events-auto rounded-full px-4 py-1.5 text-sm font-semibold transition ${
+                aria-pressed={currentViewId === view.id}
+                className={`pointer-events-auto grid w-20 gap-1 rounded-xl p-1.5 text-xs font-semibold transition ${
                   currentViewId === view.id
-                    ? 'bg-blue-600 text-white shadow-sm'
+                    ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-200'
                     : 'text-slate-600 hover:bg-slate-100'
                 }`}
               >
-                {view.label}
+                <img src={view.mockupUrl} alt="" className="aspect-square w-full rounded-lg object-cover" />
+                <span className="truncate">{view.name || view.label || 'Vista'}</span>
               </button>
             ))}
           {isImageSelected && (

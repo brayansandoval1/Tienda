@@ -13,15 +13,23 @@ import ViewSelector from '@/components/editor/ViewSelector';
 
 const EditorCanvas = dynamic(() => import('@/components/editor/EditorCanvas'), { ssr: false });
 
-export default function EditorShell({ producto }: { producto: Producto }) {
+export default function EditorShell({ producto, initialProduct }: { producto: Producto; initialProduct?: Product }) {
   const products = useProductStore((state) => state.products);
   // Estado para el producto actualmente seleccionado en el editor
-  const [currentProduct, setCurrentProduct] = useState<Product>(products.find((p) => p.id === producto.id) || products[0]);
+  const [currentProduct, setCurrentProduct] = useState<Product>(
+    initialProduct || products.find((p) => p.id === producto.id) || products[0],
+  );
 
   useEffect(() => {
+    // La página de demo inyecta datos mock y no debe ser reemplazada durante
+    // la rehidratación del store local.
+    if (initialProduct) {
+      setCurrentProduct(initialProduct);
+      return;
+    }
     const matchingProduct = products.find((p) => p.id === producto.id);
     if (matchingProduct) setCurrentProduct(matchingProduct);
-  }, [products, producto.id]);
+  }, [initialProduct, products, producto.id]);
 
   // Listener para el evento de cambio de producto desde ViewSelector
   useEffect(() => {
