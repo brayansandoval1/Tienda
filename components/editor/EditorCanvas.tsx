@@ -22,6 +22,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   const isUpdatingHistory = useRef(false);
   const [isCropping, setIsCropping] = useState(false);
   const [isImageSelected, setIsImageSelected] = useState(false);
+  const [canvasAspectRatio, setCanvasAspectRatio] = useState(1);
   const [currentViewId, setCurrentViewId] = useState<string>(initialProduct.views[0]?.id ?? 'front');
   const [productViews, setProductViews] = useState<ProductView[]>(initialProduct.views);
   const currentViewIdRef = useRef<string>(initialProduct.views[0]?.id ?? 'front');
@@ -149,6 +150,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           lockScalingX: false,
           lockScalingY: false,
         });
+        applyPrintAreaClip(object as any);
         return object;
       };
 
@@ -209,14 +211,41 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const imgScale = backgroundImage.scaleX || 1;
         const renderedWidth = backgroundImage.width * imgScale;
         const renderedHeight = backgroundImage.height * imgScale;
-        const imgLeft = backgroundImage.left - renderedWidth / 2;
-        const imgTop = backgroundImage.top - renderedHeight / 2;
+        const imgLeft = backgroundImage.originX === 'center'
+          ? backgroundImage.left - renderedWidth / 2
+          : backgroundImage.left;
+        const imgTop = backgroundImage.originY === 'center'
+          ? backgroundImage.top - renderedHeight / 2
+          : backgroundImage.top;
         return {
           x: imgLeft + (area.x / 100) * renderedWidth,
           y: imgTop + (area.y / 100) * renderedHeight,
           width: (area.width / 100) * renderedWidth,
           height: (area.height / 100) * renderedHeight,
         };
+      };
+
+      // Fabric aplica el clipPath por objeto. Así el mockup y la guía siguen
+      // visibles completos, mientras que el diseño del usuario sólo aparece
+      // dentro del área imprimible sobre el cuerpo del producto.
+      const applyPrintAreaClip = (object: any, view = activeView) => {
+        if (!object || object.isGuide || object.isCropOverlay) return;
+        const area = getRenderedPrintArea(view);
+        object.set({
+          clipPath: new fabric.Rect({
+            left: area.x,
+            top: area.y,
+            width: area.width,
+            height: area.height,
+            originX: 'left',
+            originY: 'top',
+            absolutePositioned: true,
+          } as any),
+        });
+      };
+
+      const applyPrintAreaClipping = (view = activeView) => {
+        canvas.getObjects().forEach((object: any) => applyPrintAreaClip(object, view));
       };
 
       const loadOverlay = (view: ProductView) => {
@@ -227,10 +256,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // La carga se envuelve en try/catch y el callback verifica !img para que un
         // error de red (404, CORS bloqueado) nunca congele el flujo de la vista.
         return new Promise<void>((resolve) => {
+          // Cada mockup parte de un sistema de coordenadas 1:1: sin zoom ni
+          // paneo residual de una vista o interacción previa.
+          canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+          canvas.setZoom(1);
+          canvas.calcOffset();
           if (!view?.mockupUrl) {
             // Sin overlay: limpiar fondo residual y continuar sin bloquear el lienzo.
             canvas.setBackgroundImage(null, canvas.renderAll.bind(canvas));
-            drawSafeArea(getPercentPrintArea(view));
+            drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
             resolve();
             return;
           }
@@ -240,23 +274,35 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
               (img) => {
                 if (!img) {
                   // La red falló (404, CORS...). Limpiar el fondo y no congelar el lienzo.
+                  console.error('❌ Error: No se pudo cargar la imagen del mockup');
                   canvas.setBackgroundImage(null, canvas.renderAll.bind(canvas));
-                  drawSafeArea(getPercentPrintArea(view));
+                  drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
                   resolve();
                   return;
                 }
-                const canvasWidth = canvas.getWidth();
-                const canvasHeight = canvas.getHeight();
-                const imageWidth = img.width || canvasWidth;
-                const imageHeight = img.height || canvasHeight;
-                const scale = Math.min(canvasWidth / imageWidth, canvasHeight / imageHeight);
+                const imageWidth = img.width || ADMIN_BASE_SIZE;
+                const imageHeight = img.height || ADMIN_BASE_SIZE;
+                // El plano interno adopta la proporción natural del mockup.
+                // El CSS sigue siendo responsive, sin deformar el render.
+                canvas.setDimensions({ width: imageWidth, height: imageHeight });
+                canvas.setDimensions({ width: '100%', height: '100%' }, { cssOnly: true });
+                canvas.calcOffset();
+                setCanvasAspectRatio(imageWidth / imageHeight);
+                console.log('📐 DIAGNÓSTICO DE ESCALADO MOCKUP:', {
+                  url: view.mockupUrl,
+                  dimensionesOriginales: `${imageWidth}x${imageHeight}`,
+                  tamanoCanvas: `${imageWidth}x${imageHeight}`,
+                  escalaCalculada: 1,
+                  anchoFinalEnCanvas: imageWidth,
+                  altoFinalEnCanvas: imageHeight,
+                });
                 img.set({
-                  scaleX: scale,
-                  scaleY: scale,
-                  left: canvasWidth / 2,
-                  top: canvasHeight / 2,
-                  originX: 'center',
-                  originY: 'center',
+                  scaleX: 1,
+                  scaleY: 1,
+                  left: 0,
+                  top: 0,
+                  originX: 'left',
+                  originY: 'top',
                   selectable: false,
                   evented: false,
                   lockMovementX: true,
@@ -264,10 +310,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                   lockScalingX: true,
                   lockScalingY: true,
                   lockRotation: true,
+                  excludeFromExport: true,
                 });
-                canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas));
-                drawSafeArea(getPercentPrintArea(view));
-                resolve();
+                canvas.setBackgroundImage(img, () => {
+                  console.log('✅ BackgroundImage aplicado correctamente al Canvas');
+                  // La guía y los recortes usan la matriz final del fondo.
+                  setupSafeAreaAndClipping(view);
+                  canvas.renderAll();
+                  resolve();
+                });
               },
               { crossOrigin: 'anonymous' },
             );
@@ -279,30 +330,25 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         });
       };
 
-      const drawSafeArea = (printArea: PrintArea) => {
+      const drawSafeArea = (canvasWidth: number, canvasHeight: number, printArea: PrintArea) => {
         // Zona de diseño seguro (caja punteada verde). Invisible para el puntero del
         // mouse: selectable/evented = false y enviada al fondo (sendToBack) para que
         // nunca tape ni bloquee los textos/imágenes agregados por el usuario.
         const c = fabricCanvasRef.current;
-        const backgroundImage = c?.backgroundImage as any;
-        if (!c || !printArea || !backgroundImage?.width || !backgroundImage?.height) return;
+        if (!c || !printArea) return;
 
         // Eliminar guías/zonas de diseño previas
         const oldGuides = c.getObjects().filter((obj: any) => obj.isGuideLine);
         oldGuides.forEach((g: any) => c.remove(g));
 
-        // `loadOverlay` aplica contain y centra la imagen. La zona segura se
-        // calcula dentro del rectángulo realmente ocupado por el mockup, no
-        // sobre el canvas de 800×800 que puede incluir franjas vacías.
-        const imgScale = backgroundImage.scaleX || 1;
-        const imgLeft = backgroundImage.left - (backgroundImage.width * imgScale / 2);
-        const imgTop = backgroundImage.top - (backgroundImage.height * imgScale / 2);
+        // El canvas ya tiene el tamaño natural del mockup, por lo que los
+        // porcentajes se traducen directamente sobre sus dimensiones reales.
         const safeZone = new fabric.Rect({
-          left: imgLeft + ((Number(printArea.x) / 100) * (backgroundImage.width * imgScale)),
-          top: imgTop + ((Number(printArea.y) / 100) * (backgroundImage.height * imgScale)),
-          width: (Number(printArea.width) / 100) * (backgroundImage.width * imgScale),
-          height: (Number(printArea.height) / 100) * (backgroundImage.height * imgScale),
-          fill: 'transparent',
+          left: (Number(printArea.x) / 100) * canvasWidth,
+          top: (Number(printArea.y) / 100) * canvasHeight,
+          width: (Number(printArea.width) / 100) * canvasWidth,
+          height: (Number(printArea.height) / 100) * canvasHeight,
+          fill: 'rgba(34, 197, 94, 0.05)',
           stroke: '#22c55e',
           strokeDashArray: [6, 6],
           strokeWidth: 2,
@@ -327,7 +373,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         safeZoneRef.current = safeZone;
         c.add(safeZone);
         c.sendToBack(safeZone); // Siempre detrás de los objetos del usuario
+        applyPrintAreaClipping(activeView);
         c.requestRenderAll();
+      };
+
+      const setupSafeAreaAndClipping = (view: ProductView) => {
+        activeView = view;
+        drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
+        applyPrintAreaClipping(view);
       };
 
       // Restringe los objetos del usuario para que no se dibujen fuera del printArea
@@ -400,7 +453,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // Limpiar el canvas reconstruyendo fondo + zona segura según la nueva vista
         isUpdatingHistory.current = true;
         canvas.clear();
-        drawSafeArea(getPercentPrintArea(activeView));
+        drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(activeView));
         loadOverlay(activeView);
         canvas.requestRenderAll();
         isUpdatingHistory.current = false;
@@ -443,7 +496,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         // Limpiar el canvas actual conservando la zona segura de la nueva vista
         c.clear();
-        drawSafeArea(getPercentPrintArea(getView(viewId)));
+        drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(getView(viewId)));
 
         // Cargar el diseño existente de la nueva vista (si existe)
         const stored = canvasDataRef.current[viewId];
@@ -502,7 +555,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const userObjects = c.getObjects().filter((o: any) => o !== safeZoneRef.current);
         userObjects.forEach((o: any) => c.remove(o));
         await loadOverlay(view);
-        drawSafeArea(getPercentPrintArea(view));
+        drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
 
         const stored = canvasDataRef.current[view.id];
         if (!stored) {
@@ -793,10 +846,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         imgElement.src = dataUrl;
 
         imgElement.onload = () => {
+          const printArea = getRenderedPrintArea(activeView);
+          const maxInitialSize = Math.min(300, printArea.width, printArea.height);
           // Una vez cargada en el HTML, crear el objeto de Fabric
           const fabricImage = makeObjectInteractive(new fabric.Image(imgElement, {
-            left: canvas.getWidth() / 2,
-            top: canvas.getHeight() / 2,
+            // Insertar en el centro de la zona segura, que coincide con el
+            // centro del canvas para áreas centradas y nunca cae fuera de ella.
+            left: printArea.x + printArea.width / 2,
+            top: printArea.y + printArea.height / 2,
             originX: 'center',
             originY: 'center',
             cornerStyle: 'circle',
@@ -804,13 +861,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             ...defaultObjectProps,
           }));
 
-          // Escalar si es muy grande
-          if (fabricImage.width && fabricImage.width > 300) {
-            fabricImage.scaleToWidth(300);
+          // Limitar proporcionalmente el tamaño inicial para que la imagen
+          // quede dentro de la zona segura sin deformarse.
+          const largestSide = Math.max(fabricImage.width || 0, fabricImage.height || 0);
+          if (largestSide > maxInitialSize && maxInitialSize > 0) {
+            fabricImage.scale(maxInitialSize / largestSide);
           }
 
           fabricCanvasRef.current.add(fabricImage);
-          fabricCanvasRef.current.centerObject(fabricImage);
           fabricCanvasRef.current.setActiveObject(fabricImage);
           fabricCanvasRef.current.bringToFront(fabricImage);
           fabricCanvasRef.current.renderAll();
@@ -1318,9 +1376,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   }, []);
 
   return (
-    <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[32px] border border-slate-200 bg-[#F4F5F7] p-0 shadow-sm">
-      <div className="pointer-events-auto mx-auto flex aspect-square w-full max-w-[600px] select-none items-center justify-center overflow-hidden rounded-md shadow-inner">
-        <canvas ref={canvasRef} width={800} height={800} style={{ width: '100%', height: '100%', pointerEvents: 'auto' }} />
+    <div className="relative flex h-full w-full items-center justify-center overflow-auto bg-gray-50 p-4">
+      <div
+        className="pointer-events-auto relative flex max-h-[70vh] max-w-full shrink-0 select-none items-center justify-center overflow-hidden rounded-lg bg-white shadow-xl"
+        style={{
+          aspectRatio: canvasAspectRatio,
+          width: `min(100%, calc(70vh * ${canvasAspectRatio}))`,
+        }}
+      >
+        <canvas ref={canvasRef} className="block max-h-full max-w-full object-contain" style={{ width: '100%', height: '100%', pointerEvents: 'auto' }} />
       </div>
       {!isCropping ? (
         <div className="pointer-events-none absolute left-1/2 top-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full border border-slate-200 bg-white/95 p-1 shadow-lg backdrop-blur-sm">
