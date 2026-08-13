@@ -108,7 +108,10 @@ export default function TextToolbar() {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+    // La capa externa nunca intercepta gestos dirigidos al editor; sólo el
+    // panel y sus controles internos reciben eventos de puntero.
+    <div className="pointer-events-none">
+      <div className="pointer-events-auto flex flex-wrap items-center gap-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-center gap-2 text-slate-700">
         <label className="text-sm font-semibold text-slate-600">Color</label>
         <input
@@ -171,6 +174,7 @@ export default function TextToolbar() {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }

@@ -69,10 +69,25 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       if (!isMounted || !canvasRef.current) return;
 
       const fabric = fabricModule.fabric || fabricModule;
+      // React.StrictMode puede montar/desmontar el efecto dos veces durante
+      // desarrollo. Nunca dejes una instancia de Fabric sobre el mismo nodo.
+      if (fabricCanvasRef.current) {
+        fabricCanvasRef.current.dispose();
+        fabricCanvasRef.current = null;
+      }
+      // El canvas se muestra a 800×800 CSS px. Desactivar el buffer Retina
+      // evita que Fabric duplique sus coordenadas internas y desincronice el
+      // hit testing respecto al puntero.
+      (fabric as any).devicePixelRatio = 1;
       const canvas = new (fabric as any).Canvas(canvasRef.current, {
+        width: ADMIN_BASE_SIZE,
+        height: ADMIN_BASE_SIZE,
+        enableRetinaScaling: false,
         backgroundColor: '#F4F5F7',
         selection: true,
         interactive: true,
+        preserveObjectStacking: true,
+        subTargetCheck: false,
       });
       // Admin y editor comparten un único plano interno de 800×800 px.
       canvas.setWidth(ADMIN_BASE_SIZE);
@@ -85,10 +100,20 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       canvas.set({
         selection: true, // Permite seleccionar objetos con cuadro azul
         interactive: true, // Permite arrastrar, escalar y rotar
+        skipTargetFind: false,
         defaultCursor: 'default',
         hoverCursor: 'move',
         moveCursor: 'move',
       });
+
+      // Fabric crea un `upper-canvas` para recibir el puntero. Debe poder
+      // recibir eventos aunque el componente se monte dentro de otros layouts.
+      const fabricCanvasElement = canvas as any;
+      fabricCanvasElement.upperCanvasEl.style.pointerEvents = 'auto';
+      fabricCanvasElement.upperCanvasEl.style.userSelect = 'none';
+      fabricCanvasElement.upperCanvasEl.style.webkitUserSelect = 'none';
+      fabricCanvasElement.lowerCanvasEl.style.pointerEvents = 'auto';
+      fabricCanvasElement.wrapperEl.style.pointerEvents = 'auto';
 
       // Recalcular coordenadas del mouse respecto a la pantalla
       canvas.calcOffset();
@@ -108,6 +133,25 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         lockScalingY: false,
         hasBorders: true,
       };
+
+      // Reafirma la edición en cada objeto creado por el usuario. Se aplica
+      // después de construirlo para que ninguna opción específica de Fabric
+      // (o de un SVG cargado) pueda dejarlo estático.
+      const makeObjectInteractive = <T extends any>(object: T): T => {
+        (object as any).set({
+          selectable: true,
+          evented: true,
+          hasControls: true,
+          hasBorders: true,
+          lockMovementX: false,
+          lockMovementY: false,
+          lockRotation: false,
+          lockScalingX: false,
+          lockScalingY: false,
+        });
+        return object;
+      };
+
 
       const updateHistoryButtons = () => {
         window.dispatchEvent(
@@ -215,6 +259,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                   originY: 'center',
                   selectable: false,
                   evented: false,
+                  lockMovementX: true,
+                  lockMovementY: true,
+                  lockScalingX: true,
+                  lockScalingY: true,
+                  lockRotation: true,
                 });
                 canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas));
                 drawSafeArea(getPercentPrintArea(view));
@@ -253,13 +302,18 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           top: imgTop + ((Number(printArea.y) / 100) * (backgroundImage.height * imgScale)),
           width: (Number(printArea.width) / 100) * (backgroundImage.width * imgScale),
           height: (Number(printArea.height) / 100) * (backgroundImage.height * imgScale),
-          fill: 'rgba(34, 197, 94, 0.05)',
+          fill: 'transparent',
           stroke: '#22c55e',
           strokeDashArray: [6, 6],
           strokeWidth: 2,
           // PROPIEDADES CLAVE PARA QUE NO BLOQUEE EL MOUSE:
           selectable: false,
           evented: false,
+          lockMovementX: true,
+          lockMovementY: true,
+          lockScalingX: true,
+          lockScalingY: true,
+          lockRotation: true,
           isGuideLine: true,
           hasControls: false,
           hasBorders: false,
@@ -290,9 +344,16 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           const br = obj.getBoundingRect();
           bound = { left: br.left, top: br.top, width: br.width, height: br.height };
         }
-        const nx = Math.min(Math.max(bound.left, left), Math.max(left, right - bound.width));
-        const ny = Math.min(Math.max(bound.top, top), Math.max(top, bottom - bound.height));
-        obj.set({ left: nx, top: ny });
+        // `getBoundingRect()` usa la esquina visual, mientras que `left/top`
+        // dependen del origin del objeto (los nuevos se crean centrados). Se
+        // corrige por delta para no sobrescribir la posición con coordenadas
+        // de otro sistema durante cada frame del arrastre.
+        const clampedLeft = Math.min(Math.max(bound.left, left), Math.max(left, right - bound.width));
+        const clampedTop = Math.min(Math.max(bound.top, top), Math.max(top, bottom - bound.height));
+        obj.set({
+          left: (obj.left || 0) + (clampedLeft - bound.left),
+          top: (obj.top || 0) + (clampedTop - bound.top),
+        });
       };
 
       const snapshotCurrentObjects = () => {
@@ -410,9 +471,26 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       (switchViewRef as any).current = switchView;
 
       // Restringir movimiento/escalado de los objetos al printArea de la vista activa
-      canvas.on('object:moving', (e: any) => clampToPrintArea(e.target));
+      canvas.on('object:moving', (e: any) => {
+        const object = e.target;
+        if (!object) return;
+        clampToPrintArea(object);
+        // Actualiza la matriz de colisión y los controles durante el drag,
+        // sin escribir estado de React ni recrear el canvas.
+        object.setCoords();
+        canvas.requestRenderAll();
+      });
       canvas.on('object:scaling', (e: any) => clampToPrintArea(e.target));
       canvas.on('object:modified', (e: any) => clampToPrintArea(e.target));
+      // Fabric modifica el objeto en memoria durante las transformaciones.
+      // Forzar el render mantiene sincronizado el upper-canvas visible con
+      // esas modificaciones, especialmente en pantallas con escala Retina.
+      canvas.on('object:scaling', () => canvas.requestRenderAll());
+      canvas.on('object:rotating', () => canvas.requestRenderAll());
+      canvas.on('object:modified', () => canvas.requestRenderAll());
+      canvas.on('mouse:down', () => {
+        canvas.calcOffset();
+      });
 
       // Renderiza una cara determinada en el canvas (para exportación de ambas caras)
       const loadViewObjects = async (view: ProductView): Promise<void> => {
@@ -532,6 +610,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         // Reafirmar la interactividad global del lienzo tras alinear
         canvas.selection = true;
+        canvas.interactive = true;
+        canvas.skipTargetFind = false;
         canvas.calcOffset();
         canvas.requestRenderAll();
 
@@ -552,6 +632,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       // --- Listeners para emitir eventos de selección ---
       const emitSelection = () => {
+        // Refrescar bordes y controles de la selección inmediatamente.
+        canvas.calcOffset();
+        canvas.requestRenderAll();
         const activeObject = canvas.getActiveObject();
 
         let fill: string | undefined = activeObject ? activeObject.get('fill') : undefined;
@@ -679,19 +762,22 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const customEvent = e as CustomEvent;
         const { text, fontSize, fontWeight } = customEvent.detail || {};
 
-        const newText = new fabric.IText(text || 'Texto', {
-          left: 100,
-          top: 100,
+        const newText = makeObjectInteractive(new fabric.IText(text || 'Texto', {
+          left: canvas.getWidth() / 2,
+          top: canvas.getHeight() / 2,
+          originX: 'center',
+          originY: 'center',
           fontSize: fontSize || 24,
           fontWeight: fontWeight || 'normal',
           fill: '#1e293b',
           editable: true,
           ...defaultObjectProps,
-        });
+        }));
 
         fabricCanvasRef.current.add(newText);
         fabricCanvasRef.current.centerObject(newText);
         fabricCanvasRef.current.setActiveObject(newText);
+        fabricCanvasRef.current.bringToFront(newText);
         fabricCanvasRef.current.renderAll();
       };
 
@@ -708,13 +794,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         imgElement.onload = () => {
           // Una vez cargada en el HTML, crear el objeto de Fabric
-          const fabricImage = new fabric.Image(imgElement, {
-            left: 100,
-            top: 100,
+          const fabricImage = makeObjectInteractive(new fabric.Image(imgElement, {
+            left: canvas.getWidth() / 2,
+            top: canvas.getHeight() / 2,
+            originX: 'center',
+            originY: 'center',
             cornerStyle: 'circle',
             transparentCorners: false,
             ...defaultObjectProps,
-          });
+          }));
 
           // Escalar si es muy grande
           if (fabricImage.width && fabricImage.width > 300) {
@@ -724,6 +812,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           fabricCanvasRef.current.add(fabricImage);
           fabricCanvasRef.current.centerObject(fabricImage);
           fabricCanvasRef.current.setActiveObject(fabricImage);
+          fabricCanvasRef.current.bringToFront(fabricImage);
           fabricCanvasRef.current.renderAll();
         };
       };
@@ -1037,8 +1126,10 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           let shape: any = null;
 
           const defaultProps = {
-            left: canvas.width / 2 - 50,
-            top: canvas.height / 2 - 50,
+            left: canvas.width / 2,
+            top: canvas.height / 2,
+            originX: 'center' as const,
+            originY: 'center' as const,
             fill: '#1E293B',
             strokeWidth: 0,
             cornerStyle: 'circle' as const,
@@ -1066,8 +1157,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           }
 
           if (shape) {
+            makeObjectInteractive(shape);
+            shape.setCoords();
             canvas.add(shape);
             canvas.setActiveObject(shape);
+            canvas.bringToFront(shape);
             canvas.requestRenderAll();
 
             // Notificar que hay un objeto seleccionado para activar botones de eliminar/duplicar
@@ -1099,15 +1193,22 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             if (!fabricCanvasRef.current) return;
             const svgGroup = fabric.util.groupSVGElements(objects, options);
             svgGroup.set({
-              left: targetCanvas.width / 2 - 25,
-              top: targetCanvas.height / 2 - 25,
+              left: targetCanvas.width / 2,
+              top: targetCanvas.height / 2,
+              originX: 'center',
+              originY: 'center',
               scaleX: 1.5,
               scaleY: 1.5,
               ...defaultObjectProps,
             });
+            makeObjectInteractive(svgGroup);
+            // Los iconos SVG pueden llegar como Path o Group. Recalcular sus
+            // controles evita que el hit testing use límites desfasados.
+            svgGroup.setCoords();
 
             targetCanvas.add(svgGroup);
             targetCanvas.setActiveObject(svgGroup);
+            targetCanvas.bringToFront(svgGroup);
             targetCanvas.requestRenderAll();
             if (typeof saveState === 'function') saveState();
           });
@@ -1218,7 +1319,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[32px] border border-slate-200 bg-[#F4F5F7] p-0 shadow-sm">
-      <div className="pointer-events-none mx-auto flex aspect-square w-full max-w-[600px] items-center justify-center overflow-hidden rounded-md shadow-inner">
+      <div className="pointer-events-auto mx-auto flex aspect-square w-full max-w-[600px] select-none items-center justify-center overflow-hidden rounded-md shadow-inner">
         <canvas ref={canvasRef} width={800} height={800} style={{ width: '100%', height: '100%', pointerEvents: 'auto' }} />
       </div>
       {!isCropping ? (
