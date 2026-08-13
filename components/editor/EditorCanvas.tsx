@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, X, Trash2 } from 'lucide-react';
 import type { TextOptions } from '../../types/product';
 import type { Product, ProductView } from '@/src/store/useProductStore';
+import type { SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
 
 type PrintArea = ProductView['printArea'];
 const ADMIN_BASE_SIZE = 800;
@@ -64,7 +65,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleRequestExport: () => void,
       handleExportPrint: () => void,
       handleResetCrop: () => void,
-      handleAlign: (e: Event) => void;
+      handleAlign: (e: Event) => void,
+      handleSaveDesign: () => void;
 
     // Carga dinámica de Fabric solo en el cliente
     import('fabric').then((fabricModule) => {
@@ -677,6 +679,112 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       };
 
       handleExportPrint = exportToPrint;
+
+      const createPrintFile = (): string | null => {
+        const c = fabricCanvasRef.current;
+        if (!c || !activeView) return null;
+        const printArea = getRenderedPrintArea(activeView);
+        if (printArea.width <= 0 || printArea.height <= 0) return null;
+
+        const guides = c.getObjects().filter((object: any) => object.isGuideLine);
+        const guideVisibility = guides.map((guide: any) => guide.visible);
+        const originalBackground = c.backgroundImage;
+        const originalBackgroundColor = c.backgroundColor;
+        const originalClipPath = c.clipPath;
+        try {
+          guides.forEach((guide: any) => guide.set('visible', false));
+          c.backgroundImage = null;
+          c.backgroundColor = '';
+          c.clipPath = undefined;
+          c.renderAll();
+          return c.toDataURL({
+            format: 'png', left: printArea.x, top: printArea.y,
+            width: printArea.width, height: printArea.height, multiplier: 3, quality: 1,
+          });
+        } finally {
+          c.backgroundImage = originalBackground;
+          c.backgroundColor = originalBackgroundColor;
+          c.clipPath = originalClipPath;
+          guides.forEach((guide: any, index: number) => guide.set('visible', guideVisibility[index]));
+          c.renderAll();
+        }
+      };
+
+      const getNormalizedPrintArea = (view: ProductView): PrintArea => getPercentPrintArea(view);
+
+      handleSaveDesign = async () => {
+        const errors: string[] = [];
+        if (!activeProduct.id || !activeProduct.name) errors.push('El producto seleccionado no es válido.');
+        if (!activeProduct.views.length) errors.push('El producto no tiene vistas configuradas.');
+
+        // Guarda la cara actualmente visible antes de recorrer las demás.
+        canvasDataRef.current[currentViewIdRef.current] = snapshotCurrentObjects();
+        const hasDesign = Object.values(canvasDataRef.current).some((serialized) => {
+          try { return Boolean(serialized && JSON.parse(serialized).length); } catch { return false; }
+        });
+        if (!hasDesign) errors.push('Agrega al menos un elemento al diseño antes de guardar.');
+        if (errors.length) {
+          window.dispatchEvent(new CustomEvent<SaveDesignResult>('editor:save-result', {
+            detail: { valid: false, errors },
+          }));
+          return;
+        }
+
+        const originalViewId = currentViewIdRef.current;
+        const views: SavedDesignPayload['views'] = [];
+        try {
+          for (const view of activeProduct.views) {
+            await loadViewObjects(view);
+            const canvasJson = canvasDataRef.current[view.id] || '[]';
+            views.push({
+              id: view.id,
+              name: view.name || view.label || view.id,
+              printArea: getNormalizedPrintArea(view),
+              printAreaUnit: 'percent',
+              canvasJson,
+              printFile: createPrintFile() || '',
+              preview: canvas.toDataURL({ format: 'png', multiplier: 1 }),
+            });
+          }
+        } catch (error) {
+          console.error('No se pudo preparar el diseño para guardar.', error);
+          errors.push('No fue posible generar los archivos del diseño. Intenta de nuevo.');
+        } finally {
+          await loadViewObjects(getView(originalViewId));
+          currentViewIdRef.current = originalViewId;
+          setCurrentViewId(originalViewId);
+          historyRef.current = [snapshotCurrentObjects()];
+          redoStackRef.current = [];
+          updateHistoryButtons();
+        }
+
+        if (errors.length || views.some((view) => !view.printFile)) {
+          if (!errors.length) errors.push('Una o más vistas no pudieron generar su archivo de impresión.');
+          window.dispatchEvent(new CustomEvent<SaveDesignResult>('editor:save-result', {
+            detail: { valid: false, errors },
+          }));
+          return;
+        }
+
+        const payload: SavedDesignPayload = {
+          schemaVersion: 1,
+          createdAt: new Date().toISOString(),
+          product: {
+            id: activeProduct.id, name: activeProduct.name, category: activeProduct.category,
+            unitPrice: activeProduct.price, canvasWidth: activeProduct.canvasWidth,
+            canvasHeight: activeProduct.canvasHeight, printWidthCm: activeProduct.printWidthCm,
+            printHeightCm: activeProduct.printHeightCm,
+          },
+          quantity: 1,
+          currency: 'USD',
+          views,
+        };
+        // Punto de integración para API, carrito o base de datos.
+        window.dispatchEvent(new CustomEvent<SavedDesignPayload>('editor:design-saved', { detail: payload }));
+        window.dispatchEvent(new CustomEvent<SaveDesignResult>('editor:save-result', {
+          detail: { valid: true, errors: [], payload },
+        }));
+      };
 
       // Alineación / centrado del objeto dentro de la Zona Segura (printArea) de la
       // vista activa. Versión limpia: garantiza que el objeto conserve los permisos de
@@ -1386,6 +1494,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:request-export', handleRequestExport);
       window.addEventListener('editor:export-print', handleExportPrint);
       window.addEventListener('editor:align', handleAlign);
+      window.addEventListener('editor:save-design', handleSaveDesign);
 
       canvas.on('object:added', saveState);
       canvas.on('object:modified', saveState);
@@ -1459,6 +1568,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleAlign) {
         window.removeEventListener('editor:align', handleAlign);
+      }
+      if (handleSaveDesign) {
+        window.removeEventListener('editor:save-design', handleSaveDesign);
       }
       if (fabricCanvasRef.current) {
         fabricCanvasRef.current.dispose();

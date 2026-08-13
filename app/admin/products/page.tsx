@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, type InputHTMLAttributes, useMemo, useState } from 'react';
+import { FormEvent, type InputHTMLAttributes, type PointerEvent, useRef, useState } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useProductStore, type Product } from '@/src/store/useProductStore';
 
@@ -8,16 +8,15 @@ type ProductViewForm = {
   id: string;
   name: string;
   mockupUrl: string;
-  x: string;
-  y: string;
-  width: string;
-  height: string;
+  x: string; y: string; width: string; height: string;
 };
 
 type ProductForm = {
   name: string;
   price: string;
   category: string;
+  printWidthCm: string;
+  printHeightCm: string;
   views: ProductViewForm[];
 };
 
@@ -28,26 +27,24 @@ const createViewForm = (index: number): ProductViewForm => ({
   id: index === 0 ? 'front' : `view-${crypto.randomUUID()}`,
   name: index === 0 ? 'Frente' : 'Espalda',
   mockupUrl: '',
-  x: '200',
-  y: '200',
-  width: '400',
-  height: '400',
+  x: '25', y: '25', width: '50', height: '50',
 });
 
 const emptyForm = (): ProductForm => ({
   name: '',
   price: '',
   category: '',
+  printWidthCm: '',
+  printHeightCm: '',
   views: [createViewForm(0)],
 });
-
-const referencePixelsToPercent = (value: number, referenceDimension: number) =>
-  (value * 100) / referenceDimension;
 
 const toForm = (product: Product): ProductForm => ({
   name: product.name,
   price: String(product.price),
   category: product.category,
+  printWidthCm: product.printWidthCm ? String(product.printWidthCm) : '',
+  printHeightCm: product.printHeightCm ? String(product.printHeightCm) : '',
   views: product.views.map((view, index) => {
     const xScale = view.printAreaUnit === 'percent' ? REFERENCE_WIDTH / 100 : 1;
     const yScale = view.printAreaUnit === 'percent' ? REFERENCE_HEIGHT / 100 : 1;
@@ -55,10 +52,10 @@ const toForm = (product: Product): ProductForm => ({
       id: view.id,
       name: view.name || view.label || `Vista ${index + 1}`,
       mockupUrl: view.mockupUrl,
-      x: String(view.printArea.x * xScale),
-      y: String(view.printArea.y * yScale),
-      width: String(view.printArea.width * xScale),
-      height: String(view.printArea.height * yScale),
+      x: String(view.printArea.x / xScale),
+      y: String(view.printArea.y / yScale),
+      width: String(view.printArea.width / xScale),
+      height: String(view.printArea.height / yScale),
     };
   }),
 });
@@ -85,6 +82,10 @@ export default function AdminProductsPage() {
     ...current,
     views: current.views.filter((_, viewIndex) => viewIndex !== index),
   }));
+  const setViewPrintArea = (index: number, area: { x: number; y: number; width: number; height: number }) =>
+    setForm((current) => ({ ...current, views: current.views.map((view, viewIndex) => viewIndex === index ? {
+      ...view, x: String(area.x), y: String(area.y), width: String(area.width), height: String(area.height),
+    } : view) }));
 
   const handleSelect = (product: Product) => {
     setSelectedId(product.id);
@@ -110,6 +111,8 @@ export default function AdminProductsPage() {
       category: form.category.trim(),
       canvasWidth: REFERENCE_WIDTH,
       canvasHeight: REFERENCE_HEIGHT,
+      printWidthCm: Number(form.printWidthCm) || undefined,
+      printHeightCm: Number(form.printHeightCm) || undefined,
       views: form.views.map((view) => {
         const area = {
           x: Math.max(0, Number(view.x) || 0),
@@ -125,10 +128,10 @@ export default function AdminProductsPage() {
           label: name,
           mockupUrl: view.mockupUrl.trim(),
           printArea: {
-            x: referencePixelsToPercent(area.x, REFERENCE_WIDTH),
-            y: referencePixelsToPercent(area.y, REFERENCE_HEIGHT),
-            width: referencePixelsToPercent(area.width, REFERENCE_WIDTH),
-            height: referencePixelsToPercent(area.height, REFERENCE_HEIGHT),
+            x: Math.min(100, area.x),
+            y: Math.min(100, area.y),
+            width: Math.min(100, area.width),
+            height: Math.min(100, area.height),
           },
           printAreaUnit: 'percent' as const,
         };
@@ -159,11 +162,16 @@ export default function AdminProductsPage() {
                 <Field label="Precio" type="number" min="0" step="0.01" value={form.price} onChange={(value) => setField('price', value)} required />
                 <Field label="Categoría" value={form.category} onChange={(value) => setField('category', value)} required />
               </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Ancho físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printWidthCm} onChange={(value) => setField('printWidthCm', value)} placeholder="20" />
+                <Field label="Alto físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printHeightCm} onChange={(value) => setField('printHeightCm', value)} placeholder="9" />
+              </div>
+              <p className="text-xs text-slate-500">Estas medidas se almacenan para calcular el archivo final a 300 DPI.</p>
             </div>
 
             <div className="mt-6 space-y-5">
               {form.views.map((view, index) => (
-                <ViewFields key={view.id} view={view} index={index} canRemove={form.views.length > 1} onChange={setViewField} onRemove={removeView} />
+                <ViewFields key={view.id} view={view} index={index} canRemove={form.views.length > 1} onChange={setViewField} onAreaChange={setViewPrintArea} onRemove={removeView} />
               ))}
             </div>
             <button type="button" onClick={addView} className="mt-5 inline-flex items-center gap-2 rounded-md border border-emerald-600 px-4 py-2 font-semibold text-emerald-700 transition hover:bg-emerald-50">
@@ -172,12 +180,7 @@ export default function AdminProductsPage() {
             <button type="submit" className="ml-3 mt-5 inline-flex items-center gap-2 rounded-md bg-slate-900 px-5 py-3 font-semibold text-white shadow-sm transition hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-400"><Plus size={18} />Guardar producto</button>
           </form>
 
-          <section className="rounded-lg bg-white p-6 shadow">
-            <h2 className="text-lg font-semibold text-slate-900">Vistas previas</h2>
-            <div className="mt-4 space-y-4">
-              {form.views.map((view) => <ViewPreview key={view.id} view={view} />)}
-            </div>
-          </section>
+          <section className="rounded-lg bg-white p-6 shadow"><h2 className="text-lg font-semibold text-slate-900">Configuración visual</h2><p className="mt-1 text-sm text-slate-500">Arrastra y redimensiona cada zona verde directamente sobre su mockup.</p></section>
         </div>
 
         <section className="mt-8 overflow-hidden rounded-lg bg-white shadow">
@@ -196,13 +199,41 @@ export default function AdminProductsPage() {
   );
 }
 
-function ViewFields({ view, index, canRemove, onChange, onRemove }: { view: ProductViewForm; index: number; canRemove: boolean; onChange: (index: number, field: keyof ProductViewForm, value: string) => void; onRemove: (index: number) => void }) {
-  return <fieldset className="rounded-lg border border-slate-200 p-4"><legend className="px-2 text-sm font-semibold text-slate-700">Vista {index + 1}</legend><div className="grid gap-4 sm:grid-cols-2"><Field label="Nombre de la vista" value={view.name} onChange={(value) => onChange(index, 'name', value)} required /><Field label="URL o ruta del mockup" value={view.mockupUrl} onChange={(value) => onChange(index, 'mockupUrl', value)} placeholder="/mockups/playera-espalda.png" required /></div><div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4"><Field label="X" type="number" min="0" value={view.x} onChange={(value) => onChange(index, 'x', value)} required /><Field label="Y" type="number" min="0" value={view.y} onChange={(value) => onChange(index, 'y', value)} required /><Field label="Ancho" type="number" min="1" value={view.width} onChange={(value) => onChange(index, 'width', value)} required /><Field label="Alto" type="number" min="1" value={view.height} onChange={(value) => onChange(index, 'height', value)} required /></div><p className="mt-3 text-xs text-slate-500">Zona segura en px sobre una cuadrícula de {REFERENCE_WIDTH} × {REFERENCE_HEIGHT}; se guarda como porcentaje.</p>{canRemove && <button type="button" onClick={() => onRemove(index)} className="mt-3 text-sm font-medium text-red-600 hover:text-red-700">Eliminar esta vista</button>}</fieldset>;
+function ViewFields({ view, index, canRemove, onChange, onAreaChange, onRemove }: { view: ProductViewForm; index: number; canRemove: boolean; onChange: (index: number, field: keyof ProductViewForm, value: string) => void; onAreaChange: (index: number, area: PrintArea) => void; onRemove: (index: number) => void }) {
+  const area = normalizeArea({ x: Number(view.x), y: Number(view.y), width: Number(view.width), height: Number(view.height) });
+  return <fieldset className="rounded-lg border border-slate-200 p-4"><legend className="px-2 text-sm font-semibold text-slate-700">Vista {index + 1}</legend><div className="grid gap-4 sm:grid-cols-2"><Field label="Nombre de la vista" value={view.name} onChange={(value) => onChange(index, 'name', value)} required /><Field label="URL o ruta del mockup" value={view.mockupUrl} onChange={(value) => onChange(index, 'mockupUrl', value)} placeholder="/mockups/playera-espalda.png" required /></div><div className="mt-4"><PrintAreaSelector mockupUrl={view.mockupUrl} printArea={area} onChange={(nextArea) => onAreaChange(index, nextArea)} /></div>{canRemove && <button type="button" onClick={() => onRemove(index)} className="mt-3 text-sm font-medium text-red-600 hover:text-red-700">Eliminar esta vista</button>}</fieldset>;
 }
 
-function ViewPreview({ view }: { view: ProductViewForm }) {
-  const area = useMemo(() => ({ x: Math.max(0, Number(view.x) || 0), y: Math.max(0, Number(view.y) || 0), width: Math.max(0, Number(view.width) || 0), height: Math.max(0, Number(view.height) || 0) }), [view]);
-  return <div><p className="mb-2 text-sm font-medium text-slate-700">{view.name || 'Vista'}</p><div className="relative aspect-square overflow-hidden rounded-md bg-slate-100">{view.mockupUrl ? <img src={view.mockupUrl} alt={`Vista previa ${view.name}`} className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center p-8 text-center text-sm text-slate-400">Añade la URL del mockup.</div>}<div className="pointer-events-none absolute border-2 border-dashed border-emerald-500 bg-emerald-400/10" style={{ left: `${referencePixelsToPercent(area.x, REFERENCE_WIDTH)}%`, top: `${referencePixelsToPercent(area.y, REFERENCE_HEIGHT)}%`, width: `${referencePixelsToPercent(area.width, REFERENCE_WIDTH)}%`, height: `${referencePixelsToPercent(area.height, REFERENCE_HEIGHT)}%` }} /></div></div>;
+type PrintArea = { x: number; y: number; width: number; height: number };
+const roundPercent = (value: number) => Math.round(value * 10) / 10;
+const normalizeArea = (area: PrintArea): PrintArea => {
+  const width = Math.min(100, Math.max(1, Number.isFinite(area.width) ? area.width : 50));
+  const height = Math.min(100, Math.max(1, Number.isFinite(area.height) ? area.height : 50));
+  return { x: Math.min(100 - width, Math.max(0, Number.isFinite(area.x) ? area.x : 25)), y: Math.min(100 - height, Math.max(0, Number.isFinite(area.y) ? area.y : 25)), width, height };
+};
+
+function PrintAreaSelector({ mockupUrl, printArea, onChange }: { mockupUrl: string; printArea: PrintArea; onChange: (newArea: PrintArea) => void }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ mode: 'move' | 'resize'; startX: number; startY: number; area: PrintArea } | null>(null);
+  const updateFromPointer = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    const container = containerRef.current;
+    if (!drag || !container) return;
+    const rect = container.getBoundingClientRect();
+    const dx = ((event.clientX - drag.startX) / rect.width) * 100;
+    const dy = ((event.clientY - drag.startY) / rect.height) * 100;
+    const next = drag.mode === 'move'
+      ? normalizeArea({ ...drag.area, x: drag.area.x + dx, y: drag.area.y + dy })
+      : normalizeArea({ ...drag.area, width: drag.area.width + dx, height: drag.area.height + dy });
+    onChange({ ...next, x: roundPercent(next.x), y: roundPercent(next.y), width: roundPercent(next.width), height: roundPercent(next.height) });
+  };
+  const startDrag = (event: PointerEvent<HTMLDivElement>, mode: 'move' | 'resize') => {
+    event.preventDefault(); event.stopPropagation();
+    dragRef.current = { mode, startX: event.clientX, startY: event.clientY, area: printArea };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const stopDrag = () => { dragRef.current = null; };
+  return <div className="space-y-3"><p className="text-sm font-medium text-slate-600">🎯 Arrastra la zona verde y usa el tirador inferior derecho para redimensionarla.</p><div ref={containerRef} onPointerMove={updateFromPointer} onPointerUp={stopDrag} onPointerCancel={stopDrag} className="relative overflow-hidden rounded-lg border bg-slate-100 touch-none select-none">{mockupUrl ? <img src={mockupUrl} alt="Vista previa del mockup" className="block max-h-[360px] w-full object-contain pointer-events-none" /> : <div className="flex aspect-square items-center justify-center p-8 text-center text-sm text-slate-400">Añade la URL del mockup para ajustar la zona.</div>}{mockupUrl && <div onPointerDown={(event) => startDrag(event, 'move')} style={{ left: `${printArea.x}%`, top: `${printArea.y}%`, width: `${printArea.width}%`, height: `${printArea.height}%` }} className="absolute cursor-move border-2 border-dashed border-emerald-500 bg-emerald-500/20"><span className="absolute left-1 top-1 rounded bg-emerald-600 px-1.5 py-0.5 font-mono text-xs text-white shadow">{printArea.width}% × {printArea.height}%</span><div onPointerDown={(event) => startDrag(event, 'resize')} className="absolute bottom-[-7px] right-[-7px] h-4 w-4 cursor-nwse-resize rounded-full border-2 border-white bg-emerald-600 shadow" /></div>}</div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{(['x', 'y', 'width', 'height'] as const).map((field) => <Field key={field} label={`${field === 'x' ? 'Posición X' : field === 'y' ? 'Posición Y' : field === 'width' ? 'Ancho' : 'Alto'} (%)`} type="number" min="0" max="100" step="0.1" value={String(printArea[field])} onChange={(value) => onChange(normalizeArea({ ...printArea, [field]: Number(value) }))} />)}</div></div>;
 }
 
 function Field({ label, className = '', onChange, ...props }: Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange'> & { label: string; onChange: (value: string) => void }) {

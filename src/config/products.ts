@@ -31,6 +31,9 @@ export interface Product {
   price: number;
   canvasWidth: number;
   canvasHeight: number;
+  /** Tamaño físico del arte final; permite calcular la salida a 300 DPI. */
+  printWidthCm?: number;
+  printHeightCm?: number;
   views: ProductView[];
 }
 
