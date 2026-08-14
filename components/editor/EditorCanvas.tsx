@@ -26,12 +26,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   const [canvasAspectRatio, setCanvasAspectRatio] = useState(1);
   const [currentViewId, setCurrentViewId] = useState<string>(initialProduct.views[0]?.id ?? 'front');
   const [productViews, setProductViews] = useState<ProductView[]>(initialProduct.views);
+  const [selectedColor, setSelectedColor] = useState<ColorVariant | null>(
+    initialProduct.views[0]?.colorVariants?.[0] ?? initialProduct.colors?.[0] ?? null,
+  );
   const [selectedColorIds, setSelectedColorIds] = useState<Record<string, string>>({});
   const selectedColorIdsRef = useRef<Record<string, string>>({});
   const currentViewIdRef = useRef<string>(initialProduct.views[0]?.id ?? 'front');
   const canvasDataRef = useRef<Record<string, string | null>>({});
   const switchViewRef = useRef<(viewId: string) => void>(null);
-  const changeProductColorRef = useRef<((variant: ColorVariant) => void) | null>(null);
+  const handleColorChangeRef = useRef<((variant: ColorVariant) => void) | null>(null);
   const setupProductRef = useRef<((product: Product) => void) | null>(null);
 
   // El canvas de Fabric se conserva montado; al cambiar el producto sólo se
@@ -255,11 +258,16 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         canvas.getObjects().forEach((object: any) => applyPrintAreaClip(object, view));
       };
 
+      // Una variante puede usar una imagen diferente para cada cara del
+      // producto. Si no existe ese mapa, se conserva su mockup general.
+      const getColorMockupUrl = (view: ProductView, color?: ColorVariant): string =>
+        color?.mockupUrls?.[view.id] || color?.mockupUrl || view.mockupUrl;
+
       const loadProductMockup = (view: ProductView) => {
         const selectedVariant = view.colorVariants?.find(
           (variant) => variant.id === selectedColorIdsRef.current[view.id],
         );
-        const mockupUrl = selectedVariant?.mockupUrl || view.mockupUrl;
+        const mockupUrl = getColorMockupUrl(view, selectedVariant);
         // Cargar el overlay del artículo (taza, funda, playera...) según la vista activa.
         // La imagen se usa como fondo del canvas (setBackgroundImage): no pertenece a
         // getObjects() y, por defecto, es no interactiva (selectable/evented = false),
@@ -282,6 +290,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             return;
           }
           try {
+            console.log('4. Intentando cargar imagen en Fabric.js:', mockupUrl);
             fabric.Image.fromURL(
               mockupUrl,
               (img) => {
@@ -295,6 +304,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                   resolve();
                   return;
                 }
+                console.log('5. Imagen cargada con éxito en Fabric.js. Renderizando canvas...', { mockupUrl });
                 const rawWidth = img.width;
                 const rawHeight = img.height;
                 console.log('📸 MOCKUP CARGADO CON ÉXITO:', {
@@ -363,14 +373,34 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
        * no se limpian ni se reescalan, por lo que el diseño del cliente se
        * conserva exactamente en la misma posición al cambiar de color.
        */
-      const changeProductColor = (variant: ColorVariant) => {
+      // Manejador de variantes: reemplaza sólo el mockup de Fabric.
+      const handleProductColorChange = (variant: ColorVariant) => {
+        console.log('1. Color cliqueado:', variant);
+        setSelectedColor(variant);
         const c = fabricCanvasRef.current;
-        if (!c || !variant.mockupUrl) return;
+        const mockupUrl = getColorMockupUrl(activeView, variant);
+        console.log('2. URL de la imagen a cargar:', mockupUrl, { viewId: activeView.id });
+
+        if (!mockupUrl) {
+          console.error('❌ ERROR: color.mockupUrl está vacío o indefinido', { variant, viewId: activeView.id });
+          return;
+        }
+        if (!c) {
+          console.error('❌ ERROR: el canvas de Fabric no está disponible');
+          return;
+        }
+
+        console.log('3. Reemplazando el fondo de Fabric con:', mockupUrl);
+        console.log('4. Intentando cargar imagen en Fabric.js:', mockupUrl);
 
         fabric.Image.fromURL(
-          variant.mockupUrl,
+          mockupUrl,
           (img: any) => {
-            if (!img || !img.width || !img.height) return;
+            if (!img || !img.width || !img.height) {
+              console.error('❌ ERROR: Fabric no pudo cargar el mockup de color', { mockupUrl, img });
+              return;
+            }
+            console.log('5. Imagen cargada con éxito en Fabric.js. Renderizando canvas...', { mockupUrl });
 
             // El área de impresión usa las dimensiones actuales del canvas.
             // Ajustar el fondo a ese mismo plano evita mover el arte existente
@@ -391,9 +421,16 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
               applyPrintAreaClipping(activeView);
               c.renderAll();
               c.requestRenderAll();
-              const nextSelectedColors = { ...selectedColorIdsRef.current, [activeView.id]: variant.id };
+              // El color es una opción del producto, no de una sola cara:
+              // conservarlo hace que Frente/Espalda carguen su mockup
+              // correspondiente al alternar de vista.
+              const nextSelectedColors = activeProduct.views.reduce<Record<string, string>>(
+                (colors, view) => ({ ...colors, [view.id]: variant.id }),
+                { ...selectedColorIdsRef.current },
+              );
               selectedColorIdsRef.current = nextSelectedColors;
               setSelectedColorIds(nextSelectedColors);
+              console.log('✅ Mockup de color actualizado correctamente', { mockupUrl, viewId: activeView.id });
             });
           },
           { crossOrigin: 'anonymous' },
@@ -511,8 +548,25 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       };
 
       const setupProduct = (product: Product) => {
-        activeProduct = product;
-        activeView = product.views[0];
+        const productColors: ColorVariant[] = product.colors?.length
+          ? product.colors
+          : [{
+              id: 'blanco',
+              name: 'Blanco',
+              hexColor: '#FFFFFF',
+              mockupUrl: product.views[0]?.mockupUrl ?? '',
+            }];
+        // El catálogo declara las variantes a nivel de producto; se propagan
+        // a cada vista que no tenga variantes específicas.
+        activeProduct = {
+          ...product,
+          colors: productColors,
+          views: product.views.map((view) => ({
+            ...view,
+            colorVariants: view.colorVariants?.length ? view.colorVariants : productColors,
+          })),
+        };
+        activeView = activeProduct.views[0];
         // Ajustar dimensiones del canvas de Fabric.js
         // El admin define printArea sobre este mismo sistema de coordenadas.
         canvas.setWidth(ADMIN_BASE_SIZE);
@@ -520,11 +574,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         canvas.calcOffset();
 
         canvasDataRef.current = {};
-        selectedColorIdsRef.current = {};
-        setSelectedColorIds({});
+        const firstColor = activeView.colorVariants?.[0] ?? null;
+        const initialColorIds = firstColor ? { [activeView.id]: firstColor.id } : {};
+        selectedColorIdsRef.current = initialColorIds;
+        setSelectedColorIds(initialColorIds);
         currentViewIdRef.current = activeView.id;
         setCurrentViewId(activeView.id);
-        setProductViews(product.views);
+        setProductViews(activeProduct.views);
+        setSelectedColor(firstColor);
 
         // Limpiar el canvas reconstruyendo fondo + zona segura según la nueva vista
         isUpdatingHistory.current = true;
@@ -542,7 +599,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       setupProductRef.current = setupProduct;
       setupProduct(initialProduct);
-      changeProductColorRef.current = changeProductColor;
+      handleColorChangeRef.current = handleProductColorChange;
 
       // --- Vistas de producto (frente, espalda, etc.) ---
       const finishViewSwitch = (viewId: string) => {
@@ -551,6 +608,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         currentViewIdRef.current = viewId;
         setCurrentViewId(viewId); // Actualizar el estado
+        setSelectedColor(
+          view.colorVariants?.find((variant) => variant.id === selectedColorIdsRef.current[viewId])
+            ?? view.colorVariants?.[0]
+            ?? null,
+        );
         isUpdatingHistory.current = false;
 
         // Restablecer el historial de la nueva vista a una sola línea base
@@ -1662,6 +1724,45 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                 <span className="truncate">{view.name || view.label || 'Vista'}</span>
               </button>
             ))}
+          {!isCropping && productViews.find((view) => view.id === currentViewId)?.colorVariants?.length ? (
+            <div className="pointer-events-auto my-4 flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 p-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
+                Color del producto:{' '}
+                <span className="text-blue-600">{selectedColor?.name || 'Blanco'}</span>
+              </span>
+              <div className="flex items-center gap-3 py-1">
+                {productViews
+                  .find((view) => view.id === currentViewId)
+                  ?.colorVariants?.map((variant) => {
+                    const isSelected = selectedColor?.id === variant.id;
+                    const isWhite = variant.hexColor.toLowerCase() === '#ffffff';
+                    return (
+                      <button
+                        key={variant.id}
+                        type="button"
+                        onClick={() => handleColorChangeRef.current?.(variant)}
+                        className={`relative flex h-9 w-9 items-center justify-center rounded-full shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2 ${
+                          isSelected
+                            ? 'scale-110 ring-2 ring-blue-600 ring-offset-2'
+                            : 'opacity-80 hover:scale-105 hover:opacity-100'
+                        }`}
+                        style={{
+                          backgroundColor: variant.hexColor,
+                          border: isWhite ? '2px solid #cbd5e1' : '2px solid transparent',
+                        }}
+                        title={variant.name}
+                        aria-label={`Seleccionar color ${variant.name}`}
+                        aria-pressed={isSelected}
+                      >
+                        {isSelected && (
+                          <span className={`h-2.5 w-2.5 rounded-full ${isWhite ? 'bg-blue-600' : 'bg-white'}`} />
+                        )}
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+          ) : null}
           {isImageSelected && (
             <button
               type="button"
@@ -1700,34 +1801,6 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           </button>
         </div>
       )}
-      {!isCropping && productViews.find((view) => view.id === currentViewId)?.colorVariants?.length ? (
-        <div className="absolute bottom-4 right-4 z-30 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur-sm">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Color del producto</p>
-          <div className="flex items-center gap-2">
-            {productViews
-              .find((view) => view.id === currentViewId)
-              ?.colorVariants?.map((variant) => {
-                const selected = selectedColorIds[currentViewId]
-                  ? selectedColorIds[currentViewId] === variant.id
-                  : variant.mockupUrl === productViews.find((view) => view.id === currentViewId)?.mockupUrl;
-                return (
-                  <button
-                    key={variant.id}
-                    type="button"
-                    onClick={() => changeProductColorRef.current?.(variant)}
-                    title={variant.name}
-                    aria-label={`Seleccionar color ${variant.name}`}
-                    aria-pressed={selected}
-                    className={`h-8 w-8 rounded-full border-2 transition focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 ${
-                      selected ? 'border-slate-900 ring-2 ring-slate-300' : 'border-white shadow-sm hover:scale-110'
-                    }`}
-                    style={{ backgroundColor: variant.hexColor }}
-                  />
-                );
-              })}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

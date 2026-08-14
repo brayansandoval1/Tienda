@@ -9,6 +9,8 @@ export interface ColorVariant {
   name: string;
   hexColor: string;
   mockupUrl: string;
+  /** Mockup específico por vista, p. ej. { front: '/frente-negro.png' }. */
+  mockupUrls?: Record<string, string>;
 }
 
 export interface ProductView {
@@ -43,6 +45,8 @@ export interface Product {
   /** Tamaño físico del arte final; permite calcular la salida a 300 DPI. */
   printWidthCm?: number;
   printHeightCm?: number;
+  /** Variantes globales reutilizables por todas las vistas del producto. */
+  colors?: ColorVariant[];
   views: ProductView[];
 }
 
@@ -60,6 +64,11 @@ export const PRODUCTS: Product[] = [
     price: 24.99,
     canvasWidth: 800,
     canvasHeight: 800,
+    colors: [
+      { id: 'blanco', name: 'Blanco', hexColor: '#FFFFFF', mockupUrl: 'https://picsum.photos/id/10/800/800', mockupUrls: { front: 'https://picsum.photos/id/10/800/800', back: 'https://picsum.photos/id/11/800/800' } },
+      { id: 'negro', name: 'Negro', hexColor: '#18181b', mockupUrl: 'https://picsum.photos/id/11/800/800', mockupUrls: { front: 'https://picsum.photos/id/12/800/800', back: 'https://picsum.photos/id/13/800/800' } },
+      { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://picsum.photos/id/12/800/800', mockupUrls: { front: 'https://picsum.photos/id/14/800/800', back: 'https://picsum.photos/id/15/800/800' } },
+    ],
     views: [
       {
         id: 'front',
@@ -84,6 +93,11 @@ export const PRODUCTS: Product[] = [
     price: 19.99,
     canvasWidth: 800,
     canvasHeight: 800,
+    colors: [
+      { id: 'blanco', name: 'Blanco', hexColor: '#FFFFFF', mockupUrl: 'https://placehold.co/800x800/ffffff/0f172a?text=Funda+Blanca' },
+      { id: 'negro', name: 'Negro', hexColor: '#18181b', mockupUrl: 'https://placehold.co/800x800/18181b/ffffff?text=Funda+Negra' },
+      { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://placehold.co/800x800/1d4ed8/ffffff?text=Funda+Azul' },
+    ],
     views: [
       {
         id: 'back',
@@ -101,6 +115,11 @@ export const PRODUCTS: Product[] = [
     price: 14.99,
     canvasWidth: 800,
     canvasHeight: 800,
+    colors: [
+      { id: 'blanco', name: 'Blanco', hexColor: '#FFFFFF', mockupUrl: 'https://placehold.co/800x800/ffffff/0f172a?text=Taza+Blanca' },
+      { id: 'negro', name: 'Negro', hexColor: '#18181b', mockupUrl: 'https://placehold.co/800x800/18181b/ffffff?text=Taza+Negra' },
+      { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://placehold.co/800x800/1d4ed8/ffffff?text=Taza+Azul' },
+    ],
     views: [
       {
         id: 'front',
@@ -118,6 +137,11 @@ export const PRODUCTS: Product[] = [
     price: 14.99,
     canvasWidth: 800,
     canvasHeight: 800,
+    colors: [
+      { id: 'blanco', name: 'Blanco', hexColor: '#FFFFFF', mockupUrl: 'https://picsum.photos/id/20/800/800' },
+      { id: 'negro', name: 'Negro Matte', hexColor: '#18181b', mockupUrl: 'https://picsum.photos/id/21/800/800' },
+      { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://picsum.photos/id/22/800/800' },
+    ],
     views: [
       {
         id: 'front',
@@ -135,6 +159,11 @@ export const PRODUCTS: Product[] = [
     price: 29.99,
     canvasWidth: 800,
     canvasHeight: 800,
+    colors: [
+      { id: 'blanco', name: 'Blanco', hexColor: '#FFFFFF', mockupUrl: 'https://picsum.photos/id/30/800/800' },
+      { id: 'negro', name: 'Negro Matte', hexColor: '#18181b', mockupUrl: 'https://picsum.photos/id/31/800/800' },
+      { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://picsum.photos/id/32/800/800' },
+    ],
     views: [
       {
         id: 'front',
@@ -157,6 +186,11 @@ export const PRODUCTS: Product[] = [
     price: 19.99,
     canvasWidth: 800,
     canvasHeight: 800,
+    colors: [
+      { id: 'blanco', name: 'Blanco', hexColor: '#FFFFFF', mockupUrl: 'https://picsum.photos/id/40/800/800' },
+      { id: 'negro', name: 'Negro', hexColor: '#18181b', mockupUrl: 'https://picsum.photos/id/41/800/800' },
+      { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://picsum.photos/id/42/800/800' },
+    ],
     views: [
       {
         id: 'front',

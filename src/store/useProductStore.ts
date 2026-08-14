@@ -51,6 +51,28 @@ export const useProductStore = create<ProductState>()(
         };
         if (!merged.products?.length) {
           merged.products = initialProducts;
+        } else {
+          // Los productos guardados antes de añadir variantes no incluyen
+          // `colors`. Conservamos las personalizaciones persistidas, pero les
+          // completamos las variantes actuales del catálogo por su mismo id.
+          merged.products = merged.products.map((persistedProduct) => {
+            const catalogProduct = initialProducts.find((product) => product.id === persistedProduct.id);
+            if (!catalogProduct) return persistedProduct;
+
+            return {
+              ...persistedProduct,
+              colors: persistedProduct.colors?.length ? persistedProduct.colors : catalogProduct.colors,
+              views: persistedProduct.views.map((persistedView) => {
+                const catalogView = catalogProduct.views.find((view) => view.id === persistedView.id);
+                return {
+                  ...persistedView,
+                  colorVariants: persistedView.colorVariants?.length
+                    ? persistedView.colorVariants
+                    : catalogView?.colorVariants,
+                };
+              }),
+            };
+          });
         }
         return merged;
       },

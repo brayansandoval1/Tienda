@@ -18,6 +18,11 @@ const mockProduct: Product = {
       name: 'Anverso',
       label: 'Anverso',
       mockupUrl: 'https://placehold.co/800x800/e0f2fe/0f172a?text=Anverso',
+      colorVariants: [
+        { id: 'blanco', name: 'Blanco', hexColor: '#ffffff', mockupUrl: 'https://placehold.co/800x800/e0f2fe/0f172a?text=Anverso+Blanco' },
+        { id: 'negro', name: 'Negro', hexColor: '#111827', mockupUrl: 'https://placehold.co/800x800/111827/ffffff?text=Anverso+Negro' },
+        { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://placehold.co/800x800/1d4ed8/ffffff?text=Anverso+Azul' },
+      ],
       printArea: { x: 20, y: 18, width: 60, height: 64 },
       printAreaUnit: 'percent',
     },
@@ -26,6 +31,11 @@ const mockProduct: Product = {
       name: 'Reverso',
       label: 'Reverso',
       mockupUrl: 'https://placehold.co/800x800/fef3c7/0f172a?text=Reverso',
+      colorVariants: [
+        { id: 'blanco', name: 'Blanco', hexColor: '#ffffff', mockupUrl: 'https://placehold.co/800x800/fef3c7/0f172a?text=Reverso+Blanco' },
+        { id: 'negro', name: 'Negro', hexColor: '#111827', mockupUrl: 'https://placehold.co/800x800/111827/ffffff?text=Reverso+Negro' },
+        { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://placehold.co/800x800/1d4ed8/ffffff?text=Reverso+Azul' },
+      ],
       printArea: { x: 20, y: 18, width: 60, height: 64 },
       printAreaUnit: 'percent',
     },
