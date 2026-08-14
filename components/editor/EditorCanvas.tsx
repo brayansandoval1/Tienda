@@ -30,11 +30,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
     initialProduct.views[0]?.colorVariants?.[0] ?? initialProduct.colors?.[0] ?? null,
   );
   const [selectedColorIds, setSelectedColorIds] = useState<Record<string, string>>({});
+  const [designBackgroundColor, setDesignBackgroundColor] = useState<string>('transparent');
   const selectedColorIdsRef = useRef<Record<string, string>>({});
+  const designBackgroundColorsRef = useRef<Record<string, string>>({});
   const currentViewIdRef = useRef<string>(initialProduct.views[0]?.id ?? 'front');
   const canvasDataRef = useRef<Record<string, string | null>>({});
   const switchViewRef = useRef<(viewId: string) => void>(null);
   const handleColorChangeRef = useRef<((variant: ColorVariant) => void) | null>(null);
+  const handleDesignBgColorChangeRef = useRef<((color: string) => void) | null>(null);
   const setupProductRef = useRef<((product: Product) => void) | null>(null);
 
   // El canvas de Fabric se conserva montado; al cambiar el producto sólo se
@@ -181,7 +184,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // Filtrar objetos normales excluyendo la guía y el overlay de recorte temporal
         const userObjects = canvas
           .getObjects()
-          .filter((obj: any) => !obj.isGuide && !obj.isCropOverlay);
+          .filter((obj: any) => !obj.isGuide && !obj.isCropOverlay && !obj.isDesignBackground);
         const jsonState = userObjects.map((obj: any) => obj.toJSON());
         historyRef.current.push(JSON.stringify(jsonState));
         redoStackRef.current = [];
@@ -484,9 +487,54 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         c.requestRenderAll();
       };
 
+      // El fondo impreso es un objeto Fabric real: a diferencia de la guía,
+      // permanece incluido al exportar y se puede guardar por cada vista.
+      const setDesignBackground = (color: string, view = activeView) => {
+        const c = fabricCanvasRef.current;
+        if (!c || !view) return;
+        const existing = c.getObjects().filter((obj: any) => obj.isDesignBackground);
+        existing.forEach((obj: any) => c.remove(obj));
+
+        const normalizedColor = !color || color === 'transparent' ? 'transparent' : color;
+        designBackgroundColorsRef.current = {
+          ...designBackgroundColorsRef.current,
+          [view.id]: normalizedColor,
+        };
+        setDesignBackgroundColor(normalizedColor);
+
+        if (normalizedColor === 'transparent') {
+          c.requestRenderAll();
+          return;
+        }
+
+        const area = getRenderedPrintArea(view);
+        const background = new fabric.Rect({
+          left: area.x,
+          top: area.y,
+          width: area.width,
+          height: area.height,
+          originX: 'left',
+          originY: 'top',
+          fill: normalizedColor,
+          selectable: false,
+          evented: false,
+          excludeFromExport: false,
+          isDesignBackground: true,
+        } as any);
+        c.add(background);
+        if (safeZoneRef.current) c.sendToBack(safeZoneRef.current);
+        c.sendToBack(background);
+        // La guía debe seguir detrás del fondo, y el fondo detrás del arte.
+        if (safeZoneRef.current) c.sendToBack(safeZoneRef.current);
+        c.requestRenderAll();
+      };
+
+      const handleDesignBgColorChange = (color: string) => setDesignBackground(color);
+
       const setupSafeAreaAndClipping = (view: ProductView) => {
         activeView = view;
         drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
+        setDesignBackground(designBackgroundColorsRef.current[view.id] ?? 'transparent', view);
         applyPrintAreaClipping(view);
       };
 
@@ -523,7 +571,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // enlivenar textos, imágenes y vectores de esta cara. Las guías no se
         // incluyen porque se marcan con `excludeFromExport`.
         const serializedCanvas = c.toJSON();
-        return JSON.stringify(serializedCanvas.objects || []);
+        return JSON.stringify((serializedCanvas.objects || []).filter((obj: any) => !obj.isDesignBackground));
       };
 
       // Garantiza que ningún objeto quede bloqueado para arrastrar/escalar
@@ -574,6 +622,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         canvas.calcOffset();
 
         canvasDataRef.current = {};
+        designBackgroundColorsRef.current = {};
+        setDesignBackgroundColor('transparent');
         const firstColor = activeView.colorVariants?.[0] ?? null;
         const initialColorIds = firstColor ? { [activeView.id]: firstColor.id } : {};
         selectedColorIdsRef.current = initialColorIds;
@@ -600,6 +650,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       setupProductRef.current = setupProduct;
       setupProduct(initialProduct);
       handleColorChangeRef.current = handleProductColorChange;
+      handleDesignBgColorChangeRef.current = handleDesignBgColorChange;
 
       // --- Vistas de producto (frente, espalda, etc.) ---
       const finishViewSwitch = (viewId: string) => {
@@ -613,6 +664,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             ?? view.colorVariants?.[0]
             ?? null,
         );
+        setDesignBackgroundColor(designBackgroundColorsRef.current[viewId] ?? 'transparent');
         isUpdatingHistory.current = false;
 
         // Restablecer el historial de la nueva vista a una sola línea base
@@ -1706,31 +1758,36 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         <canvas ref={canvasRef} className="block max-h-full max-w-full object-contain" style={{ width: '100%', height: '100%', pointerEvents: 'auto' }} />
       </div>
       {!isCropping ? (
-        <div className="pointer-events-none absolute left-4 top-1/2 z-30 flex -translate-y-1/2 flex-col gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur-sm">
-          {productViews.length > 1 &&
-            productViews.map((view) => (
+        <div className="pointer-events-none absolute left-4 top-4 z-20 w-60 space-y-3 rounded-2xl border border-gray-200 bg-white/95 p-3 shadow-xl backdrop-blur-md">
+          {productViews.length > 1 && <div>
+            <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-gray-400">Vistas</span>
+            <div className="flex items-center gap-2">
+            {productViews.map((view) => (
               <button
                 key={view.id}
                 type="button"
                 onClick={() => switchViewRef.current?.(view.id)}
                 aria-pressed={currentViewId === view.id}
-                className={`pointer-events-auto grid w-20 gap-1 rounded-xl p-1.5 text-xs font-semibold transition ${
+                className={`pointer-events-auto flex-1 rounded-xl border p-1.5 text-center transition-all ${
                   currentViewId === view.id
-                    ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-200'
-                    : 'text-slate-600 hover:bg-slate-100'
+                    ? 'border-blue-600 bg-blue-50/50 font-bold text-blue-600 shadow-sm'
+                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
                 }`}
               >
-                <img src={view.mockupUrl} alt="" className="aspect-square w-full rounded-lg object-cover" />
-                <span className="truncate">{view.name || view.label || 'Vista'}</span>
+                <img src={view.mockupUrl} alt="" className="mx-auto mb-0.5 h-8 w-8 object-contain" />
+                <span className="block text-[10px] leading-none">{view.name || view.label || 'Vista'}</span>
               </button>
             ))}
+            </div>
+          </div>}
           {!isCropping && productViews.find((view) => view.id === currentViewId)?.colorVariants?.length ? (
-            <div className="pointer-events-auto my-4 flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 p-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
-                Color del producto:{' '}
-                <span className="text-blue-600">{selectedColor?.name || 'Blanco'}</span>
-              </span>
-              <div className="flex items-center gap-3 py-1">
+            <div className="pointer-events-auto space-y-3">
+              {productViews.length > 1 && <hr className="border-gray-100" />}
+              <div>
+                <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                  1. Color del producto
+                </label>
+                <div className="flex flex-wrap items-center gap-1.5">
                 {productViews
                   .find((view) => view.id === currentViewId)
                   ?.colorVariants?.map((variant) => {
@@ -1741,14 +1798,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                         key={variant.id}
                         type="button"
                         onClick={() => handleColorChangeRef.current?.(variant)}
-                        className={`relative flex h-9 w-9 items-center justify-center rounded-full shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2 ${
+                        className={`relative flex h-6 w-6 items-center justify-center rounded-full shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-1 ${
                           isSelected
-                            ? 'scale-110 ring-2 ring-blue-600 ring-offset-2'
+                            ? 'scale-105 ring-2 ring-blue-600 ring-offset-1'
                             : 'opacity-80 hover:scale-105 hover:opacity-100'
                         }`}
                         style={{
                           backgroundColor: variant.hexColor,
-                          border: isWhite ? '2px solid #cbd5e1' : '2px solid transparent',
+                          borderColor: isWhite ? '#cbd5e1' : 'transparent',
                         }}
                         title={variant.name}
                         aria-label={`Seleccionar color ${variant.name}`}
@@ -1760,6 +1817,45 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                       </button>
                     );
                   })}
+                </div>
+              </div>
+              <hr className="border-gray-100" />
+              <div>
+                <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                  2. Fondo impreso
+                </label>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleDesignBgColorChangeRef.current?.('transparent')}
+                    className={`flex w-full items-center justify-center gap-1 rounded-lg border py-1 text-[11px] font-medium transition-all ${
+                      designBackgroundColor === 'transparent' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    🚫 Transparente
+                  </button>
+                  <div className="grid grid-cols-5 gap-1.5">
+                  {['#000000', '#FFFFFF', '#2d4a3e', '#1e3a8a', '#7c2d12', '#e11d48'].map((hex) => (
+                    <button
+                      key={hex}
+                      type="button"
+                      onClick={() => handleDesignBgColorChangeRef.current?.(hex)}
+                      className={`h-6 w-full rounded-md border shadow-sm transition-all ${
+                        designBackgroundColor === hex ? 'scale-105 ring-2 ring-blue-600' : 'hover:scale-105'
+                      }`}
+                      style={{ backgroundColor: hex, borderColor: hex === '#FFFFFF' ? '#cbd5e1' : 'transparent' }}
+                      title={`Fondo ${hex}`}
+                    />
+                  ))}
+                  <input
+                    type="color"
+                    value={designBackgroundColor === 'transparent' ? '#ffffff' : designBackgroundColor}
+                    onChange={(event) => handleDesignBgColorChangeRef.current?.(event.target.value)}
+                    className="h-6 w-full cursor-pointer rounded-md border bg-transparent p-0"
+                    title="Elegir color personalizado"
+                  />
+                  </div>
+                </div>
               </div>
             </div>
           ) : null}
