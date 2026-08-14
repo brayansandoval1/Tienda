@@ -75,7 +75,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleExportPrint: () => void,
       handleResetCrop: () => void,
       handleAlign: (e: Event) => void,
-      handleSaveDesign: () => void;
+      handleSaveDesign: () => void,
+      handleOptionMockup: (e: Event) => void;
 
     // Carga dinámica de Fabric solo en el cliente
     import('fabric').then((fabricModule) => {
@@ -438,6 +439,27 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           },
           { crossOrigin: 'anonymous' },
         );
+      };
+
+      // Las opciones (estilo/tamaño) pueden ofrecer un mockup propio. Este
+      // evento reutiliza el mismo reemplazo de fondo sin alterar el arte.
+      handleOptionMockup = (event: Event) => {
+        const mockupUrl = (event as CustomEvent<{ mockupUrl?: string }>).detail?.mockupUrl;
+        const c = fabricCanvasRef.current;
+        if (!c || !mockupUrl) return;
+        fabric.Image.fromURL(mockupUrl, (img: any) => {
+          if (!img?.width || !img?.height) return;
+          img.set({
+            originX: 'left', originY: 'top', left: 0, top: 0,
+            scaleX: c.getWidth() / img.width, scaleY: c.getHeight() / img.height,
+            selectable: false, evented: false, excludeFromExport: true,
+          });
+          c.setBackgroundImage(img, () => {
+            applyPrintAreaClipping(activeView);
+            c.renderAll();
+            c.requestRenderAll();
+          });
+        }, { crossOrigin: 'anonymous' });
       };
 
       const drawSafeArea = (canvasWidth: number, canvasHeight: number, printArea: PrintArea) => {
@@ -1661,6 +1683,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:export-print', handleExportPrint);
       window.addEventListener('editor:align', handleAlign);
       window.addEventListener('editor:save-design', handleSaveDesign);
+      window.addEventListener('editor:option-mockup', handleOptionMockup);
 
       canvas.on('object:added', saveState);
       canvas.on('object:modified', saveState);
@@ -1737,6 +1760,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleSaveDesign) {
         window.removeEventListener('editor:save-design', handleSaveDesign);
+      }
+      if (handleOptionMockup) {
+        window.removeEventListener('editor:option-mockup', handleOptionMockup);
       }
       if (fabricCanvasRef.current) {
         fabricCanvasRef.current.dispose();

@@ -10,6 +10,7 @@ import SidebarPanel from '@/components/editor/SidebarPanel';
 import TextToolbar from '@/components/editor/TextToolbar';
 import { useProductStore, type Product } from '@/src/store/useProductStore';
 import ViewSelector from '@/components/editor/ViewSelector';
+import OptionsPanel from '@/components/editor/OptionsPanel';
 
 const EditorCanvas = dynamic(() => import('@/components/editor/EditorCanvas'), { ssr: false });
 
@@ -19,6 +20,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   const [currentProduct, setCurrentProduct] = useState<Product>(
     initialProduct || products.find((p) => p.id === producto.id) || products[0],
   );
+  const [isOptionsOpen, setIsOptionsOpen] = useState(false);
 
   useEffect(() => {
     // La página de demo inyecta datos mock y no debe ser reemplazada durante
@@ -51,8 +53,8 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
 
       <div className="flex-1 p-4">
         <div className="grid h-full grid-cols-1 gap-4 xl:grid-cols-[80px_280px_1fr_320px]">
-          <SidebarIcons /> {/* SidebarIcons ya no necesita onAddImage aquí, usa eventos */}
-          <SidebarPanel /> {/* SidebarPanel ya no necesita onAddShape aquí, usa eventos */}
+          <SidebarIcons onOpenOptions={() => setIsOptionsOpen(true)} />
+          {isOptionsOpen ? <OptionsPanel product={currentProduct} onClose={() => setIsOptionsOpen(false)} /> : <SidebarPanel />}
           <main className="relative h-full">
             <div className="flex h-full flex-col gap-4">
               <TextToolbar />
@@ -60,7 +62,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
             </div>
             <FloatingFooter onReset={() => {}} /> {/* FloatingFooter sin props de zoom por ahora */}
           </main>
-          <ViewSelector producto={producto} initialProduct={currentProduct} />
+          <ViewSelector product={currentProduct} />
         </div>
       </div>
     </div>

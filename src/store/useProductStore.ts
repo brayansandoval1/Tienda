@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { type Product, PRODUCTS as initialProducts } from '@/src/config/products';
 
-export type { ColorVariant, Product, ProductView } from '@/src/config/products';
+export type { ColorVariant, Product, ProductOption, ProductOptionValue, ProductView } from '@/src/config/products';
 
 export interface ProductState {
   products: Product[];
@@ -62,6 +62,7 @@ export const useProductStore = create<ProductState>()(
             return {
               ...persistedProduct,
               colors: persistedProduct.colors?.length ? persistedProduct.colors : catalogProduct.colors,
+              options: persistedProduct.options?.length ? persistedProduct.options : catalogProduct.options,
               views: persistedProduct.views.map((persistedView) => {
                 const catalogView = catalogProduct.views.find((view) => view.id === persistedView.id);
                 return {

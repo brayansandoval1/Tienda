@@ -3,6 +3,8 @@
 import { FormEvent, type InputHTMLAttributes, type PointerEvent, useRef, useState } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useProductStore, type Product } from '@/src/store/useProductStore';
+import type { ProductOption } from '@/src/store/useProductStore';
+import AdminProductOptionsForm from '@/components/admin/AdminProductOptionsForm';
 
 type ProductViewForm = {
   id: string;
@@ -17,11 +19,17 @@ type ProductForm = {
   category: string;
   printWidthCm: string;
   printHeightCm: string;
+  options: ProductOption[];
   views: ProductViewForm[];
 };
 
 const REFERENCE_WIDTH = 800;
 const REFERENCE_HEIGHT = 800;
+const normalizePercentage = (value: number | undefined | null, fallback = 0) => {
+  if (value === undefined || value === null || !Number.isFinite(value)) return fallback;
+  return value > 0 && value <= 1 ? value * 100 : value;
+};
+const cleanPercentage = (value: number) => Number(Math.min(100, Math.max(0, value)).toFixed(2));
 
 const createViewForm = (index: number): ProductViewForm => ({
   id: index === 0 ? 'front' : `view-${crypto.randomUUID()}`,
@@ -36,6 +44,7 @@ const emptyForm = (): ProductForm => ({
   category: '',
   printWidthCm: '',
   printHeightCm: '',
+  options: [],
   views: [createViewForm(0)],
 });
 
@@ -45,17 +54,23 @@ const toForm = (product: Product): ProductForm => ({
   category: product.category,
   printWidthCm: product.printWidthCm ? String(product.printWidthCm) : '',
   printHeightCm: product.printHeightCm ? String(product.printHeightCm) : '',
+  options: product.options?.map((option) => ({ ...option, displayType: option.displayType ?? option.type, values: option.values.map((value) => ({ ...value })) })) ?? [],
   views: product.views.map((view, index) => {
-    const xScale = view.printAreaUnit === 'percent' ? REFERENCE_WIDTH / 100 : 1;
-    const yScale = view.printAreaUnit === 'percent' ? REFERENCE_HEIGHT / 100 : 1;
+    const isPercent = view.printAreaUnit === 'percent';
+    const safeZone = {
+      x: normalizePercentage(isPercent ? view.printArea.x : (view.printArea.x * 100) / REFERENCE_WIDTH, 25),
+      y: normalizePercentage(isPercent ? view.printArea.y : (view.printArea.y * 100) / REFERENCE_HEIGHT, 25),
+      width: normalizePercentage(isPercent ? view.printArea.width : (view.printArea.width * 100) / REFERENCE_WIDTH, 50),
+      height: normalizePercentage(isPercent ? view.printArea.height : (view.printArea.height * 100) / REFERENCE_HEIGHT, 50),
+    };
     return {
       id: view.id,
       name: view.name || view.label || `Vista ${index + 1}`,
       mockupUrl: view.mockupUrl,
-      x: String(view.printArea.x / xScale),
-      y: String(view.printArea.y / yScale),
-      width: String(view.printArea.width / xScale),
-      height: String(view.printArea.height / yScale),
+      x: String(cleanPercentage(safeZone.x)),
+      y: String(cleanPercentage(safeZone.y)),
+      width: String(cleanPercentage(safeZone.width)),
+      height: String(cleanPercentage(safeZone.height)),
     };
   }),
 });
@@ -113,6 +128,12 @@ export default function AdminProductsPage() {
       canvasHeight: REFERENCE_HEIGHT,
       printWidthCm: Number(form.printWidthCm) || undefined,
       printHeightCm: Number(form.printHeightCm) || undefined,
+      options: form.options.map((option) => ({
+        ...option,
+        name: option.name.trim() || 'Opción',
+        displayType: option.displayType ?? option.type,
+        values: option.values.map((value) => ({ ...value, label: value.label.trim() || 'Variante', thumbnailUrl: value.thumbnailUrl?.trim() || undefined, mockupUrl: value.mockupUrl?.trim() || undefined })),
+      })),
       views: form.views.map((view) => {
         const area = {
           x: Math.max(0, Number(view.x) || 0),
@@ -128,10 +149,10 @@ export default function AdminProductsPage() {
           label: name,
           mockupUrl: view.mockupUrl.trim(),
           printArea: {
-            x: Math.min(100, area.x),
-            y: Math.min(100, area.y),
-            width: Math.min(100, area.width),
-            height: Math.min(100, area.height),
+            x: cleanPercentage(area.x),
+            y: cleanPercentage(area.y),
+            width: cleanPercentage(area.width),
+            height: cleanPercentage(area.height),
           },
           printAreaUnit: 'percent' as const,
         };
@@ -155,7 +176,7 @@ export default function AdminProductsPage() {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <form onSubmit={handleSubmit} className="rounded-lg bg-white p-6 shadow">
+          <form onSubmit={handleSubmit} className="max-w-full overflow-hidden rounded-lg bg-white p-6 shadow">
             <div className="space-y-4">
               <Field label="Nombre del producto" value={form.name} onChange={(value) => setField('name', value)} required />
               <div className="grid gap-4 sm:grid-cols-2">
@@ -177,6 +198,7 @@ export default function AdminProductsPage() {
             <button type="button" onClick={addView} className="mt-5 inline-flex items-center gap-2 rounded-md border border-emerald-600 px-4 py-2 font-semibold text-emerald-700 transition hover:bg-emerald-50">
               <Plus size={18} /> Agregar otra vista (ej. Espalda)
             </button>
+            <AdminProductOptionsForm options={form.options} onChange={(options) => setForm((current) => ({ ...current, options }))} />
             <button type="submit" className="ml-3 mt-5 inline-flex items-center gap-2 rounded-md bg-slate-900 px-5 py-3 font-semibold text-white shadow-sm transition hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-400"><Plus size={18} />Guardar producto</button>
           </form>
 
@@ -233,7 +255,7 @@ function PrintAreaSelector({ mockupUrl, printArea, onChange }: { mockupUrl: stri
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const stopDrag = () => { dragRef.current = null; };
-  return <div className="space-y-3"><p className="text-sm font-medium text-slate-600">🎯 Arrastra la zona verde y usa el tirador inferior derecho para redimensionarla.</p><div ref={containerRef} onPointerMove={updateFromPointer} onPointerUp={stopDrag} onPointerCancel={stopDrag} className="relative overflow-hidden rounded-lg border bg-slate-100 touch-none select-none">{mockupUrl ? <img src={mockupUrl} alt="Vista previa del mockup" className="block max-h-[360px] w-full object-contain pointer-events-none" /> : <div className="flex aspect-square items-center justify-center p-8 text-center text-sm text-slate-400">Añade la URL del mockup para ajustar la zona.</div>}{mockupUrl && <div onPointerDown={(event) => startDrag(event, 'move')} style={{ left: `${printArea.x}%`, top: `${printArea.y}%`, width: `${printArea.width}%`, height: `${printArea.height}%` }} className="absolute cursor-move border-2 border-dashed border-emerald-500 bg-emerald-500/20"><span className="absolute left-1 top-1 rounded bg-emerald-600 px-1.5 py-0.5 font-mono text-xs text-white shadow">{printArea.width}% × {printArea.height}%</span><div onPointerDown={(event) => startDrag(event, 'resize')} className="absolute bottom-[-7px] right-[-7px] h-4 w-4 cursor-nwse-resize rounded-full border-2 border-white bg-emerald-600 shadow" /></div>}</div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{(['x', 'y', 'width', 'height'] as const).map((field) => <Field key={field} label={`${field === 'x' ? 'Posición X' : field === 'y' ? 'Posición Y' : field === 'width' ? 'Ancho' : 'Alto'} (%)`} type="number" min="0" max="100" step="0.1" value={String(printArea[field])} onChange={(value) => onChange(normalizeArea({ ...printArea, [field]: Number(value) }))} />)}</div></div>;
+  return <div className="space-y-3"><p className="text-sm font-medium text-slate-600">🎯 Arrastra la zona verde y usa el tirador inferior derecho para redimensionarla.</p><div ref={containerRef} onPointerMove={updateFromPointer} onPointerUp={stopDrag} onPointerCancel={stopDrag} className="relative overflow-hidden rounded-lg border bg-slate-100 touch-none select-none">{mockupUrl ? <img src={mockupUrl} alt="Vista previa del mockup" className="block max-h-[360px] w-full object-contain pointer-events-none" /> : <div className="flex aspect-square items-center justify-center p-8 text-center text-sm text-slate-400">Añade la URL del mockup para ajustar la zona.</div>}{mockupUrl && <div onPointerDown={(event) => startDrag(event, 'move')} style={{ left: `${printArea.x}%`, top: `${printArea.y}%`, width: `${printArea.width}%`, height: `${printArea.height}%` }} className="absolute cursor-move border-2 border-dashed border-emerald-500 bg-emerald-500/20"><span className="absolute left-1 top-1 rounded bg-emerald-600 px-1.5 py-0.5 font-mono text-xs text-white shadow">{printArea.width}% × {printArea.height}%</span><div onPointerDown={(event) => startDrag(event, 'resize')} className="absolute bottom-[-7px] right-[-7px] h-4 w-4 cursor-nwse-resize rounded-full border-2 border-white bg-emerald-600 shadow" /></div>}</div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{(['x', 'y', 'width', 'height'] as const).map((field) => <Field key={field} label={`${field === 'x' ? 'Posición X' : field === 'y' ? 'Posición Y' : field === 'width' ? 'Ancho' : 'Alto'} (%)`} type="number" min="0" max="100" step="0.01" value={String(printArea[field])} onChange={(value) => onChange(normalizeArea({ ...printArea, [field]: cleanPercentage(normalizePercentage(Number(value))) }))} />)}</div></div>;
 }
 
 function Field({ label, className = '', onChange, ...props }: Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange'> & { label: string; onChange: (value: string) => void }) {

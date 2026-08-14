@@ -35,6 +35,24 @@ export interface ProductView {
   printAreaUnit?: 'pixels' | 'percent';
 }
 
+export interface ProductOptionValue {
+  id: string;
+  label: string;
+  priceModifier: number;
+  mockupUrl?: string;
+  thumbnailUrl?: string;
+}
+
+export interface ProductOption {
+  id: string;
+  name: string;
+  /** Nombre explícito usado por el formulario administrativo. */
+  displayType?: 'thumbnails' | 'radio' | 'select';
+  /** Alias de compatibilidad para opciones existentes. */
+  type: 'thumbnails' | 'radio' | 'select';
+  values: ProductOptionValue[];
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -47,11 +65,28 @@ export interface Product {
   printHeightCm?: number;
   /** Variantes globales reutilizables por todas las vistas del producto. */
   colors?: ColorVariant[];
+  /** Configuraciones vendibles que pueden modificar el precio final. */
+  options?: ProductOption[];
   views: ProductView[];
 }
 
 /** Alias temporal para los componentes existentes del editor. */
 export type ProductConfig = Product;
+
+const STANDARD_OPTIONS: ProductOption[] = [
+  {
+    id: 'estilo', name: 'Estilo', type: 'thumbnails', values: [
+      { id: 'clasico', label: 'Clásico', priceModifier: 0 },
+      { id: 'premium', label: 'Premium', priceModifier: 2 },
+    ],
+  },
+  {
+    id: 'tamano', name: 'Tamaño', type: 'radio', values: [
+      { id: 'estandar', label: 'Estándar', priceModifier: 0 },
+      { id: 'grande', label: 'Grande', priceModifier: 3 },
+    ],
+  },
+];
 
 /**
  * Catálogo de productos personalizables disponibles en la tienda.
@@ -69,6 +104,7 @@ export const PRODUCTS: Product[] = [
       { id: 'negro', name: 'Negro', hexColor: '#18181b', mockupUrl: 'https://picsum.photos/id/11/800/800', mockupUrls: { front: 'https://picsum.photos/id/12/800/800', back: 'https://picsum.photos/id/13/800/800' } },
       { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://picsum.photos/id/12/800/800', mockupUrls: { front: 'https://picsum.photos/id/14/800/800', back: 'https://picsum.photos/id/15/800/800' } },
     ],
+    options: STANDARD_OPTIONS,
     views: [
       {
         id: 'front',
@@ -98,6 +134,7 @@ export const PRODUCTS: Product[] = [
       { id: 'negro', name: 'Negro', hexColor: '#18181b', mockupUrl: 'https://placehold.co/800x800/18181b/ffffff?text=Funda+Negra' },
       { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://placehold.co/800x800/1d4ed8/ffffff?text=Funda+Azul' },
     ],
+    options: STANDARD_OPTIONS,
     views: [
       {
         id: 'back',
@@ -119,6 +156,11 @@ export const PRODUCTS: Product[] = [
       { id: 'blanco', name: 'Blanco', hexColor: '#FFFFFF', mockupUrl: 'https://placehold.co/800x800/ffffff/0f172a?text=Taza+Blanca' },
       { id: 'negro', name: 'Negro', hexColor: '#18181b', mockupUrl: 'https://placehold.co/800x800/18181b/ffffff?text=Taza+Negra' },
       { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://placehold.co/800x800/1d4ed8/ffffff?text=Taza+Azul' },
+    ],
+    options: [
+      { id: 'capacidad', name: 'Capacidad', type: 'select', values: [
+        { id: '11oz', label: '11 oz', priceModifier: 0 }, { id: '15oz', label: '15 oz', priceModifier: 2 },
+      ] },
     ],
     views: [
       {
@@ -142,6 +184,7 @@ export const PRODUCTS: Product[] = [
       { id: 'negro', name: 'Negro Matte', hexColor: '#18181b', mockupUrl: 'https://picsum.photos/id/21/800/800' },
       { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://picsum.photos/id/22/800/800' },
     ],
+    options: STANDARD_OPTIONS,
     views: [
       {
         id: 'front',
@@ -163,6 +206,11 @@ export const PRODUCTS: Product[] = [
       { id: 'blanco', name: 'Blanco', hexColor: '#FFFFFF', mockupUrl: 'https://picsum.photos/id/30/800/800' },
       { id: 'negro', name: 'Negro Matte', hexColor: '#18181b', mockupUrl: 'https://picsum.photos/id/31/800/800' },
       { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://picsum.photos/id/32/800/800' },
+    ],
+    options: [
+      { id: 'capacidad', name: 'Capacidad', type: 'radio', values: [
+        { id: '10oz', label: '10 oz', priceModifier: 0 }, { id: '20oz', label: '20 oz', priceModifier: 4 },
+      ] },
     ],
     views: [
       {
@@ -191,6 +239,7 @@ export const PRODUCTS: Product[] = [
       { id: 'negro', name: 'Negro', hexColor: '#18181b', mockupUrl: 'https://picsum.photos/id/41/800/800' },
       { id: 'azul', name: 'Azul', hexColor: '#1d4ed8', mockupUrl: 'https://picsum.photos/id/42/800/800' },
     ],
+    options: STANDARD_OPTIONS,
     views: [
       {
         id: 'front',
