@@ -23,7 +23,6 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   const isUpdatingHistory = useRef(false);
   const [isCropping, setIsCropping] = useState(false);
   const [isImageSelected, setIsImageSelected] = useState(false);
-  const [canvasAspectRatio, setCanvasAspectRatio] = useState(1);
   const [currentViewId, setCurrentViewId] = useState<string>(initialProduct.views[0]?.id ?? 'front');
   const [productViews, setProductViews] = useState<ProductView[]>(initialProduct.views);
   const [selectedColor, setSelectedColor] = useState<ColorVariant | null>(
@@ -213,29 +212,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       const getRenderedPrintArea = (view: ProductView): PrintArea => {
         const area = getPercentPrintArea(view);
-        const backgroundImage = canvas.backgroundImage as any;
-        if (!backgroundImage?.width || !backgroundImage?.height) {
-          return {
-            x: (area.x / 100) * canvas.getWidth(), y: (area.y / 100) * canvas.getHeight(),
-            width: (area.width / 100) * canvas.getWidth(), height: (area.height / 100) * canvas.getHeight(),
-          };
-        }
-        // El mockup siempre se carga con contain, por lo que su escala es
-        // uniforme en ambos ejes.
-        const imgScale = backgroundImage.scaleX || 1;
-        const renderedWidth = backgroundImage.width * imgScale;
-        const renderedHeight = backgroundImage.height * imgScale;
-        const imgLeft = backgroundImage.originX === 'center'
-          ? backgroundImage.left - renderedWidth / 2
-          : backgroundImage.left;
-        const imgTop = backgroundImage.originY === 'center'
-          ? backgroundImage.top - renderedHeight / 2
-          : backgroundImage.top;
+        // La zona segura siempre se expresa respecto del plano lógico común
+        // de 800×800, nunca respecto de los píxeles (o márgenes) del PNG.
+        // El Admin usa este mismo contenedor cuadrado.
         return {
-          x: imgLeft + (area.x / 100) * renderedWidth,
-          y: imgTop + (area.y / 100) * renderedHeight,
-          width: (area.width / 100) * renderedWidth,
-          height: (area.height / 100) * renderedHeight,
+          x: (area.x / 100) * canvas.getWidth(),
+          y: (area.y / 100) * canvas.getHeight(),
+          width: (area.width / 100) * canvas.getWidth(),
+          height: (area.height / 100) * canvas.getHeight(),
         };
       };
 
@@ -266,6 +250,21 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       // producto. Si no existe ese mapa, se conserva su mockup general.
       const getColorMockupUrl = (view: ProductView, color?: ColorVariant): string =>
         color?.mockupUrls?.[view.id] || color?.mockupUrl || view.mockupUrl;
+
+      const fitMockupToCanvas = (img: any) => {
+        const scale = Math.min(canvas.getWidth() / img.width, canvas.getHeight() / img.height);
+        img.set({
+          originX: 'left',
+          originY: 'top',
+          left: (canvas.getWidth() - img.width * scale) / 2,
+          top: (canvas.getHeight() - img.height * scale) / 2,
+          scaleX: scale,
+          scaleY: scale,
+          selectable: false,
+          evented: false,
+          excludeFromExport: true,
+        });
+      };
 
       const loadProductMockup = (view: ProductView) => {
         const selectedVariant = view.colorVariants?.find(
@@ -315,41 +314,27 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                   url: mockupUrl,
                   dimensiones: `${rawWidth}x${rawHeight}`,
                 });
-                // El plano interno adopta la proporción natural del mockup.
-                // Con Retina activo, Fabric conserva estas coordenadas lógicas
-                // y escala solamente el buffer de dibujo para ganar nitidez.
-                canvas.setDimensions({ width: rawWidth, height: rawHeight });
-                // Forzar el recálculo de bordes de textos y vectores tras el
-                // cambio de resolución interna.
-                canvas.requestRenderAll();
-                // El CSS sigue siendo responsive, sin deformar el render.
-                canvas.setDimensions({ width: '100%', height: '100%' }, { cssOnly: true });
-                canvas.calcOffset();
-                setCanvasAspectRatio(rawWidth / rawHeight);
+                // El canvas nunca adopta las dimensiones naturales del archivo:
+                // Admin y cliente trabajan sobre el mismo plano 800×800. El
+                // mockup se centra con `contain`, igual que la vista previa del
+                // Admin, sin deformar imágenes rectangulares.
+                const mockupScale = Math.min(ADMIN_BASE_SIZE / rawWidth, ADMIN_BASE_SIZE / rawHeight);
                 console.log('📐 DIAGNÓSTICO DE ESCALADO MOCKUP:', {
                   url: mockupUrl,
                   dimensionesOriginales: `${rawWidth}x${rawHeight}`,
-                  tamanoCanvas: `${rawWidth}x${rawHeight}`,
-                  escalaCalculada: 1,
-                  anchoFinalEnCanvas: rawWidth,
-                  altoFinalEnCanvas: rawHeight,
+                  tamanoCanvas: `${ADMIN_BASE_SIZE}x${ADMIN_BASE_SIZE}`,
+                  escalaCalculada: mockupScale,
+                  anchoFinalEnCanvas: rawWidth * mockupScale,
+                  altoFinalEnCanvas: rawHeight * mockupScale,
                 });
                 img.set({
-                  scaleX: 1,
-                  scaleY: 1,
-                  left: 0,
-                  top: 0,
-                  originX: 'left',
-                  originY: 'top',
-                  selectable: false,
-                  evented: false,
                   lockMovementX: true,
                   lockMovementY: true,
                   lockScalingX: true,
                   lockScalingY: true,
                   lockRotation: true,
-                  excludeFromExport: true,
                 });
+                fitMockupToCanvas(img);
                 canvas.setBackgroundImage(img, () => {
                   console.log('✅ BackgroundImage aplicado correctamente al Canvas');
                   // La guía y los recortes usan la matriz final del fondo.
@@ -409,17 +394,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             // El área de impresión usa las dimensiones actuales del canvas.
             // Ajustar el fondo a ese mismo plano evita mover el arte existente
             // incluso si el archivo del mockup tiene otra resolución.
-            img.set({
-              originX: 'left',
-              originY: 'top',
-              left: 0,
-              top: 0,
-              scaleX: c.getWidth() / img.width,
-              scaleY: c.getHeight() / img.height,
-              selectable: false,
-              evented: false,
-              excludeFromExport: true,
-            });
+            fitMockupToCanvas(img);
 
             c.setBackgroundImage(img, () => {
               applyPrintAreaClipping(activeView);
@@ -449,11 +424,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         if (!c || !mockupUrl) return;
         fabric.Image.fromURL(mockupUrl, (img: any) => {
           if (!img?.width || !img?.height) return;
-          img.set({
-            originX: 'left', originY: 'top', left: 0, top: 0,
-            scaleX: c.getWidth() / img.width, scaleY: c.getHeight() / img.height,
-            selectable: false, evented: false, excludeFromExport: true,
-          });
+          fitMockupToCanvas(img);
           c.setBackgroundImage(img, () => {
             applyPrintAreaClipping(activeView);
             c.renderAll();
@@ -473,8 +444,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const oldGuides = c.getObjects().filter((obj: any) => obj.isGuideLine);
         oldGuides.forEach((g: any) => c.remove(g));
 
-        // El canvas ya tiene el tamaño natural del mockup, por lo que los
-        // porcentajes se traducen directamente sobre sus dimensiones reales.
+        // La traducción se hace sobre el plano lógico unificado, no sobre el
+        // rectángulo visible del PNG contenido dentro de él.
         const safeZone = new fabric.Rect({
           left: (Number(printArea.x) / 100) * canvasWidth,
           top: (Number(printArea.y) / 100) * canvasHeight,
@@ -1777,8 +1748,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       <div
         className="pointer-events-auto relative flex max-h-[70vh] max-w-full shrink-0 select-none items-center justify-center overflow-hidden rounded-lg bg-white shadow-xl"
         style={{
-          aspectRatio: canvasAspectRatio,
-          width: `min(100%, calc(70vh * ${canvasAspectRatio}))`,
+          aspectRatio: '1 / 1',
+          width: 'min(100%, 70vh)',
         }}
       >
         <canvas ref={canvasRef} className="block max-h-full max-w-full object-contain" style={{ width: '100%', height: '100%', pointerEvents: 'auto' }} />
