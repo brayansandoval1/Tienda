@@ -193,11 +193,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       let activeProduct: Product = initialProduct;
       let activeView: ProductView = initialProduct.views[0];
+      // Un valor de opción puede sustituir temporalmente la zona de la vista.
+      // `null` significa explícitamente usar la zona segura base del producto.
+      let activeOptionPrintArea: PrintArea | null = null;
 
       const getView = (viewId: string): ProductView =>
         activeProduct.views.find((v) => v.id === viewId) || activeProduct.views[0];
 
       const getPercentPrintArea = (view: ProductView): PrintArea => {
+        if (activeOptionPrintArea) return activeOptionPrintArea;
         if (view.printAreaUnit === 'percent') {
           return view.printArea;
         }
@@ -416,17 +420,29 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         );
       };
 
-      // Las opciones (estilo/tamaño) pueden ofrecer un mockup propio. Este
-      // evento reutiliza el mismo reemplazo de fondo sin alterar el arte.
+      // Las opciones pueden ofrecer mockup y zona segura propios. Si el valor
+      // no define `printArea`, se restaura de forma explícita la zona base.
       handleOptionMockup = (event: Event) => {
-        const mockupUrl = (event as CustomEvent<{ mockupUrl?: string }>).detail?.mockupUrl;
+        const optionValue = (event as CustomEvent<{ optionValue?: { mockupUrl?: string; printArea?: PrintArea } }>).detail?.optionValue;
         const c = fabricCanvasRef.current;
-        if (!c || !mockupUrl) return;
+        if (!c || !optionValue) return;
+        activeOptionPrintArea = optionValue.printArea ?? null;
+        const selectedVariant = activeView.colorVariants?.find(
+          (variant) => variant.id === selectedColorIdsRef.current[activeView.id],
+        );
+        const mockupUrl = optionValue.mockupUrl || getColorMockupUrl(activeView, selectedVariant);
+        if (!mockupUrl) {
+          setupSafeAreaAndClipping(activeView);
+          c.getObjects().filter((object: any) => !object.isGuide && !object.isDesignBackground).forEach(clampToPrintArea);
+          c.requestRenderAll();
+          return;
+        }
         fabric.Image.fromURL(mockupUrl, (img: any) => {
           if (!img?.width || !img?.height) return;
           fitMockupToCanvas(img);
           c.setBackgroundImage(img, () => {
-            applyPrintAreaClipping(activeView);
+            setupSafeAreaAndClipping(activeView);
+            c.getObjects().filter((object: any) => !object.isGuide && !object.isDesignBackground).forEach(clampToPrintArea);
             c.renderAll();
             c.requestRenderAll();
           });
@@ -608,6 +624,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           })),
         };
         activeView = activeProduct.views[0];
+        activeOptionPrintArea = null;
         // Ajustar dimensiones del canvas de Fabric.js
         // El admin define printArea sobre este mismo sistema de coordenadas.
         canvas.setWidth(ADMIN_BASE_SIZE);
@@ -649,6 +666,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       const finishViewSwitch = (viewId: string) => {
         const view = getView(viewId);
         activeView = view;
+        activeOptionPrintArea = null;
 
         currentViewIdRef.current = viewId;
         setCurrentViewId(viewId); // Actualizar el estado

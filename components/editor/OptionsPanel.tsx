@@ -28,7 +28,10 @@ export default function OptionsPanel({ product, onClose }: OptionsPanelProps) {
     window.dispatchEvent(new CustomEvent('editor:options-changed', {
       detail: { productId: product.id, selections: next, totalPrice: product.price + product.options!.flatMap((item) => item.values.filter((itemValue) => (item.id === option.id ? value.id : next[item.id]) === itemValue.id)).reduce((sum, itemValue) => sum + itemValue.priceModifier, 0) },
     }));
-    if (value.mockupUrl) window.dispatchEvent(new CustomEvent('editor:option-mockup', { detail: { mockupUrl: value.mockupUrl } }));
+    // El editor decide si usa la zona específica del valor o la zona base.
+    // Se emite también cuando el valor no trae mockup/zona para restaurar la
+    // configuración base en vez de conservar la de la selección anterior.
+    window.dispatchEvent(new CustomEvent('editor:option-mockup', { detail: { optionValue: value } }));
   };
 
   return (

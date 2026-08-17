@@ -41,6 +41,13 @@ export interface ProductOptionValue {
   priceModifier: number;
   mockupUrl?: string;
   thumbnailUrl?: string;
+  /** Zona segura opcional que sustituye la zona base al elegir este valor. */
+  printArea?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
 }
 
 export interface ProductOption {
