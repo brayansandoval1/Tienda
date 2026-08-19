@@ -896,6 +896,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         currentViewIdRef.current = viewId;
         setCurrentViewId(viewId); // Actualizar el estado
+        window.dispatchEvent(new CustomEvent('editor:view-changed', {
+          detail: {
+            viewId,
+            viewIndex: Math.max(0, baseProductViews.findIndex((item) => item.id === viewId)),
+          },
+        }));
         setSelectedColor(
           view.colorVariants?.find((variant) => variant.id === selectedColorIdsRef.current[viewId])
             ?? view.colorVariants?.[0]

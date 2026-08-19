@@ -6,6 +6,7 @@ import ProductSelector from '@/components/editor/ProductSelector';
 
 export default function ViewSelector({ product }: { product: Product }) {
   const [selectedOptions, setSelectedOptions] = useState<Record<string, ProductOptionValue>>({});
+  const [activeViewIndex, setActiveViewIndex] = useState(0);
   const baseView = product.views[0];
 
   // El primer valor representa siempre el estado original del producto. Los
@@ -26,7 +27,21 @@ export default function ViewSelector({ product }: { product: Product }) {
     // Un producto nuevo nunca hereda opciones de otro. No se autoselecciona
     // `values[0]`: el primer render debe mostrar el producto base nativo.
     setSelectedOptions({});
+    setActiveViewIndex(0);
   }, [product.id]);
+
+  useEffect(() => {
+    const handleViewChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ viewIndex?: number }>).detail;
+      if (typeof detail?.viewIndex === 'number') {
+        setActiveViewIndex(detail.viewIndex);
+      }
+    };
+    window.addEventListener('editor:view-changed', handleViewChanged);
+    return () => {
+      window.removeEventListener('editor:view-changed', handleViewChanged);
+    };
+  }, []);
 
   const handleOptionSelect = (optionId: string, value: ProductOptionValue) => {
     // Una URL vacía no es un mockup válido: se elimina del valor seleccionado
@@ -83,8 +98,28 @@ export default function ViewSelector({ product }: { product: Product }) {
   const selectedValues = Object.values(selectedOptions);
   const finalPrice = product.price + selectedValues.reduce((total, value) => total + value.priceModifier, 0);
   const priceLabel = (modifier: number) => modifier === 0 ? 'Incluido' : `${modifier > 0 ? '+' : '-'}$${Math.abs(modifier).toFixed(2)}`;
+  const activeBaseView = product.views[activeViewIndex] ?? product.views[0];
+  const activeResolvedView = (() => {
+    const selectedValuesList = Object.values(selectedOptions);
+    const optionWithViews = selectedValuesList.find((value) => value?.views && Array.isArray(value.views) && value.views.length > 0);
+    if (optionWithViews) {
+      const matchedView = optionWithViews.views?.[activeViewIndex] || optionWithViews.views?.find((view) => view.viewId === activeBaseView?.id || view.name === activeBaseView?.name);
+      if (matchedView?.mockupUrl) {
+        return matchedView;
+      }
+    }
 
-  const previewImage = product.views[0]?.mockupUrl ?? '';
+    const optionWithMockup = [...selectedValuesList].reverse().find((value) => value?.mockupUrl?.trim());
+    if (optionWithMockup?.mockupUrl?.trim()) {
+      return {
+        mockupUrl: optionWithMockup.mockupUrl,
+        printArea: optionWithMockup.printArea || activeBaseView?.printArea,
+      } as ProductOptionValue;
+    }
+
+    return activeBaseView;
+  })();
+  const quickPreviewUrl = activeResolvedView?.mockupUrl || activeBaseView?.mockupUrl || '';
 
   return (
     <aside className="w-full max-w-[320px] space-y-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -92,7 +127,7 @@ export default function ViewSelector({ product }: { product: Product }) {
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Vista Rápida</p>
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100">
           <div className="aspect-square w-full overflow-hidden rounded-2xl bg-slate-100">
-            <img src={previewImage} alt={product.name} className="h-full w-full object-cover" />
+            <img src={quickPreviewUrl} alt={product.name} className="h-full w-full object-cover" />
           </div>
           <div className="p-4">
             <h3 className="font-semibold text-slate-900">{product.name}</h3>
