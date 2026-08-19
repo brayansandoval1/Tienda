@@ -459,6 +459,16 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           printArea: resolvedView.printArea,
         });
         await loadProductMockup(resolvedCanvasView, resolvedView.mockupUrl);
+        setupSafeAreaAndClipping(resolvedCanvasView);
+        const c = fabricCanvasRef.current;
+        if (c) {
+          c.getObjects().forEach((object: any) => {
+            if (!object.isGuide && !object.isDesignBackground) {
+              clampToPrintArea(object);
+            }
+          });
+          c.requestRenderAll();
+        }
       };
 
       /**
@@ -598,7 +608,6 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           activeOptionSelections = {};
           activeOptionPrintArea = null;
           syncEditorWithVariant({});
-          c.clear();
           void loadResolvedViewBackground(baseView, baseResolvedView);
           return;
         }
@@ -662,10 +671,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           });
           activeOptionPrintArea = null;
           syncEditorWithVariant({});
-          if (fabricCanvasRef.current && baseView) {
-            fabricCanvasRef.current.clear();
-            void loadResolvedViewBackground(baseView, baseResolvedView);
-          }
+          if (fabricCanvasRef.current && baseView) void loadResolvedViewBackground(baseView, baseResolvedView);
           return;
         }
 
@@ -943,9 +949,6 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           resolvedPrintArea: resolvedView.printArea,
         });
 
-        // 1) Limpiar la cara actual. 2) Esperar su nuevo fondo y zona segura.
-        // Sólo entonces se rehidratan los objetos guardados para esa vista.
-        c.clear();
         await loadResolvedViewBackground(activeView, resolvedView);
 
         const stored = canvasDataRef.current[viewId];
