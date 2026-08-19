@@ -14,7 +14,8 @@ export default function OptionsPanel({ product, onClose }: OptionsPanelProps) {
   const [selections, setSelections] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    setSelections(Object.fromEntries(product.options?.map((option) => [option.id, option.values[0]?.id]) ?? []));
+    // El panel no aplica variantes hasta una interacción explícita.
+    setSelections({});
   }, [product]);
 
   const selectedValues = useMemo(() => product.options?.flatMap((option) =>
@@ -31,7 +32,7 @@ export default function OptionsPanel({ product, onClose }: OptionsPanelProps) {
     // El editor decide si usa la zona específica del valor o la zona base.
     // Se emite también cuando el valor no trae mockup/zona para restaurar la
     // configuración base en vez de conservar la de la selección anterior.
-    window.dispatchEvent(new CustomEvent('editor:option-mockup', { detail: { optionValue: value } }));
+    window.dispatchEvent(new CustomEvent('editor:option-mockup', { detail: { optionId: option.id, optionValue: value } }));
   };
 
   return (

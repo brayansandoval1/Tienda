@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, type InputHTMLAttributes, useState } from 'react';
+import { FormEvent, type InputHTMLAttributes, useEffect, useMemo, useState } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useProductStore, type Product } from '@/src/store/useProductStore';
 import type { ProductOption } from '@/src/store/useProductStore';
@@ -83,6 +83,16 @@ export default function AdminProductsPage() {
   const removeProduct = useProductStore((state) => state.removeProduct);
   const [form, setForm] = useState<ProductForm>(emptyForm);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const baseViews = useMemo(() => form.views.map((view) => ({
+    id: view.id,
+    name: view.name || 'Vista',
+    mockupUrl: view.mockupUrl,
+    printArea: normalizePrintArea({ x: Number(view.x), y: Number(view.y), width: Number(view.width), height: Number(view.height) }),
+  })), [form.views]);
+
+  useEffect(() => {
+    console.log('📦 [ADMIN PRODUCTO BASE VIEWS]:', baseViews);
+  }, [baseViews]);
 
   const setField = (field: Exclude<keyof ProductForm, 'views'>, value: string) =>
     setForm((current) => ({ ...current, [field]: value }));
@@ -104,6 +114,7 @@ export default function AdminProductsPage() {
     } : view) }));
 
   const handleSelect = (product: Product) => {
+    console.log('📌 [ADMIN BASE VIEWS]:', product.views);
     setSelectedId(product.id);
     setForm(toForm(product));
   };
@@ -120,6 +131,36 @@ export default function AdminProductsPage() {
       return;
     }
 
+    const optionsData = form.options.map((option) => ({
+      ...option,
+      name: option.name.trim() || 'Opción',
+      displayType: option.displayType ?? option.type,
+      values: option.values.map((value, valueIndex) => ({
+        ...value,
+        label: value.label.trim() || 'Variante',
+        thumbnailUrl: value.thumbnailUrl?.trim() || undefined,
+        // Las vistas dinámicas son la única fuente visual de una variante.
+        mockupUrl: undefined,
+        printArea: null,
+        views: form.views.map((baseView) => {
+          const configuredView = value.views?.find((view) => view.viewId === baseView.id);
+          const basePrintArea = normalizePrintArea({ x: Number(baseView.x), y: Number(baseView.y), width: Number(baseView.width), height: Number(baseView.height) });
+          return {
+            viewId: baseView.id,
+            name: baseView.name.trim() || 'Vista',
+              // Cada vista de variante sólo conserva la URL que el admin
+              // escribió para ESA cara. Ausencia significa fallback a base.
+              mockupUrl: configuredView?.mockupUrl && configuredView.mockupUrl.trim()
+                ? configuredView.mockupUrl.trim()
+                : null,
+            printArea: configuredView?.printArea ? normalizePrintArea(configuredView.printArea) : null,
+            ...(valueIndex === 0 && !configuredView?.printArea ? { printArea: basePrintArea } : {}),
+          };
+        }),
+      })),
+    }));
+    console.log('💾 [ADMIN GUARDANDO OPCIONES FINAL]:', JSON.stringify(optionsData, null, 2));
+
     const product: Product = {
       id: selectedId ?? crypto.randomUUID(),
       name: form.name.trim(),
@@ -129,12 +170,7 @@ export default function AdminProductsPage() {
       canvasHeight: REFERENCE_HEIGHT,
       printWidthCm: Number(form.printWidthCm) || undefined,
       printHeightCm: Number(form.printHeightCm) || undefined,
-      options: form.options.map((option) => ({
-        ...option,
-        name: option.name.trim() || 'Opción',
-        displayType: option.displayType ?? option.type,
-        values: option.values.map((value) => ({ ...value, label: value.label.trim() || 'Variante', thumbnailUrl: value.thumbnailUrl?.trim() || undefined, mockupUrl: value.mockupUrl?.trim() || undefined, printArea: value.printArea ? normalizePrintArea(value.printArea) : null })),
-      })),
+      options: optionsData,
       views: form.views.map((view) => {
         const area = {
           x: Math.max(0, Number(view.x) || 0),
@@ -199,7 +235,7 @@ export default function AdminProductsPage() {
             <button type="button" onClick={addView} className="mt-5 inline-flex items-center gap-2 rounded-md border border-emerald-600 px-4 py-2 font-semibold text-emerald-700 transition hover:bg-emerald-50">
               <Plus size={18} /> Agregar otra vista (ej. Espalda)
             </button>
-            <AdminProductOptionsForm options={form.options} onChange={(options) => setForm((current) => ({ ...current, options }))} />
+            <AdminProductOptionsForm options={form.options} baseViews={baseViews} onChange={(options) => setForm((current) => ({ ...current, options }))} />
             <button type="submit" className="ml-3 mt-5 inline-flex items-center gap-2 rounded-md bg-slate-900 px-5 py-3 font-semibold text-white shadow-sm transition hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-400"><Plus size={18} />Guardar producto</button>
           </form>
 

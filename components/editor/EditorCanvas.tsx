@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, X, Trash2 } from 'lucide-react';
 import type { TextOptions } from '../../types/product';
-import type { ColorVariant, Product, ProductView } from '@/src/store/useProductStore';
+import type { ColorVariant, Product, ProductOptionValue, ProductView } from '@/src/store/useProductStore';
 import type { SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
 
 type PrintArea = ProductView['printArea'];
@@ -43,6 +43,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   // reconstruyen su mockup y guía. Esto evita renderizados sobre un contexto
   // ya destruido por React.
   useEffect(() => {
+    console.log('📌 [EDITOR - PRODUCTO BASE CARGADO]:', {
+      id: initialProduct?.id,
+      name: initialProduct?.name,
+      baseViews: initialProduct?.views,
+    });
     setupProductRef.current?.(initialProduct);
   }, [initialProduct]);
 
@@ -193,6 +198,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       let activeProduct: Product = initialProduct;
       let activeView: ProductView = initialProduct.views[0];
+      // Cada carga de fondo recibe un token. Un callback de Fabric que llega
+      // tarde nunca puede sobrescribir la variante/vista ya resuelta.
+      let currentRenderToken = 0;
+      let baseProductViews: ProductView[] = initialProduct.views;
+      let activeOptionSelections: Record<string, ProductOptionValue> = {};
       // Un valor de opción puede sustituir temporalmente la zona de la vista.
       // `null` significa explícitamente usar la zona segura base del producto.
       let activeOptionPrintArea: PrintArea | null = null;
@@ -200,8 +210,59 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       const getView = (viewId: string): ProductView =>
         activeProduct.views.find((v) => v.id === viewId) || activeProduct.views[0];
 
-      const getPercentPrintArea = (view: ProductView): PrintArea => {
-        if (activeOptionPrintArea) return activeOptionPrintArea;
+      const resolveCurrentViewData = (
+        productViews: ProductView[],
+        currentViewIndex: number,
+        selectedOptionsMap: Record<string, ProductOptionValue>,
+      ) => {
+        const baseView = productViews[currentViewIndex] || productViews[0];
+        const selectedValues = Object.values(selectedOptionsMap).filter(Boolean);
+        const logResolvedView = (resolvedView: { mockupUrl: string; printArea: PrintArea; name: string }) => {
+          console.log('🔍 [RESOLVIENDO VISTA]:', {
+            vistaIndicePedido: currentViewIndex,
+            baseViewEsperada: baseView,
+            opcionesSeleccionadas: selectedOptionsMap,
+            vistaResueltaFinal: resolvedView,
+          });
+          return resolvedView;
+        };
+
+        // Sin interacción explícita de opciones, el producto base es la única
+        // fuente válida de imagen y zona segura.
+        if (selectedValues.length === 0) {
+          return logResolvedView({
+            mockupUrl: baseView.mockupUrl || (baseView as any).url,
+            printArea: baseView.printArea,
+            name: baseView.name,
+          });
+        }
+
+        for (const value of selectedValues) {
+          if (value.views && Array.isArray(value.views) && value.views.length > 0) {
+            const matchedView = value.views.find(
+              (view) => view.viewId === baseView.id,
+            ) || value.views[currentViewIndex];
+            // `null`/cadena vacía significa explícitamente: no sustituir esta
+            // cara. Se ignora la variante y se permite el fallback base.
+            if (!matchedView?.mockupUrl) continue;
+            console.log('✅ [RESOLVER VISTA] Usando vista dinámica específica:', matchedView);
+            return logResolvedView({
+              mockupUrl: matchedView.mockupUrl,
+              printArea: matchedView.printArea || baseView.printArea,
+              name: baseView.name,
+            });
+          }
+        }
+
+        console.log('🏠 [RESOLVER VISTA] Usando vista BASE del producto:', baseView);
+        return logResolvedView({
+          mockupUrl: baseView.mockupUrl || (baseView as any).url,
+          printArea: baseView.printArea,
+          name: baseView.name,
+        });
+      };
+
+      const getBasePercentPrintArea = (view: ProductView): PrintArea => {
         if (view.printAreaUnit === 'percent') {
           return view.printArea;
         }
@@ -213,6 +274,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           height: (view.printArea.height * 100) / ADMIN_BASE_SIZE,
         };
       };
+
+      const getPercentPrintArea = (view: ProductView): PrintArea => activeOptionPrintArea ?? getBasePercentPrintArea(view);
 
       const getRenderedPrintArea = (view: ProductView): PrintArea => {
         const area = getPercentPrintArea(view);
@@ -270,11 +333,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         });
       };
 
-      const loadProductMockup = (view: ProductView) => {
+      const loadProductMockup = (view: ProductView, mockupUrlOverride?: string) => {
         const selectedVariant = view.colorVariants?.find(
           (variant) => variant.id === selectedColorIdsRef.current[view.id],
         );
-        const mockupUrl = getColorMockupUrl(view, selectedVariant);
+        const mockupUrl = mockupUrlOverride || getColorMockupUrl(view, selectedVariant);
+        const renderToken = ++currentRenderToken;
         // Cargar el overlay del artículo (taza, funda, playera...) según la vista activa.
         // La imagen se usa como fondo del canvas (setBackgroundImage): no pertenece a
         // getObjects() y, por defecto, es no interactiva (selectable/evented = false),
@@ -301,6 +365,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             fabric.Image.fromURL(
               mockupUrl,
               (img) => {
+                if (renderToken !== currentRenderToken) {
+                  console.log('⛔ Petición obsoleta descartada:', mockupUrl);
+                  resolve();
+                  return;
+                }
                 // Fabric devuelve `null` ante un 404/CORS y algunas fuentes
                 // pueden crear el objeto sin dimensiones. No redimensionar en
                 // ninguno de esos casos evita dejar el canvas vacío o inválido.
@@ -340,6 +409,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                 });
                 fitMockupToCanvas(img);
                 canvas.setBackgroundImage(img, () => {
+                  if (renderToken !== currentRenderToken) {
+                    console.log('⛔ Petición obsoleta descartada:', mockupUrl);
+                    resolve();
+                    return;
+                  }
                   console.log('✅ BackgroundImage aplicado correctamente al Canvas');
                   // La guía y los recortes usan la matriz final del fondo.
                   setupSafeAreaAndClipping(view);
@@ -361,6 +435,31 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         });
       };
 
+      // Punto único para cargar una vista resuelta en Fabric. La URL nunca se
+      // vuelve a deducir desde color/base después de que el resolver decide.
+      const loadResolvedViewBackground = async (
+        view: ProductView,
+        resolvedView: { mockupUrl: string; printArea: PrintArea; name?: string },
+      ) => {
+        const resolvedCanvasView: ProductView = {
+          ...view,
+          mockupUrl: resolvedView.mockupUrl,
+          printArea: resolvedView.printArea,
+          printAreaUnit: 'percent',
+        };
+        activeProduct = {
+          ...activeProduct,
+          views: activeProduct.views.map((item) => item.id === resolvedCanvasView.id ? resolvedCanvasView : item),
+        };
+        activeView = resolvedCanvasView;
+        console.log('🎨 [VISTA RESUELTA -> FABRIC]:', {
+          viewId: resolvedCanvasView.id,
+          mockupUrl: resolvedView.mockupUrl,
+          printArea: resolvedView.printArea,
+        });
+        await loadProductMockup(resolvedCanvasView, resolvedView.mockupUrl);
+      };
+
       /**
        * Sustituye exclusivamente el fondo del mockup. El lienzo y sus objetos
        * no se limpian ni se reescalan, por lo que el diseño del cliente se
@@ -372,6 +471,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         setSelectedColor(variant);
         const c = fabricCanvasRef.current;
         const mockupUrl = getColorMockupUrl(activeView, variant);
+        const renderToken = ++currentRenderToken;
         console.log('2. URL de la imagen a cargar:', mockupUrl, { viewId: activeView.id });
 
         if (!mockupUrl) {
@@ -389,6 +489,10 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         fabric.Image.fromURL(
           mockupUrl,
           (img: any) => {
+            if (renderToken !== currentRenderToken) {
+              console.log('⛔ Petición obsoleta descartada:', mockupUrl);
+              return;
+            }
             if (!img || !img.width || !img.height) {
               console.error('❌ ERROR: Fabric no pudo cargar el mockup de color', { mockupUrl, img });
               return;
@@ -401,6 +505,10 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             fitMockupToCanvas(img);
 
             c.setBackgroundImage(img, () => {
+              if (renderToken !== currentRenderToken) {
+                console.log('⛔ Petición obsoleta descartada:', mockupUrl);
+                return;
+              }
               applyPrintAreaClipping(activeView);
               c.renderAll();
               c.requestRenderAll();
@@ -420,17 +528,80 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         );
       };
 
+      // Sincroniza un único estado de variante con las vistas que ve React y
+      // con la vista que utiliza Fabric. Así las miniaturas nunca quedan con
+      // el mockup anterior al cambiar una opción.
+      const syncEditorWithVariant = (selections: Record<string, ProductOptionValue>, preferredValue?: ProductOptionValue) => {
+        console.log('🔁 [SYNC VARIANTE] Inicio:', {
+          activeViewId: currentViewIdRef.current,
+          selectedOptionIds: Object.fromEntries(Object.entries(selections).map(([optionId, value]) => [optionId, value.id])),
+          preferredValue: preferredValue?.label,
+        });
+        activeOptionSelections = selections;
+        const currentViewIndex = Math.max(0, baseProductViews.findIndex((view) => view.id === currentViewIdRef.current));
+        const selectedValues = Object.values(selections);
+        const optionWithViews = selectedValues.find((value) => value?.views && Array.isArray(value.views) && value.views.length > 0);
+        const resolvedCurrentView = resolveCurrentViewData(baseProductViews, currentViewIndex, selections);
+
+        // La misma regla resolutora alimenta la lista completa de vistas. Se
+        // reconstruye desde base en cada cambio, evitando arrastrar URLs de
+        // una variante anterior a Frente/Espalda.
+        const nextViews = baseProductViews.map((baseView, index) => {
+          const resolvedView = resolveCurrentViewData(baseProductViews, index, selections);
+          const dynamicView = optionWithViews?.views?.find(
+            (view) => view.viewId === baseView.id || view.name === baseView.name,
+          ) || optionWithViews?.views?.[index];
+          return {
+            ...baseView,
+            ...resolvedView,
+            // Sólo una zona específica de la variante está en porcentajes;
+            // si falta, se conserva la unidad de la vista base de esta cara.
+            printAreaUnit: dynamicView?.printArea ? 'percent' as const : baseView.printAreaUnit,
+          };
+        });
+
+        activeProduct = { ...activeProduct, views: nextViews };
+        activeView = getView(currentViewIdRef.current);
+        if (activeView.id !== currentViewIdRef.current) {
+          currentViewIdRef.current = activeView.id;
+          setCurrentViewId(activeView.id);
+        }
+        // Una variante con `views` ya incluye su propia zona por cara; para
+        // una variante global se usa su printArea opcional.
+        activeOptionPrintArea = null;
+        setProductViews(nextViews);
+        console.log('✅ [SYNC VARIANTE] Vistas activas actualizadas:', nextViews.map((view) => ({
+          id: view.id,
+          mockupUrl: view.mockupUrl,
+          printArea: view.printArea,
+        })));
+        return { mockupUrl: resolvedCurrentView.mockupUrl, printArea: resolvedCurrentView.printArea };
+      };
+
       // Las opciones pueden ofrecer mockup y zona segura propios. Si el valor
       // no define `printArea`, se restaura de forma explícita la zona base.
       handleOptionMockup = (event: Event) => {
-        const optionValue = (event as CustomEvent<{ optionValue?: { mockupUrl?: string; printArea?: PrintArea } }>).detail?.optionValue;
+        const detail = (event as CustomEvent<{ optionId?: string; optionValue?: ProductOptionValue; selections?: Record<string, ProductOptionValue> }>).detail;
+        const optionValue = detail?.optionValue;
         const c = fabricCanvasRef.current;
         if (!c || !optionValue) return;
-        activeOptionPrintArea = optionValue.printArea ?? null;
-        const selectedVariant = activeView.colorVariants?.find(
-          (variant) => variant.id === selectedColorIdsRef.current[activeView.id],
-        );
-        const mockupUrl = optionValue.mockupUrl || getColorMockupUrl(activeView, selectedVariant);
+        const selectedOptionId = detail.optionId ?? optionValue.id;
+        const { [selectedOptionId]: _previousValue, ...otherSelections } = activeOptionSelections;
+        const selections = detail.selections ?? { ...otherSelections, [selectedOptionId]: optionValue };
+        const synced = syncEditorWithVariant(selections, optionValue);
+        if (!synced) return;
+        const mockupUrl = synced.mockupUrl;
+        const renderToken = ++currentRenderToken;
+        console.log('🎨 [APLICANDO AL CANVAS]:', {
+          viewId: activeView.id,
+          mockupUrl,
+          printArea: synced.printArea,
+        });
+        console.log('🖼️ [CANVAS VARIANTE] Cargando fondo y zona segura:', {
+          viewId: activeView.id,
+          mockupUrl,
+          printArea: getPercentPrintArea(activeView),
+        });
         if (!mockupUrl) {
           setupSafeAreaAndClipping(activeView);
           c.getObjects().filter((object: any) => !object.isGuide && !object.isDesignBackground).forEach(clampToPrintArea);
@@ -438,13 +609,22 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           return;
         }
         fabric.Image.fromURL(mockupUrl, (img: any) => {
+          if (renderToken !== currentRenderToken) {
+            console.log('⛔ Petición obsoleta descartada:', mockupUrl);
+            return;
+          }
           if (!img?.width || !img?.height) return;
           fitMockupToCanvas(img);
           c.setBackgroundImage(img, () => {
+            if (renderToken !== currentRenderToken) {
+              console.log('⛔ Petición obsoleta descartada:', mockupUrl);
+              return;
+            }
             setupSafeAreaAndClipping(activeView);
             c.getObjects().filter((object: any) => !object.isGuide && !object.isDesignBackground).forEach(clampToPrintArea);
             c.renderAll();
             c.requestRenderAll();
+            console.log('✅ Canvas sincronizado correctamente');
           });
         }, { crossOrigin: 'anonymous' });
       };
@@ -623,7 +803,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             colorVariants: view.colorVariants?.length ? view.colorVariants : productColors,
           })),
         };
+        baseProductViews = activeProduct.views.map((view) => ({ ...view }));
+        activeOptionSelections = {};
         activeView = activeProduct.views[0];
+        // La carga inicial muestra siempre la vista base, sin aplicar la
+        // primera opción/variante automáticamente.
         activeOptionPrintArea = null;
         // Ajustar dimensiones del canvas de Fabric.js
         // El admin define printArea sobre este mismo sistema de coordenadas.
@@ -666,7 +850,6 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       const finishViewSwitch = (viewId: string) => {
         const view = getView(viewId);
         activeView = view;
-        activeOptionPrintArea = null;
 
         currentViewIdRef.current = viewId;
         setCurrentViewId(viewId); // Actualizar el estado
@@ -689,16 +872,32 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const c = fabricCanvasRef.current;
         if (!c || viewId === currentViewIdRef.current) return;
 
+        const requestedViewIndex = activeProduct.views.findIndex((view) => view.id === viewId);
+        console.log('👁️ [CAMBIO DE VISTA]: Index pedido ->', requestedViewIndex);
+        console.log('👁️ [VISTA APUNTADA]:', activeProduct.views[requestedViewIndex]);
+
         // Persistir los objetos de la cara actual antes de cambiar de mockup.
         canvasDataRef.current[currentViewIdRef.current] = snapshotCurrentObjects();
         isUpdatingHistory.current = true;
         const nextView = getView(viewId);
         activeView = nextView;
+        currentViewIdRef.current = viewId;
+        setCurrentViewId(viewId);
+        const currentViewIndex = Math.max(0, baseProductViews.findIndex((view) => view.id === viewId));
+        const syncedView = Object.keys(activeOptionSelections).length
+          ? syncEditorWithVariant(activeOptionSelections)
+          : null;
+        const resolvedView = syncedView ?? resolveCurrentViewData(baseProductViews, currentViewIndex, activeOptionSelections);
+        console.log('🎨 [CAMBIO DE VISTA -> FABRIC]:', {
+          viewId,
+          resolvedMockupUrl: resolvedView.mockupUrl,
+          resolvedPrintArea: resolvedView.printArea,
+        });
 
         // 1) Limpiar la cara actual. 2) Esperar su nuevo fondo y zona segura.
         // Sólo entonces se rehidratan los objetos guardados para esa vista.
         c.clear();
-        await loadProductMockup(nextView);
+        await loadResolvedViewBackground(activeView, resolvedView);
 
         const stored = canvasDataRef.current[viewId];
         if (stored) {
@@ -751,7 +950,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // Limpiar solo objetos de usuario (conservando la zona segura)
         const userObjects = c.getObjects().filter((o: any) => o !== safeZoneRef.current);
         userObjects.forEach((o: any) => c.remove(o));
-        await loadProductMockup(view);
+        const viewIndex = Math.max(0, baseProductViews.findIndex((baseView) => baseView.id === view.id));
+        const resolvedView = resolveCurrentViewData(baseProductViews, viewIndex, activeOptionSelections);
+        await loadResolvedViewBackground(view, resolvedView);
         drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
 
         const stored = canvasDataRef.current[view.id];

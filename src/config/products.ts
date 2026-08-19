@@ -40,8 +40,24 @@ export interface ProductOptionValue {
   label: string;
   priceModifier: number;
   mockupUrl?: string;
+  /** Mockup opcional por vista para una variante de opción. */
+  mockupUrls?: Record<string, string>;
+  /** Configuración visual por cada vista del producto para esta variante. */
+  views?: ProductOptionView[];
   thumbnailUrl?: string;
   /** Zona segura opcional que sustituye la zona base al elegir este valor. */
+  printArea?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
+}
+
+export interface ProductOptionView {
+  viewId: string;
+  name: string;
+  mockupUrl?: string | null;
   printArea?: {
     x: number;
     y: number;
