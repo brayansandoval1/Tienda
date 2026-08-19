@@ -35,6 +35,20 @@ export default function OptionsPanel({ product, onClose }: OptionsPanelProps) {
     window.dispatchEvent(new CustomEvent('editor:option-mockup', { detail: { optionId: option.id, optionValue: value } }));
   };
 
+  const resetOption = (optionId: string) => {
+    setSelections((current) => {
+      const next = { ...current };
+      delete next[optionId];
+      window.dispatchEvent(new CustomEvent('editor:options-changed', {
+        detail: { productId: product.id, selections: next },
+      }));
+      window.dispatchEvent(new CustomEvent('editor:option-mockup', {
+        detail: { optionId, optionValue: null, selections: next },
+      }));
+      return next;
+    });
+  };
+
   return (
     <aside className="w-full max-w-[288px] space-y-6 rounded-2xl border bg-white p-4 shadow-lg">
       <div className="flex items-center justify-between border-b pb-2">
@@ -44,6 +58,28 @@ export default function OptionsPanel({ product, onClose }: OptionsPanelProps) {
       {!product.options?.length ? <p className="text-sm text-gray-500">Este producto no tiene opciones configuradas.</p> : product.options.map((option) => (
         <section key={option.id}>
           <label className="mb-2 block text-xs font-bold text-gray-600">{option.name}</label>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => resetOption(option.id)}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${!selections[option.id] ? 'border-orange-500 bg-orange-50 text-orange-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}
+            >
+              Estándar
+            </button>
+            {option.values.map((value) => {
+              const selected = selections[option.id] === value.id;
+              return (
+                <button
+                  key={value.id}
+                  type="button"
+                  onClick={() => choose(option, value)}
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${selected ? 'border-orange-500 bg-orange-50 text-orange-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}
+                >
+                  {value.label}
+                </button>
+              );
+            })}
+          </div>
           {(option.displayType ?? option.type) === 'thumbnails' ? <div className="grid grid-cols-3 gap-2">{option.values.map((value) => {
             const selected = selections[option.id] === value.id;
             return <button key={value.id} type="button" onClick={() => choose(option, value)} className={`flex flex-col items-center rounded-xl border-2 p-1.5 transition-all ${selected ? 'border-orange-500 bg-orange-50/20' : 'border-gray-200 hover:border-gray-300'}`}>

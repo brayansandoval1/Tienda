@@ -60,6 +60,26 @@ export default function ViewSelector({ product }: { product: Product }) {
     window.dispatchEvent(new CustomEvent('editor:option-mockup', { detail: { optionId, optionValue: selectedValue, selections: newSelections } }));
   };
 
+  const handleResetOption = (optionId: string) => {
+    setSelectedOptions((currentSelections) => {
+      const nextSelections = { ...currentSelections };
+      delete nextSelections[optionId];
+      console.log('↩️ [OPCIÓN RESTAURADA A ESTÁNDAR]:', {
+        optionId,
+        nextSelections,
+      });
+      return nextSelections;
+    });
+    const nextSelections = { ...selectedOptions };
+    delete nextSelections[optionId];
+    window.dispatchEvent(new CustomEvent('editor:options-changed', {
+      detail: { productId: product.id, selections: nextSelections },
+    }));
+    window.dispatchEvent(new CustomEvent('editor:option-mockup', {
+      detail: { optionId, optionValue: null, selections: nextSelections },
+    }));
+  };
+
   const selectedValues = Object.values(selectedOptions);
   const finalPrice = product.price + selectedValues.reduce((total, value) => total + value.priceModifier, 0);
   const priceLabel = (modifier: number) => modifier === 0 ? 'Incluido' : `${modifier > 0 ? '+' : '-'}$${Math.abs(modifier).toFixed(2)}`;
@@ -89,19 +109,54 @@ export default function ViewSelector({ product }: { product: Product }) {
           {product.options.map((option) => (
             <div key={option.id} className="space-y-2">
               <p className="text-sm font-semibold text-slate-800">{option.name}</p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleResetOption(option.id)}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                    !selectedOptions[option.id]
+                      ? 'border-blue-600 bg-blue-50 text-blue-700'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  Estándar
+                </button>
+                {valuesForOption(option).map((value) => {
+                  const selected = selectedOptions[option.id]?.id === value.id;
+                  return (
+                    <button
+                      key={value.id}
+                      type="button"
+                      onClick={() => handleOptionSelect(option.id, value)}
+                      className={option.type === 'thumbnails'
+                        ? `rounded-xl border p-2 text-left text-sm transition ${selected ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white' }`
+                        : `flex w-full items-center justify-between rounded-lg border px-3 py-2 text-sm transition ${selected ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white' }`
+                      }
+                    >
+                      {option.type === 'thumbnails' ? (
+                        <>
+                          <span className="flex items-center gap-2">
+                            {value.thumbnailUrl && <img src={value.thumbnailUrl} alt="" className="h-7 w-7 rounded object-cover" />}
+                            {value.label}
+                          </span>
+                          <span className="text-xs text-slate-500">{priceLabel(value.priceModifier)}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>{value.label}</span>
+                          <span className="text-xs text-slate-500">{priceLabel(value.priceModifier)}</span>
+                        </>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
               {option.type === 'select' ? (
                 <select value={selectedOptions[option.id]?.id ?? ''} onChange={(event) => { const value = valuesForOption(option).find((item) => item.id === event.target.value); if (value) handleOptionSelect(option.id, value); }} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
                   {valuesForOption(option).map((value) => <option key={value.id} value={value.id}>{value.label} ({priceLabel(value.priceModifier)})</option>)}
                 </select>
               ) : (
-                <div className={option.type === 'thumbnails' ? 'grid grid-cols-2 gap-2' : 'space-y-2'}>
-                  {valuesForOption(option).map((value) => {
-                    const selected = selectedOptions[option.id]?.id === value.id;
-                    return <button key={value.id} type="button" onClick={() => handleOptionSelect(option.id, value)} className={option.type === 'thumbnails' ? `rounded-xl border p-2 text-left text-sm ${selected ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white'}` : `flex w-full items-center justify-between rounded-lg border px-3 py-2 text-sm ${selected ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white'}`}>
-                      <span className="flex items-center gap-2">{value.thumbnailUrl && <img src={value.thumbnailUrl} alt="" className="h-7 w-7 rounded object-cover" />}{value.label}</span><span className="text-xs text-slate-500">{priceLabel(value.priceModifier)}</span>
-                    </button>;
-                  })}
-                </div>
+                null
               )}
             </div>
           ))}

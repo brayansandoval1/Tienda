@@ -80,7 +80,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleResetCrop: () => void,
       handleAlign: (e: Event) => void,
       handleSaveDesign: () => void,
-      handleOptionMockup: (e: Event) => void;
+      handleOptionMockup: (e: Event) => void,
+      handleOptionsChanged: (e: Event) => void;
 
     // Carga dinámica de Fabric solo en el cliente
     import('fabric').then((fabricModule) => {
@@ -584,7 +585,23 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const detail = (event as CustomEvent<{ optionId?: string; optionValue?: ProductOptionValue; selections?: Record<string, ProductOptionValue> }>).detail;
         const optionValue = detail?.optionValue;
         const c = fabricCanvasRef.current;
-        if (!c || !optionValue) return;
+        if (!c) return;
+        if (!optionValue) {
+          const currentViewIndex = Math.max(0, baseProductViews.findIndex((view) => view.id === currentViewIdRef.current));
+          const baseView = baseProductViews[currentViewIndex] || baseProductViews[0];
+          const baseResolvedView = resolveCurrentViewData(baseProductViews, currentViewIndex, {});
+          console.log('🔄 Estado vacío detectado. Restaurando vista base en Fabric.js...', {
+            currentViewIndex,
+            baseView,
+            baseResolvedView,
+          });
+          activeOptionSelections = {};
+          activeOptionPrintArea = null;
+          syncEditorWithVariant({});
+          c.clear();
+          void loadResolvedViewBackground(baseView, baseResolvedView);
+          return;
+        }
         const selectedOptionId = detail.optionId ?? optionValue.id;
         const { [selectedOptionId]: _previousValue, ...otherSelections } = activeOptionSelections;
         const selections = detail.selections ?? { ...otherSelections, [selectedOptionId]: optionValue };
@@ -627,6 +644,32 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             console.log('✅ Canvas sincronizado correctamente');
           });
         }, { crossOrigin: 'anonymous' });
+      };
+
+      handleOptionsChanged = (event: Event) => {
+        const detail = (event as CustomEvent<{ selections?: Record<string, ProductOptionValue> }>).detail;
+        const nextSelections = detail?.selections ?? {};
+        activeOptionSelections = nextSelections;
+
+        if (Object.keys(nextSelections).length === 0) {
+          const currentViewIndex = Math.max(0, baseProductViews.findIndex((view) => view.id === currentViewIdRef.current));
+          const baseView = baseProductViews[currentViewIndex] || baseProductViews[0];
+          const baseResolvedView = resolveCurrentViewData(baseProductViews, currentViewIndex, {});
+          console.log('🔄 Estado vacío detectado. Restaurando vista base en Fabric.js...', {
+            currentViewIndex,
+            baseView,
+            baseResolvedView,
+          });
+          activeOptionPrintArea = null;
+          syncEditorWithVariant({});
+          if (fabricCanvasRef.current && baseView) {
+            fabricCanvasRef.current.clear();
+            void loadResolvedViewBackground(baseView, baseResolvedView);
+          }
+          return;
+        }
+
+        syncEditorWithVariant(nextSelections);
       };
 
       const drawSafeArea = (canvasWidth: number, canvasHeight: number, printArea: PrintArea) => {
@@ -1874,6 +1917,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:align', handleAlign);
       window.addEventListener('editor:save-design', handleSaveDesign);
       window.addEventListener('editor:option-mockup', handleOptionMockup);
+      window.addEventListener('editor:options-changed', handleOptionsChanged);
 
       canvas.on('object:added', saveState);
       canvas.on('object:modified', saveState);
@@ -1953,6 +1997,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleOptionMockup) {
         window.removeEventListener('editor:option-mockup', handleOptionMockup);
+      }
+      if (handleOptionsChanged) {
+        window.removeEventListener('editor:options-changed', handleOptionsChanged);
       }
       if (fabricCanvasRef.current) {
         fabricCanvasRef.current.dispose();
