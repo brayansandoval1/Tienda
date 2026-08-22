@@ -5,6 +5,7 @@ import { Check, X, Trash2 } from 'lucide-react';
 import type { TextOptions } from '../../types/product';
 import type { ColorVariant, Product, ProductOptionValue, ProductView } from '@/src/store/useProductStore';
 import type { SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
+import Product3DModal from '@/components/editor/Product3DModal';
 
 type PrintArea = ProductView['printArea'];
 const ADMIN_BASE_SIZE = 800;
@@ -23,6 +24,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   const isUpdatingHistory = useRef(false);
   const [isCropping, setIsCropping] = useState(false);
   const [isImageSelected, setIsImageSelected] = useState(false);
+  const [is3DModalOpen, setIs3DModalOpen] = useState(false);
+  const [threeDTextureUrl, setThreeDTextureUrl] = useState('');
   const [currentViewId, setCurrentViewId] = useState<string>(initialProduct.views[0]?.id ?? 'front');
   const [productViews, setProductViews] = useState<ProductView[]>(initialProduct.views);
   const [selectedColor, setSelectedColor] = useState<ColorVariant | null>(
@@ -890,10 +893,22 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         updateHistoryButtons();
       };
 
+      const open3DPreview = () => {
+        const c = fabricCanvasRef.current;
+        if (!c) return;
+        const dataUrl = c.toDataURL({
+          format: 'png',
+          multiplier: 1,
+        });
+        setThreeDTextureUrl(dataUrl);
+        setIs3DModalOpen(true);
+      };
+
       setupProductRef.current = setupProduct;
       setupProduct(initialProduct);
       handleColorChangeRef.current = handleProductColorChange;
       handleDesignBgColorChangeRef.current = handleDesignBgColorChange;
+      (window as any).__openEditor3DPreview = open3DPreview;
 
       // --- Vistas de producto (frente, espalda, etc.) ---
       const finishViewSwitch = (viewId: string) => {
@@ -2014,21 +2029,35 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         fabricCanvasRef.current.dispose();
         fabricCanvasRef.current = null;
       }
+      delete (window as any).__openEditor3DPreview;
       setupProductRef.current = null;
     };
   }, []);
 
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-auto bg-gray-50 p-4">
-      <div
-        className="pointer-events-auto relative flex max-h-[70vh] max-w-full shrink-0 select-none items-center justify-center overflow-hidden rounded-lg bg-white shadow-xl"
-        style={{
-          aspectRatio: '1 / 1',
-          width: 'min(100%, 70vh)',
-        }}
-      >
-        <canvas ref={canvasRef} className="block max-h-full max-w-full object-contain" style={{ width: '100%', height: '100%', pointerEvents: 'auto' }} />
-      </div>
+        <div
+          className="pointer-events-auto relative flex max-h-[70vh] max-w-full shrink-0 select-none items-center justify-center overflow-hidden rounded-lg bg-white shadow-xl"
+          style={{
+            aspectRatio: '1 / 1',
+            width: 'min(100%, 70vh)',
+          }}
+        >
+          <canvas ref={canvasRef} className="block max-h-full max-w-full object-contain" style={{ width: '100%', height: '100%', pointerEvents: 'auto' }} />
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            const canvas = fabricCanvasRef.current;
+            if (!canvas) return;
+            setThreeDTextureUrl(canvas.toDataURL({ format: 'png', multiplier: 1 }));
+            setIs3DModalOpen(true);
+          }}
+          className="absolute bottom-4 right-4 z-30 inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:bg-slate-800"
+        >
+          <span className="text-base">◼</span>
+          Ver en 3D
+        </button>
       {!isCropping ? (
         <div className="pointer-events-none absolute left-4 top-4 z-20 w-60 space-y-3 rounded-2xl border border-gray-200 bg-white/95 p-3 shadow-xl backdrop-blur-md">
           {productViews.length > 1 && <div>
@@ -2169,6 +2198,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           </button>
         </div>
       )}
+      <Product3DModal
+        open={is3DModalOpen}
+        textureUrl={threeDTextureUrl}
+        onClose={() => setIs3DModalOpen(false)}
+      />
     </div>
   );
 }
