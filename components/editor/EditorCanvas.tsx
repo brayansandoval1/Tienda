@@ -210,6 +210,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       // Un valor de opción puede sustituir temporalmente la zona de la vista.
       // `null` significa explícitamente usar la zona segura base del producto.
       let activeOptionPrintArea: PrintArea | null = null;
+      // Límites reales del mockup después de aplicar `contain`. La zona segura
+      // es porcentual respecto a la imagen, no a las franjas del canvas.
+      let activeMockupBounds = { left: 0, top: 0, width: ADMIN_BASE_SIZE, height: ADMIN_BASE_SIZE };
 
       const getView = (viewId: string): ProductView =>
         activeProduct.views.find((v) => v.id === viewId) || activeProduct.views[0];
@@ -241,7 +244,21 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           });
         }
 
-        for (const value of selectedValues) {
+        // 1. Una URL directa en la variante seleccionada tiene prioridad. Es
+        // útil para catálogos antiguos que no guardaban `views` por cara.
+        const valueWithDirectMockup = [...selectedValues].reverse().find((value) => value.mockupUrl?.trim());
+        if (valueWithDirectMockup?.mockupUrl?.trim()) {
+          console.log('✅ [RESOLVER VISTA] Usando mockup directo de variante:', valueWithDirectMockup.label);
+          return logResolvedView({
+            mockupUrl: valueWithDirectMockup.mockupUrl,
+            printArea: valueWithDirectMockup.printArea || baseView.printArea,
+            name: baseView.name,
+          });
+        }
+
+        // 2. Si no existe una URL global, buscar la cara dinámica por su id;
+        // el índice es el fallback para datos heredados sin `viewId`.
+        for (const value of [...selectedValues].reverse()) {
           if (value.views && Array.isArray(value.views) && value.views.length > 0) {
             const matchedView = value.views.find(
               (view) => view.viewId === baseView.id,
@@ -283,14 +300,13 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       const getRenderedPrintArea = (view: ProductView): PrintArea => {
         const area = getPercentPrintArea(view);
-        // La zona segura siempre se expresa respecto del plano lógico común
-        // de 800×800, nunca respecto de los píxeles (o márgenes) del PNG.
-        // El Admin usa este mismo contenedor cuadrado.
+        // Recalcular con los límites del mockup evita desfasar la guía cuando
+        // una variante rectangular deja márgenes dentro del canvas cuadrado.
         return {
-          x: (area.x / 100) * canvas.getWidth(),
-          y: (area.y / 100) * canvas.getHeight(),
-          width: (area.width / 100) * canvas.getWidth(),
-          height: (area.height / 100) * canvas.getHeight(),
+          x: activeMockupBounds.left + (area.x / 100) * activeMockupBounds.width,
+          y: activeMockupBounds.top + (area.y / 100) * activeMockupBounds.height,
+          width: (area.width / 100) * activeMockupBounds.width,
+          height: (area.height / 100) * activeMockupBounds.height,
         };
       };
 
@@ -323,18 +339,31 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         color?.mockupUrls?.[view.id] || color?.mockupUrl || view.mockupUrl;
 
       const fitMockupToCanvas = (img: any) => {
-        const scale = Math.min(canvas.getWidth() / img.width, canvas.getHeight() / img.height);
+        const naturalWidth = img?._element?.naturalWidth || img.width;
+        const naturalHeight = img?._element?.naturalHeight || img.height;
+        const canvasWidth = canvas.getWidth();
+        const canvasHeight = canvas.getHeight();
+        const scale = Math.min(canvasWidth / naturalWidth, canvasHeight / naturalHeight);
+        const renderedWidth = naturalWidth * scale;
+        const renderedHeight = naturalHeight * scale;
+        activeMockupBounds = {
+          left: (canvasWidth - renderedWidth) / 2,
+          top: (canvasHeight - renderedHeight) / 2,
+          width: renderedWidth,
+          height: renderedHeight,
+        };
         img.set({
-          originX: 'left',
-          originY: 'top',
-          left: (canvas.getWidth() - img.width * scale) / 2,
-          top: (canvas.getHeight() - img.height * scale) / 2,
+          originX: 'center',
+          originY: 'center',
+          left: canvasWidth / 2,
+          top: canvasHeight / 2,
           scaleX: scale,
           scaleY: scale,
           selectable: false,
           evented: false,
           excludeFromExport: true,
         });
+        console.log('📐 [MOCKUP AJUSTADO]', { naturalWidth, naturalHeight, scale, renderedBounds: activeMockupBounds });
       };
 
       const loadProductMockup = (view: ProductView, mockupUrlOverride?: string) => {
@@ -360,6 +389,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           canvas.setBackgroundImage(null, () => canvas.requestRenderAll());
           if (!mockupUrl) {
             // Sin mockup: dejar el lienzo utilizable y mostrar su zona segura.
+            activeMockupBounds = { left: 0, top: 0, width: canvas.getWidth(), height: canvas.getHeight() };
             drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
             resolve();
             return;
@@ -379,6 +409,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                 // ninguno de esos casos evita dejar el canvas vacío o inválido.
                 if (!img || !img.width || !img.height) {
                   console.error(`❌ Error al cargar la imagen del mockup en la ruta: ${mockupUrl}`);
+                  activeMockupBounds = { left: 0, top: 0, width: canvas.getWidth(), height: canvas.getHeight() };
                   drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
                   canvas.requestRenderAll();
                   resolve();
@@ -659,8 +690,13 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       };
 
       handleOptionsChanged = (event: Event) => {
-        const detail = (event as CustomEvent<{ selections?: Record<string, ProductOptionValue> }>).detail;
-        const nextSelections = detail?.selections ?? {};
+        const detail = (event as CustomEvent<{ selections?: Record<string, ProductOptionValue | string> }>).detail;
+        const rawSelections = detail?.selections ?? {};
+        // OptionsPanel heredado emite ids de texto y posteriormente emite el
+        // evento completo `option-mockup`. No intentes resolver esos ids como
+        // objetos de variante: espera el evento completo para no perder views.
+        if (Object.values(rawSelections).some((value) => typeof value === 'string')) return;
+        const nextSelections = rawSelections as Record<string, ProductOptionValue>;
         activeOptionSelections = nextSelections;
 
         if (Object.keys(nextSelections).length === 0) {
@@ -678,7 +714,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           return;
         }
 
-        syncEditorWithVariant(nextSelections);
+        const currentViewIndex = Math.max(0, baseProductViews.findIndex((view) => view.id === currentViewIdRef.current));
+        const synced = syncEditorWithVariant(nextSelections);
+        const resolvedView = synced ?? resolveCurrentViewData(baseProductViews, currentViewIndex, nextSelections);
+        // La actualización del estado y la imagen deben ser atómicas desde la
+        // perspectiva del editor: Fabric recibe de inmediato el fondo que el
+        // resolver acaba de escoger para la vista activa.
+        if (fabricCanvasRef.current && activeView) {
+          void loadResolvedViewBackground(activeView, resolvedView);
+        }
       };
 
       const drawSafeArea = (canvasWidth: number, canvasHeight: number, printArea: PrintArea) => {

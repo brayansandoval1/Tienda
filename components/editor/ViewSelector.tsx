@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { type Product, type ProductOptionValue } from '@/src/store/useProductStore';
 import ProductSelector from '@/components/editor/ProductSelector';
 
+const optionGroupName = (option: { name: string }) => /(?:termo|taza|\d+\s*oz|estándar)/i.test(option.name) ? 'Modelo' : option.name || 'Opción';
+
 export default function ViewSelector({ product }: { product: Product }) {
   const [selectedOptions, setSelectedOptions] = useState<Record<string, ProductOptionValue>>({});
   const [activeViewIndex, setActiveViewIndex] = useState(0);
@@ -24,9 +26,12 @@ export default function ViewSelector({ product }: { product: Product }) {
   );
 
   useEffect(() => {
-    // Un producto nuevo nunca hereda opciones de otro. No se autoselecciona
-    // `values[0]`: el primer render debe mostrar el producto base nativo.
-    setSelectedOptions({});
+    // Un producto nuevo no hereda selecciones ajenas: cada grupo inicia con
+    // su primera variante, sin añadir un botón genérico “Estándar”.
+    setSelectedOptions(Object.fromEntries((product.options ?? []).flatMap((option) => {
+      const firstValue = valuesForOption(option)[0];
+      return firstValue ? [[option.id, firstValue]] : [];
+    })));
     setActiveViewIndex(0);
   }, [product.id]);
 
@@ -73,26 +78,6 @@ export default function ViewSelector({ product }: { product: Product }) {
     // El canvas resuelve `value.printArea ?? view.printArea`, conserva el
     // fondo si no hay mockup y recalcula guía, clipPath y límites del arte.
     window.dispatchEvent(new CustomEvent('editor:option-mockup', { detail: { optionId, optionValue: selectedValue, selections: newSelections } }));
-  };
-
-  const handleResetOption = (optionId: string) => {
-    setSelectedOptions((currentSelections) => {
-      const nextSelections = { ...currentSelections };
-      delete nextSelections[optionId];
-      console.log('↩️ [OPCIÓN RESTAURADA A ESTÁNDAR]:', {
-        optionId,
-        nextSelections,
-      });
-      return nextSelections;
-    });
-    const nextSelections = { ...selectedOptions };
-    delete nextSelections[optionId];
-    window.dispatchEvent(new CustomEvent('editor:options-changed', {
-      detail: { productId: product.id, selections: nextSelections },
-    }));
-    window.dispatchEvent(new CustomEvent('editor:option-mockup', {
-      detail: { optionId, optionValue: null, selections: nextSelections },
-    }));
   };
 
   const selectedValues = Object.values(selectedOptions);
@@ -143,20 +128,12 @@ export default function ViewSelector({ product }: { product: Product }) {
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Opciones del producto</p>
           {product.options.map((option) => (
             <div key={option.id} className="space-y-2">
-              <p className="text-sm font-semibold text-slate-800">{option.name}</p>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleResetOption(option.id)}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                    !selectedOptions[option.id]
-                      ? 'border-blue-600 bg-blue-50 text-blue-700'
-                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                  }`}
-                >
-                  Estándar
-                </button>
-                {valuesForOption(option).map((value) => {
+              <p className="text-sm font-semibold text-slate-800">{optionGroupName(option)}</p>
+              {option.type === 'select' ? (
+                <select value={selectedOptions[option.id]?.id ?? valuesForOption(option)[0]?.id ?? ''} onChange={(event) => { const value = valuesForOption(option).find((item) => item.id === event.target.value); if (value) handleOptionSelect(option.id, value); }} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                  {valuesForOption(option).map((value) => <option key={value.id} value={value.id}>{value.label} ({priceLabel(value.priceModifier)})</option>)}
+                </select>
+              ) : <div className={option.type === 'thumbnails' ? 'flex flex-wrap gap-2' : 'space-y-2'}>{valuesForOption(option).map((value) => {
                   const selected = selectedOptions[option.id]?.id === value.id;
                   return (
                     <button
@@ -184,15 +161,7 @@ export default function ViewSelector({ product }: { product: Product }) {
                       )}
                     </button>
                   );
-                })}
-              </div>
-              {option.type === 'select' ? (
-                <select value={selectedOptions[option.id]?.id ?? ''} onChange={(event) => { const value = valuesForOption(option).find((item) => item.id === event.target.value); if (value) handleOptionSelect(option.id, value); }} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-                  {valuesForOption(option).map((value) => <option key={value.id} value={value.id}>{value.label} ({priceLabel(value.priceModifier)})</option>)}
-                </select>
-              ) : (
-                null
-              )}
+                })}</div>}
             </div>
           ))}
         </section>

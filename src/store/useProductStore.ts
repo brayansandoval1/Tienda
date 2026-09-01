@@ -6,6 +6,7 @@ export type { ColorVariant, Product, ProductOption, ProductOptionValue, ProductO
 
 export interface ProductState {
   products: Product[];
+  setProducts: (products: Product[]) => void;
   addProduct: (product: Product) => void;
   updateProduct: (product: Product) => void;
   removeProduct: (productId: string) => void;
@@ -20,6 +21,7 @@ export const useProductStore = create<ProductState>()(
   persist(
     (set, get) => ({
       products: initialProducts,
+      setProducts: (products) => set({ products }),
       addProduct: (product) =>
         set((state) => ({ products: [...state.products, product] })),
       updateProduct: (updatedProduct) =>
@@ -37,21 +39,26 @@ export const useProductStore = create<ProductState>()(
       },
     }),
     {
-      name: 'product-storage', // Nombre de la clave en localStorage
-      storage: createJSONStorage(() => localStorage),
-      // Fusiona el estado persistido con el inicial, sembrando el catálogo
-      // por defecto cuando el almacenamiento está ausente o vacío.
-      // En zustand v5 el estado rehidratado está congelado (Immer), así que la
-      // semilla debe hacerse dentro de `merge` (en `set`) y no mediante
-      // mutación directa en `onRehydrateStorage`.
+      // Admin y Editor comparten la misma clave. Se consulta primero esta
+      // fuente y se lee la clave anterior sólo como migración transparente.
+      name: 'custom_products',
+      storage: createJSONStorage(() => ({
+        getItem: (name) => localStorage.getItem(name) ?? localStorage.getItem('product-storage'),
+        setItem: (name, value) => localStorage.setItem(name, value),
+        removeItem: (name) => localStorage.removeItem(name),
+      })),
+      partialize: (state) => ({ products: state.products }),
+      // Sólo se siembra el catálogo cuando no existe ningún estado persistido.
+      // Una lista vacía es válida: significa que el usuario eliminó todos los
+      // productos y no debe volver a mostrar los mocks al recargar.
       merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<ProductState> | undefined;
+        if (!persisted || !Array.isArray(persisted.products)) return currentState;
         const merged = {
           ...currentState,
-          ...(persistedState as Partial<ProductState>),
+          ...persisted,
         };
-        if (!merged.products?.length) {
-          merged.products = initialProducts;
-        } else {
+        if (merged.products.length) {
           // Los productos guardados antes de añadir variantes no incluyen
           // `colors`. Conservamos las personalizaciones persistidas, pero les
           // completamos las variantes actuales del catálogo por su mismo id.

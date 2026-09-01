@@ -31,6 +31,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
     }
     const matchingProduct = products.find((p) => p.id === producto.id);
     if (matchingProduct) setCurrentProduct(matchingProduct);
+    else if (products.length) setCurrentProduct(products[0]);
   }, [initialProduct, products, producto.id]);
 
   // Listener para el evento de cambio de producto desde ViewSelector
