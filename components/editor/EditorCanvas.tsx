@@ -100,7 +100,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       // Conserva las coordenadas lógicas del editor, pero aumenta el buffer
       // interno para que texto y vectores se rendericen nítidos en pantallas
       // de alta densidad (también en monitores de densidad estándar).
-      (fabric as any).devicePixelRatio = Math.max(window.devicePixelRatio || 1, 2);
+      const devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      (fabric as any).devicePixelRatio = devicePixelRatio;
       const canvas = new (fabric as any).Canvas(canvasRef.current, {
         width: ADMIN_BASE_SIZE,
         height: ADMIN_BASE_SIZE,
@@ -1351,7 +1352,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         if (!document.getElementById(id)) {
           const link = document.createElement('link');
           link.id = id;
-          link.href = `https://fonts.googleapis.com/css2?family=${fontFamily.replace(/\s+/g, '+')}:wght@400;700&display=swap`;
+          const familyParam = fontFamily.replace(/\s+/g, '+');
+          link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(familyParam)}:wght@400;700&display=swap`;
           link.rel = 'stylesheet';
           document.head.appendChild(link);
         }
@@ -1522,6 +1524,10 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // Crear un elemento img HTML oculto para precargar la imagen Base64
         const imgElement = document.createElement('img');
         imgElement.src = dataUrl;
+        imgElement.onerror = () => {
+          console.error('Error cargando imagen a partir del dataUrl proporcionado', dataUrl);
+          window.dispatchEvent(new CustomEvent('editor:image-load-error', { detail: { dataUrl } }));
+        };
 
         imgElement.onload = () => {
           const printArea = getRenderedPrintArea(activeView);
@@ -1935,7 +1941,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         try {
           // Usar fetch + loadSVGFromString para evitar bloqueos de CORS o métodos obsoletos
           const res = await fetch(url);
-          const svgText = await res.text();
+          if (!res.ok) {
+            throw new Error(`Error fetching SVG: ${res.status} ${res.statusText}`);
+          }
+          let svgText = await res.text();
+          // Basic sanitization: remove <script> tags and inline event handlers (simple heuristic)
+          const sanitizeSvg = (s: string) =>
+            s.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '').replace(/on\w+=["'][^"']*["']/gi, '');
+          svgText = sanitizeSvg(svgText);
 
           const targetCanvas = fabricCanvasRef.current;
           if (!targetCanvas) return;
@@ -2018,6 +2031,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleDelete) {
         window.removeEventListener('editor:delete-active', handleDelete);
+      }
+      if (handleKeyDown) {
         window.removeEventListener('keydown', handleKeyDown);
       }
       if (handleDuplicate) window.removeEventListener('editor:duplicate-active', handleDuplicate);
