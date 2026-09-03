@@ -100,7 +100,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       // Conserva las coordenadas lógicas del editor, pero aumenta el buffer
       // interno para que texto y vectores se rendericen nítidos en pantallas
       // de alta densidad (también en monitores de densidad estándar).
-      (fabric as any).devicePixelRatio = Math.max(window.devicePixelRatio || 1, 2);
+      const devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      (fabric as any).devicePixelRatio = devicePixelRatio;
       const canvas = new (fabric as any).Canvas(canvasRef.current, {
         width: ADMIN_BASE_SIZE,
         height: ADMIN_BASE_SIZE,
@@ -366,108 +367,129 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         console.log('📐 [MOCKUP AJUSTADO]', { naturalWidth, naturalHeight, scale, renderedBounds: activeMockupBounds });
       };
 
-      const loadProductMockup = (view: ProductView, mockupUrlOverride?: string) => {
+      const loadProductMockup = async (view: ProductView, mockupUrlOverride?: string): Promise<void> => {
         const selectedVariant = view.colorVariants?.find(
           (variant) => variant.id === selectedColorIdsRef.current[view.id],
         );
-        const mockupUrl = mockupUrlOverride || getColorMockupUrl(view, selectedVariant);
+        let mockupUrl = mockupUrlOverride || getColorMockupUrl(view, selectedVariant);
         const renderToken = ++currentRenderToken;
-        // Cargar el overlay del artículo (taza, funda, playera...) según la vista activa.
-        // La imagen se usa como fondo del canvas (setBackgroundImage): no pertenece a
-        // getObjects() y, por defecto, es no interactiva (selectable/evented = false),
-        // por lo que no puede bloquear el ratón sobre los textos/imágenes del usuario.
-        // La carga se envuelve en try/catch y el callback verifica !img para que un
-        // error de red (404, CORS bloqueado) nunca congele el flujo de la vista.
-        return new Promise<void>((resolve) => {
-          // Cada mockup parte de un sistema de coordenadas 1:1: sin zoom ni
-          // paneo residual de una vista o interacción previa.
-          canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
-          canvas.setZoom(1);
-          canvas.calcOffset();
-          // Eliminar cualquier fondo anterior antes de iniciar la carga. El
-          // callback de Fabric garantiza que no quede un frame obsoleto.
-          canvas.setBackgroundImage(null, () => canvas.requestRenderAll());
-          if (!mockupUrl) {
-            // Sin mockup: dejar el lienzo utilizable y mostrar su zona segura.
-            activeMockupBounds = { left: 0, top: 0, width: canvas.getWidth(), height: canvas.getHeight() };
-            drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
-            resolve();
+
+        // Sanitizar mockupUrl: si no comienza con http(s) ni data:image, asumir
+        // que es un Base64 parcial y anteponer el prefijo PNG.
+        if (typeof mockupUrl === 'string' && mockupUrl && !/^https?:\/\//i.test(mockupUrl) && !/^data:image/i.test(mockupUrl)) {
+          mockupUrl = `data:image/png;base64,${mockupUrl}`;
+        }
+
+        // Cada mockup parte de un sistema de coordenadas 1:1: sin zoom ni
+        // paneo residual de una vista o interacción previa.
+        canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+        canvas.setZoom(1);
+        canvas.calcOffset();
+        // Eliminar cualquier fondo anterior antes de iniciar la carga. El
+        // callback de Fabric garantiza que no quede un frame obsoleto.
+        canvas.setBackgroundImage(null, () => canvas.requestRenderAll());
+
+        if (!mockupUrl) {
+          // Sin mockup: dejar el lienzo utilizable y mostrar su zona segura.
+          activeMockupBounds = { left: 0, top: 0, width: canvas.getWidth(), height: canvas.getHeight() };
+          drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
+          return;
+        }
+
+        try {
+          console.log('4. Intentando cargar imagen en Fabric.js:', mockupUrl);
+
+          const ImageClass = (fabric as any).Image;
+          let img: any = null;
+
+          // Primero intentar la API basada en Promesas (Fabric v6+).
+          try {
+            const maybePromise = ImageClass.fromURL?.(mockupUrl);
+            if (maybePromise && typeof maybePromise.then === 'function') {
+              img = await maybePromise;
+            }
+          } catch (err) {
+            // Ignorar y probar la firma con callback a continuación.
+            img = null;
+          }
+
+          // Si no se obtuvo imagen por la vía Promise, intentar la firma con callback (Fabric v5).
+          if (!img) {
+            img = await new Promise<any>((resolve) => {
+              try {
+                ImageClass.fromURL(mockupUrl, (loaded: any) => {
+                  resolve(loaded);
+                }, { crossOrigin: 'anonymous' });
+              } catch (err) {
+                // Si la llamada lanza síncronamente, resolver con null para no bloquear.
+                console.error('Error al invocar fromURL(callback):', err);
+                resolve(null);
+              }
+            });
+          }
+
+          if (renderToken !== currentRenderToken) {
+            console.log('⛔ Petición obsoleta descartada:', mockupUrl);
             return;
           }
-          try {
-            console.log('4. Intentando cargar imagen en Fabric.js:', mockupUrl);
-            fabric.Image.fromURL(
-              mockupUrl,
-              (img) => {
-                if (renderToken !== currentRenderToken) {
-                  console.log('⛔ Petición obsoleta descartada:', mockupUrl);
-                  resolve();
-                  return;
-                }
-                // Fabric devuelve `null` ante un 404/CORS y algunas fuentes
-                // pueden crear el objeto sin dimensiones. No redimensionar en
-                // ninguno de esos casos evita dejar el canvas vacío o inválido.
-                if (!img || !img.width || !img.height) {
-                  console.error(`❌ Error al cargar la imagen del mockup en la ruta: ${mockupUrl}`);
-                  activeMockupBounds = { left: 0, top: 0, width: canvas.getWidth(), height: canvas.getHeight() };
-                  drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
-                  canvas.requestRenderAll();
-                  resolve();
-                  return;
-                }
-                console.log('5. Imagen cargada con éxito en Fabric.js. Renderizando canvas...', { mockupUrl });
-                const rawWidth = img.width;
-                const rawHeight = img.height;
-                console.log('📸 MOCKUP CARGADO CON ÉXITO:', {
-                  url: mockupUrl,
-                  dimensiones: `${rawWidth}x${rawHeight}`,
-                });
-                // El canvas nunca adopta las dimensiones naturales del archivo:
-                // Admin y cliente trabajan sobre el mismo plano 800×800. El
-                // mockup se centra con `contain`, igual que la vista previa del
-                // Admin, sin deformar imágenes rectangulares.
-                const mockupScale = Math.min(ADMIN_BASE_SIZE / rawWidth, ADMIN_BASE_SIZE / rawHeight);
-                console.log('📐 DIAGNÓSTICO DE ESCALADO MOCKUP:', {
-                  url: mockupUrl,
-                  dimensionesOriginales: `${rawWidth}x${rawHeight}`,
-                  tamanoCanvas: `${ADMIN_BASE_SIZE}x${ADMIN_BASE_SIZE}`,
-                  escalaCalculada: mockupScale,
-                  anchoFinalEnCanvas: rawWidth * mockupScale,
-                  altoFinalEnCanvas: rawHeight * mockupScale,
-                });
-                img.set({
-                  lockMovementX: true,
-                  lockMovementY: true,
-                  lockScalingX: true,
-                  lockScalingY: true,
-                  lockRotation: true,
-                });
-                fitMockupToCanvas(img);
-                canvas.setBackgroundImage(img, () => {
-                  if (renderToken !== currentRenderToken) {
-                    console.log('⛔ Petición obsoleta descartada:', mockupUrl);
-                    resolve();
-                    return;
-                  }
-                  console.log('✅ BackgroundImage aplicado correctamente al Canvas');
-                  // La guía y los recortes usan la matriz final del fondo.
-                  setupSafeAreaAndClipping(view);
-                  canvas.renderAll();
-                  canvas.requestRenderAll();
-                  resolve();
-                });
-              },
-              { crossOrigin: 'anonymous' },
-            );
-          } catch (err) {
-            // Error síncrono inesperado: conservar el editor interactivo y
-            // mostrar una guía, en vez de abortar el cambio de vista.
-            console.error(`❌ Error al iniciar la carga del mockup: ${mockupUrl}`, err);
+
+          // Fabric devuelve `null` ante un 404/CORS y algunas fuentes
+          // pueden crear el objeto sin dimensiones. No redimensionar en
+          // ninguno de esos casos evita dejar el canvas vacío o inválido.
+          if (!img || !img.width || !img.height) {
+            console.error(`❌ Error al cargar la imagen del mockup en la ruta: ${mockupUrl}`);
+            activeMockupBounds = { left: 0, top: 0, width: canvas.getWidth(), height: canvas.getHeight() };
             drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
             canvas.requestRenderAll();
-            resolve();
+            return;
           }
-        });
+
+          console.log('5. Imagen cargada con éxito en Fabric.js. Renderizando canvas...', { mockupUrl });
+          const rawWidth = img.width;
+          const rawHeight = img.height;
+          console.log('📸 MOCKUP CARGADO CON ÉXITO:', {
+            url: mockupUrl,
+            dimensiones: `${rawWidth}x${rawHeight}`,
+          });
+
+          img.set({
+            lockMovementX: true,
+            lockMovementY: true,
+            lockScalingX: true,
+            lockScalingY: true,
+            lockRotation: true,
+          });
+
+          fitMockupToCanvas(img);
+
+          // setBackgroundImage usa callback; envolver en Promise para esperar
+          await new Promise<void>((resolve) => {
+            canvas.setBackgroundImage(img, () => {
+              if (renderToken !== currentRenderToken) {
+                console.log('⛔ Petición obsoleta descartada después de setBackgroundImage:', mockupUrl);
+                resolve();
+                return;
+              }
+              console.log('✅ BackgroundImage aplicado correctamente al Canvas');
+              // La guía y los recortes usan la matriz final del fondo.
+              try {
+                setupSafeAreaAndClipping(view);
+              } catch (err) {
+                console.error('Error en setupSafeAreaAndClipping tras aplicar fondo:', err);
+              }
+              canvas.renderAll();
+              canvas.requestRenderAll();
+              resolve();
+            });
+          });
+        } catch (err) {
+          // Error asíncrono inesperado: conservar el editor interactivo y
+          // mostrar una guía, en vez de abortar el cambio de vista.
+          console.error(`❌ Error al iniciar la carga del mockup: ${mockupUrl}`, err);
+          drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
+          canvas.requestRenderAll();
+          return;
+        }
       };
 
       // Punto único para cargar una vista resuelta en Fabric. La URL nunca se
@@ -511,7 +533,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
        * conserva exactamente en la misma posición al cambiar de color.
        */
       // Manejador de variantes: reemplaza sólo el mockup de Fabric.
-      const handleProductColorChange = (variant: ColorVariant) => {
+      const handleProductColorChange = async (variant: ColorVariant) => {
         console.log('1. Color cliqueado:', variant);
         setSelectedColor(variant);
         const c = fabricCanvasRef.current;
@@ -529,48 +551,34 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         }
 
         console.log('3. Reemplazando el fondo de Fabric con:', mockupUrl);
-        console.log('4. Intentando cargar imagen en Fabric.js:', mockupUrl);
+        console.log('4. Usando loadProductMockup asíncrono para cargar:', mockupUrl);
 
-        fabric.Image.fromURL(
-          mockupUrl,
-          (img: any) => {
-            if (renderToken !== currentRenderToken) {
-              console.log('⛔ Petición obsoleta descartada:', mockupUrl);
-              return;
-            }
-            if (!img || !img.width || !img.height) {
-              console.error('❌ ERROR: Fabric no pudo cargar el mockup de color', { mockupUrl, img });
-              return;
-            }
-            console.log('5. Imagen cargada con éxito en Fabric.js. Renderizando canvas...', { mockupUrl });
+        try {
+          // Usar la versión asíncrona que maneja Promesas/Callbacks y sanitiza la URL
+          await loadProductMockup(activeView, mockupUrl);
 
-            // El área de impresión usa las dimensiones actuales del canvas.
-            // Ajustar el fondo a ese mismo plano evita mover el arte existente
-            // incluso si el archivo del mockup tiene otra resolución.
-            fitMockupToCanvas(img);
+          // Asegurar que el clipping y el render queden aplicados tras setBackgroundImage
+          try {
+            applyPrintAreaClipping(activeView);
+          } catch (err) {
+            console.error('Error aplicando applyPrintAreaClipping tras cambio de color:', err);
+          }
+          c.renderAll();
+          c.requestRenderAll();
 
-            c.setBackgroundImage(img, () => {
-              if (renderToken !== currentRenderToken) {
-                console.log('⛔ Petición obsoleta descartada:', mockupUrl);
-                return;
-              }
-              applyPrintAreaClipping(activeView);
-              c.renderAll();
-              c.requestRenderAll();
-              // El color es una opción del producto, no de una sola cara:
-              // conservarlo hace que Frente/Espalda carguen su mockup
-              // correspondiente al alternar de vista.
-              const nextSelectedColors = activeProduct.views.reduce<Record<string, string>>(
-                (colors, view) => ({ ...colors, [view.id]: variant.id }),
-                { ...selectedColorIdsRef.current },
-              );
-              selectedColorIdsRef.current = nextSelectedColors;
-              setSelectedColorIds(nextSelectedColors);
-              console.log('✅ Mockup de color actualizado correctamente', { mockupUrl, viewId: activeView.id });
-            });
-          },
-          { crossOrigin: 'anonymous' },
-        );
+          // El color es una opción del producto, no de una sola cara: conservarlo
+          // hace que Frente/Espalda carguen su mockup correspondiente al alternar de vista.
+          const nextSelectedColors = activeProduct.views.reduce<Record<string, string>>(
+            (colors, view) => ({ ...colors, [view.id]: variant.id }),
+            { ...selectedColorIdsRef.current },
+          );
+          selectedColorIdsRef.current = nextSelectedColors;
+          setSelectedColorIds(nextSelectedColors);
+
+          console.log('✅ Mockup de color actualizado correctamente', { mockupUrl, viewId: activeView.id });
+        } catch (err) {
+          console.error('❌ Error al actualizar el mockup de color:', err, { mockupUrl });
+        }
       };
 
       // Sincroniza un único estado de variante con las vistas que ve React y
@@ -1344,7 +1352,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         if (!document.getElementById(id)) {
           const link = document.createElement('link');
           link.id = id;
-          link.href = `https://fonts.googleapis.com/css2?family=${fontFamily.replace(/\s+/g, '+')}:wght@400;700&display=swap`;
+          const familyParam = fontFamily.replace(/\s+/g, '+');
+          link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(familyParam)}:wght@400;700&display=swap`;
           link.rel = 'stylesheet';
           document.head.appendChild(link);
         }
@@ -1515,6 +1524,10 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // Crear un elemento img HTML oculto para precargar la imagen Base64
         const imgElement = document.createElement('img');
         imgElement.src = dataUrl;
+        imgElement.onerror = () => {
+          console.error('Error cargando imagen a partir del dataUrl proporcionado', dataUrl);
+          window.dispatchEvent(new CustomEvent('editor:image-load-error', { detail: { dataUrl } }));
+        };
 
         imgElement.onload = () => {
           const printArea = getRenderedPrintArea(activeView);
@@ -1928,7 +1941,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         try {
           // Usar fetch + loadSVGFromString para evitar bloqueos de CORS o métodos obsoletos
           const res = await fetch(url);
-          const svgText = await res.text();
+          if (!res.ok) {
+            throw new Error(`Error fetching SVG: ${res.status} ${res.statusText}`);
+          }
+          let svgText = await res.text();
+          // Basic sanitization: remove <script> tags and inline event handlers (simple heuristic)
+          const sanitizeSvg = (s: string) =>
+            s.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '').replace(/on\w+=["'][^"']*["']/gi, '');
+          svgText = sanitizeSvg(svgText);
 
           const targetCanvas = fabricCanvasRef.current;
           if (!targetCanvas) return;
@@ -2011,6 +2031,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleDelete) {
         window.removeEventListener('editor:delete-active', handleDelete);
+      }
+      if (handleKeyDown) {
         window.removeEventListener('keydown', handleKeyDown);
       }
       if (handleDuplicate) window.removeEventListener('editor:duplicate-active', handleDuplicate);
