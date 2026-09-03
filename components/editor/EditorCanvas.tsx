@@ -26,6 +26,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   const [isImageSelected, setIsImageSelected] = useState(false);
   const [is3DModalOpen, setIs3DModalOpen] = useState(false);
   const [threeDTextureUrl, setThreeDTextureUrl] = useState('');
+  const normalizeProductType = (product: Product) => product.productType || (product.category?.toLowerCase().includes('tarjeta') ? 'card' : product.category?.toLowerCase().includes('llavero') ? 'keychain' : 'custom');
+  const [productType, setProductType] = useState<string>(normalizeProductType(initialProduct));
   const [currentViewId, setCurrentViewId] = useState<string>(initialProduct.views[0]?.id ?? 'front');
   const [productViews, setProductViews] = useState<ProductView[]>(initialProduct.views);
   const [selectedColor, setSelectedColor] = useState<ColorVariant | null>(
@@ -213,6 +215,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       // Límites reales del mockup después de aplicar `contain`. La zona segura
       // es porcentual respecto a la imagen, no a las franjas del canvas.
       let activeMockupBounds = { left: 0, top: 0, width: ADMIN_BASE_SIZE, height: ADMIN_BASE_SIZE };
+      // Overlay (por ejemplo el aro del llavero) que se renderiza encima del arte
+      // para proteger zonas transparentes; se elimina/añade al cambiar vista/variantes.
+      let activeOverlay: any = null;
 
       const getView = (viewId: string): ProductView =>
         activeProduct.views.find((v) => v.id === viewId) || activeProduct.views[0];
@@ -450,8 +455,63 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                     return;
                   }
                   console.log('✅ BackgroundImage aplicado correctamente al Canvas');
+                  // Deseleccionar cualquier objeto activo para desasociar selección previa
+                  try { canvas.discardActiveObject(); } catch (e) { /* noop */ }
                   // La guía y los recortes usan la matriz final del fondo.
                   setupSafeAreaAndClipping(view);
+
+                  // Asegurar que cualquier overlay previo se elimine antes de añadir uno nuevo
+                  try {
+                    if (activeOverlay) {
+                      canvas.remove(activeOverlay);
+                      activeOverlay = null;
+                    }
+                  } catch (e) {
+                    // noop
+                    console.error('Error al eliminar overlay anterior', e);
+                  }
+
+                  // Si la vista declara una overlayUrl (p. ej. aro de llavero con transparencia),
+                  // cargarla y mantenerla por encima del arte del usuario para que las zonas
+                  // transparentes (agujero) sigan visibles.
+                  if ((view as any).overlayUrl) {
+                    try {
+                      fabric.Image.fromURL((view as any).overlayUrl, (overlayImg: any) => {
+                        if (!overlayImg) return;
+                        // Si el background ya fue ajustado, clonar sus transformaciones para
+                        // que overlay coincida exactamente en posición y escala.
+                        const bg: any = canvas.backgroundImage;
+                        if (bg) {
+                          overlayImg.set({
+                            originX: bg.originX || 'center',
+                            originY: bg.originY || 'center',
+                            left: bg.left,
+                            top: bg.top,
+                            scaleX: bg.scaleX,
+                            scaleY: bg.scaleY,
+                            selectable: false,
+                            evented: false,
+                            excludeFromExport: true,
+                            lockMovementX: true,
+                            lockMovementY: true,
+                            lockScalingX: true,
+                            lockScalingY: true,
+                            lockRotation: true,
+                          });
+                        } else {
+                          fitMockupToCanvas(overlayImg);
+                        }
+                        // Añadir la overlay por encima de todos los objetos del usuario.
+                        canvas.add(overlayImg);
+                        canvas.bringToFront(overlayImg);
+                        activeOverlay = overlayImg;
+                        canvas.requestRenderAll();
+                      }, { crossOrigin: 'anonymous' });
+                    } catch (err) {
+                      console.error('❌ Error al cargar la overlay:', (view as any).overlayUrl, err);
+                    }
+                  }
+
                   canvas.renderAll();
                   canvas.requestRenderAll();
                   resolve();
@@ -492,9 +552,16 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           mockupUrl: resolvedView.mockupUrl,
           printArea: resolvedView.printArea,
         });
+        // Antes de cambiar la vista/resuelto, deseleccionar cualquier objeto
+        // activo para evitar que el DOM mayor (div) o un objeto previo quede
+        // asociado a la vista antigua.
+        const c = fabricCanvasRef.current;
+        if (c) {
+          try { c.discardActiveObject(); } catch (e) { /* noop */ }
+        }
+
         await loadProductMockup(resolvedCanvasView, resolvedView.mockupUrl);
         setupSafeAreaAndClipping(resolvedCanvasView);
-        const c = fabricCanvasRef.current;
         if (c) {
           c.getObjects().forEach((object: any) => {
             if (!object.isGuide && !object.isDesignBackground) {
@@ -554,7 +621,50 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                 console.log('⛔ Petición obsoleta descartada:', mockupUrl);
                 return;
               }
+
+              // Deseleccionar cualquier objeto activo para desasociar selección previa
+              try { c.discardActiveObject(); } catch (e) { /* noop */ }
+              // Eliminar overlay previo si existe
+              try { if (activeOverlay) { c.remove(activeOverlay); activeOverlay = null; } } catch (e) { /* noop */ }
+
               applyPrintAreaClipping(activeView);
+
+              // Cargar overlay si la vista actual lo declara
+              if ((activeView as any)?.overlayUrl) {
+                try {
+                  fabric.Image.fromURL((activeView as any).overlayUrl, (overlayImg: any) => {
+                    if (!overlayImg) return;
+                    const bg: any = c.backgroundImage;
+                    if (bg) {
+                      overlayImg.set({
+                        originX: bg.originX || 'center',
+                        originY: bg.originY || 'center',
+                        left: bg.left,
+                        top: bg.top,
+                        scaleX: bg.scaleX,
+                        scaleY: bg.scaleY,
+                        selectable: false,
+                        evented: false,
+                        excludeFromExport: true,
+                        lockMovementX: true,
+                        lockMovementY: true,
+                        lockScalingX: true,
+                        lockScalingY: true,
+                        lockRotation: true,
+                      });
+                    } else {
+                      fitMockupToCanvas(overlayImg);
+                    }
+                    c.add(overlayImg);
+                    c.bringToFront(overlayImg);
+                    activeOverlay = overlayImg;
+                    c.requestRenderAll();
+                  }, { crossOrigin: 'anonymous' });
+                } catch (err) {
+                  console.error('❌ Error al cargar overlay de variante:', err);
+                }
+              }
+
               c.renderAll();
               c.requestRenderAll();
               // El color es una opción del producto, no de una sola cara:
@@ -920,12 +1030,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         setSelectedColorIds(initialColorIds);
         currentViewIdRef.current = activeView.id;
         setCurrentViewId(activeView.id);
+        setProductType(normalizeProductType(product));
         setProductViews(activeProduct.views);
         setSelectedColor(firstColor);
 
         // Limpiar el canvas reconstruyendo fondo + zona segura según la nueva vista
         isUpdatingHistory.current = true;
         canvas.clear();
+        // Si existía una overlay previa, asegurarse de eliminar su referencia.
+        try { if (activeOverlay) { activeOverlay = null; } } catch (e) { /* noop */ }
         drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(activeView));
         loadProductMockup(activeView);
         canvas.requestRenderAll();
@@ -1357,6 +1470,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         canvas.requestRenderAll();
         const activeObject = canvas.getActiveObject();
 
+        // Emitir el objeto de Fabric real para inspección externa. Antes se
+        // devolvía un contenedor HTML por error; ahora siempre se envía la
+        // instancia `fabric.Object` o `null`.
         let fill: string | undefined = activeObject ? activeObject.get('fill') : undefined;
 
         // Para grupos (SVG importado), tomar el color del primer hijo con relleno visible
@@ -1371,16 +1487,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           fill = (firstFilled ? firstFilled.fill : children[0]?.fill) ?? fill;
         }
 
-        // Emitir evento unificado de cambio de selección (SIEMPRE con detail)
+        // Emitir evento unificado de cambio de selección con la instancia real
         setIsImageSelected(!!(activeObject && activeObject.type === 'image'));
         window.dispatchEvent(new CustomEvent('editor:selection-changed', {
           detail: {
-            selectedObject: activeObject ? {
-              type: activeObject.type,
-              fill: fill ?? '#000000',
-              fontFamily: activeObject.get('fontFamily'),
-              fontSize: activeObject.get('fontSize'),
-            } : null
+            selectedObject: activeObject ?? null
           }
         }));
       };
@@ -2245,6 +2356,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       <Product3DModal
         open={is3DModalOpen}
         textureUrl={threeDTextureUrl}
+        productType={productType}
         onClose={() => setIs3DModalOpen(false)}
       />
     </div>

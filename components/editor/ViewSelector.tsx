@@ -43,8 +43,21 @@ export default function ViewSelector({ product }: { product: Product }) {
       }
     };
     window.addEventListener('editor:view-changed', handleViewChanged);
+
+    // Mantener sincronizadas las selecciones de opciones si el editor las cambia
+    const handleOptionsChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ productId?: string; selections?: Record<string, ProductOptionValue> }>).detail;
+      if (!detail) return;
+      if (detail.productId && detail.productId !== product.id) return;
+      if (detail.selections && Object.keys(detail.selections).length > 0) {
+        setSelectedOptions(detail.selections as Record<string, ProductOptionValue>);
+      }
+    };
+    window.addEventListener('editor:options-changed', handleOptionsChanged);
+
     return () => {
       window.removeEventListener('editor:view-changed', handleViewChanged);
+      window.removeEventListener('editor:options-changed', handleOptionsChanged);
     };
   }, []);
 
