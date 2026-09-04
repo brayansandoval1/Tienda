@@ -159,6 +159,17 @@ export default function ViewSelector({ product }: { product: Product }) {
     product.colors?.[0]?.id ?? activeBaseView?.colorVariants?.[0]?.id,
   );
   const quickPreviewUrl = activeResolvedView.mockupUrl || activeBaseView?.mockupUrl || '';
+  const selectedOptionLabel = Object.values(selectedOptions)[0]?.label?.trim();
+  const optionLabels = (product.options ?? [])
+    .flatMap((option) => option.values.map((value) => value.label.trim()))
+    .filter(Boolean);
+  const basePreviewName = optionLabels.reduce(
+    (name, label) => name.replace(new RegExp(`\\s*${label.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\s*`, 'i'), ' ').trim(),
+    product.name.replace(/\s+\d+(?:[.,]\d+)?\s*(?:oz|onzas?)\b/gi, ' ').trim(),
+  );
+  const previewProductName = selectedOptionLabel
+    ? `${basePreviewName} ${selectedOptionLabel}`.trim()
+    : product.name;
 
   return (
     <aside className="sticky top-4 w-full max-w-[320px] self-start space-y-5 rounded-3xl border border-slate-200 bg-white p-4 shadow-xl">
@@ -166,10 +177,10 @@ export default function ViewSelector({ product }: { product: Product }) {
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Vista Rápida</p>
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100">
           <div className="aspect-square w-full overflow-hidden rounded-2xl bg-slate-100">
-            <img src={quickPreviewUrl} alt={product.name} className="h-full w-full object-cover" />
+            <img src={quickPreviewUrl} alt={previewProductName} className="h-full w-full object-cover" />
           </div>
           <div className="p-3">
-            <h3 className="font-semibold text-slate-900">{product.name}</h3>
+            <h3 className="font-semibold text-slate-900">{previewProductName}</h3>
             <p className="mt-1 text-sm text-slate-500">
               Total <span className="font-medium text-slate-700">${finalPrice.toFixed(2)}</span>
             </p>
