@@ -16,6 +16,17 @@ const cleanPercentage = (value: number) => Number(Math.min(100, Math.max(0, valu
 const createViewForm = (index: number): ProductViewForm => ({ id: index === 0 ? 'front' : `view-${crypto.randomUUID()}`, name: index === 0 ? 'Frente' : 'Espalda', mockupUrl: '', x: '25', y: '25', width: '50', height: '50' });
 const emptyForm = (): ProductForm => ({ name: '', price: '', category: '', printWidthCm: '', printHeightCm: '', options: [], views: [createViewForm(0)] });
 
+const normalizeViewIds = (views: ProductViewForm[]): ProductViewForm[] => {
+  const usedIds = new Set<string>();
+  return views.map((view, index) => {
+    const originalId = view.id.trim();
+    let id = originalId || (index === 0 ? 'front' : `view-${crypto.randomUUID()}`);
+    if (usedIds.has(id)) id = `view-${crypto.randomUUID()}`;
+    usedIds.add(id);
+    return { ...view, id };
+  });
+};
+
 const toForm = (product: Product): ProductForm => ({
   name: product.name,
   price: String(product.price),
@@ -23,7 +34,7 @@ const toForm = (product: Product): ProductForm => ({
   printWidthCm: product.printWidthCm ? String(product.printWidthCm) : '',
   printHeightCm: product.printHeightCm ? String(product.printHeightCm) : '',
   options: product.options?.map((option) => ({ ...option, displayType: option.displayType ?? option.type, values: option.values.map((value) => ({ ...value })) })) ?? [],
-  views: product.views.map((view, index) => {
+  views: normalizeViewIds(product.views.map((view, index) => {
     const percent = view.printAreaUnit === 'percent';
     return {
       id: view.id, name: view.name || view.label || `Vista ${index + 1}`, mockupUrl: view.mockupUrl,
@@ -32,7 +43,7 @@ const toForm = (product: Product): ProductForm => ({
       width: String(cleanPercentage(normalizePercentage(percent ? view.printArea.width : (view.printArea.width * 100) / REFERENCE_WIDTH, 50))),
       height: String(cleanPercentage(normalizePercentage(percent ? view.printArea.height : (view.printArea.height * 100) / REFERENCE_HEIGHT, 50))),
     };
-  }),
+  })),
 });
 
 export default function AdminProductEditor() {
@@ -94,7 +105,7 @@ export default function AdminProductEditor() {
             <div className="mt-4 flex gap-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2.5 text-xs text-sky-800"><Info className="mt-0.5 shrink-0" size={15} /><span>Salida estimada a 300 DPI: <strong>{printWidth && printHeight ? `${pixelsWidth.toLocaleString()} × ${pixelsHeight.toLocaleString()} px` : 'indica ancho y alto'}</strong>.</span></div>
           </section>
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Vistas del producto</h2><p className="mt-1 text-sm text-slate-500">Carga un mockup y define una zona segura para cada cara.</p></div>
-            <div className="mb-5 flex gap-2 overflow-x-auto border-b border-slate-200"><div className="flex min-w-max gap-2">{form.views.map((view, index) => <button key={view.id} type="button" onClick={() => setActiveTab(index)} className={`border-b-2 px-4 py-2 text-sm font-medium transition-colors ${activeIndex === index ? 'border-emerald-600 font-semibold text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>{view.name || `Vista ${index + 1}`}</button>)}<button type="button" onClick={handleAddView} className="flex items-center gap-1 px-2 text-xs font-medium text-emerald-600 hover:underline"><Plus size={14} /> Agregar vista</button></div></div>
+            <div className="mb-5 flex gap-2 overflow-x-auto border-b border-slate-200"><div className="flex min-w-max gap-2">{form.views.map((view, index) => <button key={view.id} type="button" onClick={() => { setActiveTab(index); console.log('🔍 [EDITOR - VISTA ACTIVA]:', { id: view.id, name: view.name }); }} className={`border-b-2 px-4 py-2 text-sm font-medium transition-colors ${activeIndex === index ? 'border-emerald-600 font-semibold text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>{view.name || `Vista ${index + 1}`}</button>)}<button type="button" onClick={handleAddView} className="flex items-center gap-1 px-2 text-xs font-medium text-emerald-600 hover:underline"><Plus size={14} /> Agregar vista</button></div></div>
             {activeView && <div className="space-y-5"><Field label="Nombre de la vista" value={activeView.name} onChange={(value) => setViewField(activeIndex, 'name', value)} required />
               <div><span className="mb-1.5 block text-sm font-medium text-slate-700">Mockup de la vista</span><input ref={fileInputRef} type="file" accept="image/*" className="sr-only" onChange={(event) => { handleMockupFile(event.target.files?.[0]); event.currentTarget.value = ''; }} />
                 {activeView.mockupUrl ? <div className="group relative overflow-hidden rounded-lg border border-slate-200"><img src={activeView.mockupUrl} alt="Mockup" className="h-32 w-full bg-slate-50 object-contain" /><div className="absolute inset-0 flex items-center justify-center bg-slate-900/40 opacity-0 transition-opacity group-hover:opacity-100"><button type="button" onClick={handleReplaceMockup} className="rounded-md bg-white px-3 py-1.5 text-xs font-medium text-slate-800 shadow">Cambiar imagen</button></div></div> : <button type="button" onClick={handleReplaceMockup} className="group flex w-full items-center gap-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-left transition hover:border-emerald-400 hover:bg-emerald-50/40"><span className="flex h-16 w-16 items-center justify-center rounded-lg bg-white text-slate-400 shadow-sm"><Camera size={23} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-slate-700">Subir mockup</span><span className="mt-1 block text-xs text-slate-500">PNG, JPG o WebP · se mostrará en la vista previa</span></span><Upload size={18} className="text-emerald-600" /></button>}</div>

@@ -23,11 +23,11 @@ export const useProductStore = create<ProductState>()(
       products: initialProducts,
       setProducts: (products) => set({ products }),
       addProduct: (product) =>
-        set((state) => ({ products: [...state.products, product] })),
+        set((state) => ({ products: [...state.products, { ...product, updatedAt: Date.now() }] })),
       updateProduct: (updatedProduct) =>
         set((state) => ({
           products: state.products.map((p) =>
-            p.id === updatedProduct.id ? updatedProduct : p,
+            p.id === updatedProduct.id ? { ...updatedProduct, updatedAt: Date.now() } : p,
           ),
         })),
       removeProduct: (productId) =>

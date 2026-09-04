@@ -23,14 +23,11 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   const [isOptionsOpen, setIsOptionsOpen] = useState(false);
 
   useEffect(() => {
-    // La página de demo inyecta datos mock y no debe ser reemplazada durante
-    // la rehidratación del store local.
-    if (initialProduct) {
-      setCurrentProduct(initialProduct);
-      return;
-    }
     const matchingProduct = products.find((p) => p.id === producto.id);
+    // El store actualizado tiene prioridad para que los cambios del Admin
+    // lleguen al editor sin recargar la página ni reconstruir el producto.
     if (matchingProduct) setCurrentProduct(matchingProduct);
+    else if (initialProduct) setCurrentProduct(initialProduct);
     else if (products.length) setCurrentProduct(products[0]);
   }, [initialProduct, products, producto.id]);
 
@@ -59,7 +56,10 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
           <main className="relative h-full">
             <div className="flex h-full flex-col gap-4">
               <TextToolbar />
-              <EditorCanvas product={currentProduct} />
+              <EditorCanvas
+                key={`${currentProduct.id}-${currentProduct.updatedAt ?? 0}`}
+                product={currentProduct}
+              />
             </div>
             <FloatingFooter onReset={() => {}} /> {/* FloatingFooter sin props de zoom por ahora */}
           </main>

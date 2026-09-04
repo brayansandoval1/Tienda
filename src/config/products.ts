@@ -44,6 +44,8 @@ export interface ProductOptionValue {
   mockupUrls?: Record<string, string>;
   /** Configuración visual por cada vista del producto para esta variante. */
   views?: ProductOptionView[];
+  /** Configuración heredada indexada por ID o nombre normalizado de vista. */
+  viewsConfig?: Record<string, ProductOptionViewConfig>;
   thumbnailUrl?: string;
   /** Zona segura opcional que sustituye la zona base al elegir este valor. */
   printArea?: {
@@ -52,6 +54,12 @@ export interface ProductOptionValue {
     width: number;
     height: number;
   } | null;
+}
+
+export interface ProductOptionViewConfig {
+  mockupUrl?: string | null;
+  printArea?: ProductView['printArea'] | null;
+  name?: string;
 }
 
 export interface ProductOptionView {
@@ -78,6 +86,8 @@ export interface ProductOption {
 
 export interface Product {
   id: string;
+  /** Marca de invalidación para propagar cambios del Admin al editor. */
+  updatedAt?: number;
   name: string;
   category: string;
   price: number;

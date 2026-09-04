@@ -22,16 +22,25 @@ export default function AdminProductOptionsForm({ options, baseViews, onChange }
   });
   const updateOptionView = <K extends keyof ProductOptionView>(optionIndex: number, valueIndex: number, viewId: string, fieldUpdated: K, newValue: ProductOptionView[K]) => {
     const value = options[optionIndex].values[valueIndex];
+    const currentViewsConfigState = value.views;
+    const nextViewsConfigState = getConfiguredViews(value).map((view) =>
+      view.viewId === viewId ? { ...view, [fieldUpdated]: newValue } : view,
+    );
     console.log('📝 [ADMIN CAMBIO VISTA OPCIÓN]:', {
       optionIndex,
       valueIndex,
       viewId,
       fieldUpdated,
       newValue,
+      currentViewsConfigState,
     });
-    updateValue(optionIndex, valueIndex, 'views', getConfiguredViews(value).map((view) =>
-      view.viewId === viewId ? { ...view, [fieldUpdated]: newValue } : view,
-    ));
+    console.log('🔍 [ADMIN - GUARDANDO VISTA]:', {
+      targetViewId: viewId,
+      fieldUpdated,
+      newValue,
+      currentViewsConfigState: nextViewsConfigState,
+    });
+    updateValue(optionIndex, valueIndex, 'views', nextViewsConfigState);
   };
 
   return (

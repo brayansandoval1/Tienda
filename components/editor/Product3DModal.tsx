@@ -6,6 +6,14 @@ import { Canvas } from '@react-three/fiber';
 import { Environment, OrbitControls, useGLTF, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      roundedBoxGeometry: any;
+    }
+  }
+}
+
 type ProductShape = 'cylinder' | 'phone_case' | 'flat' | 'auto';
 
 function getProductShape(productType?: string): ProductShape {
