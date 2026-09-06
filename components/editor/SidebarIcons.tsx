@@ -41,13 +41,13 @@ export default function SidebarIcons({ onAddImage, onOpenOptions }: SidebarIcons
 
   return (
     <>
-      <aside className="hidden xl:flex xl:w-20 xl:flex-col xl:items-center xl:gap-4 xl:rounded-3xl xl:border xl:border-slate-200 xl:bg-white xl:px-3 xl:py-4 xl:shadow-sm">
+      <aside className="hidden min-h-0 xl:flex xl:w-[72px] xl:flex-col xl:items-center xl:gap-3 xl:rounded-[22px] xl:border xl:border-slate-200/80 xl:bg-white xl:px-2 xl:py-3 xl:shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
         {actions.map((item) => {
           const Icon = item.icon;
           return (
             <button
               key={item.label}
-              className="inline-flex h-14 w-14 flex-col items-center justify-center rounded-3xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:border-slate-300 hover:bg-slate-100"
+              className="inline-flex h-12 w-12 flex-col items-center justify-center rounded-2xl border border-transparent bg-slate-50 text-slate-600 transition hover:border-slate-200 hover:bg-slate-100 hover:text-slate-950"
               type="button"
               onClick={item.action}
             >

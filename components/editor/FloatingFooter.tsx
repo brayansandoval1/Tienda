@@ -41,12 +41,11 @@ export default function FloatingFooter({ onReset }: FloatingFooterProps) { // Re
   }, []);
 
   return (
-    <div className="absolute bottom-4 left-1/2 z-10 w-[min(96%,_700px)] -translate-x-1/2 rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-2xl shadow-slate-200/50 backdrop-blur">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-3 text-slate-700">
+    <div className="absolute bottom-3 left-1/2 z-10 w-11/12 max-w-[760px] -translate-x-1/2 rounded-2xl border border-slate-200/90 bg-white/95 px-3 py-2 shadow-xl backdrop-blur">
+      <div className="flex flex-wrap items-center justify-center gap-2 text-slate-700">
           <button
             onClick={() => window.dispatchEvent(new CustomEvent('editor:delete-active'))}
-            className={`inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium transition hover:bg-slate-100 ${
+            className={`inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium transition hover:bg-slate-100 ${
               !isObjectSelected && 'opacity-50 pointer-events-none'
             }`}
             type="button"
@@ -77,19 +76,18 @@ export default function FloatingFooter({ onReset }: FloatingFooterProps) { // Re
               window.dispatchEvent(new CustomEvent('editor:clear-canvas'));
               onReset?.();
             }}
-            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium transition hover:bg-slate-100"
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium transition hover:bg-slate-100"
             type="button"
           >
             <RefreshCcw size={16} />
             Reiniciar
           </button>
 
-          <button onClick={() => window.dispatchEvent(new CustomEvent('editor:export-print'))} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800" type="button">
+          <button onClick={() => window.dispatchEvent(new CustomEvent('editor:export-print'))} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800" type="button">
             <Download size={16} />
             Descargar impresión
           </button>
         </div>
       </div>
-    </div>
   );
 }

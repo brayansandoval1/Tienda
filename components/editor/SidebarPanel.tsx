@@ -63,8 +63,8 @@ export default function SidebarPanel() { // Removed onAddShape prop
   // El evento 'editor:add-image' solo se usa para AGREGAR AL CANVAS, NO para actualizar la lista
 
   return (
-    <aside className="w-full max-w-[280px] space-y-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-3 text-slate-700">
+    <aside className="min-h-0 w-full max-w-[292px] space-y-5 overflow-y-auto rounded-[22px] border border-slate-200/80 bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
+      <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-700">
         <Search size={18} />
         <input
           type="search"
@@ -141,8 +141,8 @@ export default function SidebarPanel() { // Removed onAddShape prop
       )}
 
       <div className="space-y-3">
-        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Texto</p>
-        <div className="grid gap-3">
+        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Texto</p>
+        <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
             onClick={() =>
@@ -152,7 +152,7 @@ export default function SidebarPanel() { // Removed onAddShape prop
                 }),
               )
             }
-            className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-lg font-semibold text-slate-700 transition hover:bg-slate-100"
+            className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-base font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
           >
             Agregar Título
           </button>
@@ -163,7 +163,7 @@ export default function SidebarPanel() { // Removed onAddShape prop
                 new CustomEvent('editor:add-text', { detail: { text: 'Escribe tu párrafo aquí...', fontSize: 16 } }),
               )
             }
-            className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+            className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
           >
             Agregar Párrafo
           </button>
@@ -171,10 +171,10 @@ export default function SidebarPanel() { // Removed onAddShape prop
       </div>
 
       <div className="space-y-3">
-        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Archivos subidos</p>
-        <label htmlFor="upload-image" className="flex cursor-pointer items-center justify-between rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Archivos subidos</p>
+        <label htmlFor="upload-image" className="flex cursor-pointer items-center justify-between rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-white">
           <span>Subir imagen</span>
-          <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-slate-700">+</span>
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white text-lg text-slate-700 shadow-sm">+</span>
         </label>
         <input
           id="upload-image"
@@ -215,8 +215,8 @@ export default function SidebarPanel() { // Removed onAddShape prop
       </div>
 
       <div className="space-y-3">
-        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Formas</p>
-        <div className="grid gap-3">
+        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Formas</p>
+        <div className="grid grid-cols-2 gap-2">
           {forms.map((item) => {
             const Icon = item.icon;
             return (
@@ -229,9 +229,9 @@ export default function SidebarPanel() { // Removed onAddShape prop
                     detail: { type: item.shape } 
                   }));
                 }}
-                className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
               >
-                <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white text-slate-700 shadow-sm">
                   <Icon size={18} />
                 </span>
                 {item.label}

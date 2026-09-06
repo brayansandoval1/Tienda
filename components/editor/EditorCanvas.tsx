@@ -90,6 +90,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
     let isMounted = true;
     let handleAddText: (e: Event) => void,
       handleColorChange: (e: Event) => void,
+      handleProductColor: (e: Event) => void,
+      handleDesignBackground: (e: Event) => void,
       handleFontChange: (e: Event) => void,
       handleFontSizeChange: (e: Event) => void,
       handleAddImage: (e: Event) => void,
@@ -1082,6 +1084,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       setupProductRef.current = setupProduct;
       setupProduct(initialProduct);
       handleColorChangeRef.current = handleProductColorChange;
+      handleProductColor = (event: Event) => {
+        const variant = (event as CustomEvent<{ variant?: ColorVariant }>).detail?.variant;
+        if (variant) handleProductColorChange(variant);
+      };
+      handleDesignBackground = (event: Event) => {
+        const color = (event as CustomEvent<{ color?: string }>).detail?.color;
+        if (color) handleDesignBgColorChangeRef.current?.(color);
+      };
       handleDesignBgColorChangeRef.current = handleDesignBgColorChange;
       (window as any).__openEditor3DPreview = open3DPreview;
 
@@ -2099,6 +2109,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       window.addEventListener('editor:add-text', handleAddText);
       window.addEventListener('editor:change-color', handleColorChange);
+      window.addEventListener('editor:product-color', handleProductColor);
+      window.addEventListener('editor:design-background', handleDesignBackground);
       window.addEventListener('editor:change-font', handleFontChange);
       window.addEventListener('editor:change-fontSize', handleFontSizeChange);
       window.addEventListener('editor:add-image', handleAddImage);
@@ -2138,6 +2150,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleFontChange) {
         window.removeEventListener('editor:change-font', handleFontChange);
+      }
+      if (handleProductColor) {
+        window.removeEventListener('editor:product-color', handleProductColor);
+      }
+      if (handleDesignBackground) {
+        window.removeEventListener('editor:design-background', handleDesignBackground);
       }
       if (handleFontSizeChange) {
         window.removeEventListener('editor:change-fontSize', handleFontSizeChange);
@@ -2215,9 +2233,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   }, []);
 
   return (
-    <div className="relative flex h-full w-full items-center justify-center overflow-auto bg-gray-50 p-4">
+    <div className="relative flex min-h-0 h-full w-full items-center justify-center overflow-hidden rounded-[20px] bg-[radial-gradient(circle_at_center,_#f8fafc_0,_#e8edf2_72%)] p-5">
         <div
-          className="pointer-events-auto relative flex max-h-[70vh] max-w-full shrink-0 select-none items-center justify-center overflow-hidden rounded-lg bg-white shadow-xl"
+          className="pointer-events-auto relative flex max-h-full max-w-full shrink-0 select-none items-center justify-center overflow-hidden rounded-xl bg-white shadow-[0_20px_50px_rgba(15,23,42,0.18)] ring-1 ring-slate-900/5"
           style={{
             aspectRatio: '1 / 1',
             width: 'min(100%, 70vh)',
@@ -2238,7 +2256,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           <span className="text-base">◼</span>
           Ver en 3D
         </button>
-      {!isCropping ? (
+      {false ? (
         <div className="pointer-events-none absolute left-4 top-4 z-20 w-60 space-y-3 rounded-2xl border border-gray-200 bg-white/95 p-3 shadow-xl backdrop-blur-md">
           {productViews.length > 1 && <div>
             <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-gray-400">Vistas</span>
@@ -2355,7 +2373,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             </button>
           )}
         </div>
-      ) : (
+      ) : null}
+      {/* Las acciones contextuales viven en TextToolbar; el canvas queda libre. */}
+      {false ? (
         <div className="pointer-events-none absolute bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-100/95 p-2 shadow-lg backdrop-blur-sm">
           <button
             type="button"
@@ -2382,7 +2402,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
             Limpiar Recorte
           </button>
         </div>
-      )}
+      ) : null}
       <Product3DModal
         open={is3DModalOpen}
         textureUrl={threeDTextureUrl}

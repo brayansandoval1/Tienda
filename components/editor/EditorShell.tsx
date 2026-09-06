@@ -44,24 +44,24 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   }, []);
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-50">
-      <header className="sticky top-0 z-40 bg-slate-50/80 p-4 backdrop-blur-sm">
+    <div className="flex h-screen w-screen min-h-0 flex-col overflow-hidden bg-slate-50 text-slate-900">
+      <header className="z-40 h-14 shrink-0 px-5 lg:px-7">
         <Header />
       </header>
 
-      <div className="flex-1 p-4">
-        <div className="grid h-full grid-cols-1 gap-4 xl:grid-cols-[80px_280px_1fr_320px]">
+      <div className="min-h-0 flex-1 px-5 pb-5 pt-3 lg:px-7">
+        <div className="grid h-full min-h-0 grid-cols-1 gap-4 xl:grid-cols-[72px_292px_minmax(520px,1fr)_312px]">
           <SidebarIcons onOpenOptions={() => setIsOptionsOpen(true)} />
           {isOptionsOpen ? <OptionsPanel product={currentProduct} onClose={() => setIsOptionsOpen(false)} /> : <SidebarPanel />}
-          <main className="relative h-full">
-            <div className="flex h-full flex-col gap-4">
+          <main className="relative min-h-0 h-full overflow-hidden rounded-[26px] border border-slate-200/80 bg-[#e9edf2] shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+            <div className="flex h-full min-h-0 flex-col gap-3 p-3">
               <TextToolbar />
               <EditorCanvas
                 key={`${currentProduct.id}-${currentProduct.updatedAt ?? 0}`}
                 product={currentProduct}
               />
             </div>
-            <FloatingFooter onReset={() => {}} /> {/* FloatingFooter sin props de zoom por ahora */}
+            <FloatingFooter onReset={() => {}} />
           </main>
           <ViewSelector product={currentProduct} />
         </div>

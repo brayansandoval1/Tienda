@@ -10,6 +10,10 @@ import {
   AlignRight,
   AlignStartVertical,
   AlignEndVertical,
+  Check,
+  Eraser,
+  Scissors,
+  X,
 } from 'lucide-react';
 
 interface ObjectStyle {
@@ -23,6 +27,9 @@ interface ObjectStyle {
 export default function TextToolbar() {
   const [isVisible, setIsVisible] = useState(false);
   const [isTextObject, setIsTextObject] = useState(false);
+  const [isImageObject, setIsImageObject] = useState(false);
+  const [isCropping, setIsCropping] = useState(false);
+  const [backgroundColor, setBackgroundColor] = useState('transparent');
   const [style, setStyle] = useState<ObjectStyle>({
     fill: '#000000',
     fontFamily: 'Arial',
@@ -41,6 +48,7 @@ export default function TextToolbar() {
       if (!selectedObject) {
         setIsVisible(false);
         setIsTextObject(false);
+        setIsImageObject(false);
         return;
       }
 
@@ -61,6 +69,7 @@ export default function TextToolbar() {
       const isText = selectedObject.type === 'i-text' || selectedObject.type === 'text';
       const isImage = selectedObject.type === 'image';
       setIsTextObject(isText);
+      setIsImageObject(isImage);
 
       // Actualizar estilos con valores seguros
       setStyle({
@@ -72,10 +81,16 @@ export default function TextToolbar() {
       });
     };
 
+    const handleCropMode = () => setIsCropping(true);
+    const handleCropEnd = () => setIsCropping(false);
     window.addEventListener('editor:selection-changed', handleSelectionChanged);
+    window.addEventListener('editor:crop-mode-active', handleCropMode);
+    window.addEventListener('editor:crop-mode-inactive', handleCropEnd);
 
     return () => {
       window.removeEventListener('editor:selection-changed', handleSelectionChanged);
+      window.removeEventListener('editor:crop-mode-active', handleCropMode);
+      window.removeEventListener('editor:crop-mode-inactive', handleCropEnd);
     };
   }, []);
 
@@ -103,6 +118,11 @@ export default function TextToolbar() {
     window.dispatchEvent(new CustomEvent('editor:change-fontSize', { detail: { fontSize: newSize } }));
   };
 
+  const changeBackground = (color: string) => {
+    setBackgroundColor(color);
+    window.dispatchEvent(new CustomEvent('editor:design-background', { detail: { color } }));
+  };
+
   if (!isVisible) {
     return null;
   }
@@ -111,7 +131,7 @@ export default function TextToolbar() {
     // La capa externa nunca intercepta gestos dirigidos al editor; sólo el
     // panel y sus controles internos reciben eventos de puntero.
     <div className="pointer-events-none">
-      <div className="pointer-events-auto flex flex-wrap items-center gap-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="pointer-events-auto flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
       <div className="flex items-center gap-2 text-slate-700">
         <label className="text-sm font-semibold text-slate-600">Color</label>
         <input
@@ -150,6 +170,36 @@ export default function TextToolbar() {
           </button>
         ))}
       </div>
+
+      <div className="flex items-center gap-1.5 border-l border-slate-200 pl-3">
+        <span className="text-xs font-semibold text-slate-500">Fondo</span>
+        {['transparent', '#000000', '#ffffff', '#2d4a3e', '#1e3a8a', '#e11d48'].map((color) => (
+          <button
+            key={color}
+            type="button"
+            aria-label={color === 'transparent' ? 'Fondo transparente' : `Fondo ${color}`}
+            title={color === 'transparent' ? 'Fondo transparente' : `Fondo ${color}`}
+            onClick={() => changeBackground(color)}
+            className={`h-6 w-6 rounded-md border ${backgroundColor === color ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}
+            style={{ background: color === 'transparent' ? 'linear-gradient(135deg, #fff 45%, #ef4444 46%, #ef4444 54%, #fff 55%)' : color }}
+          />
+        ))}
+        <input type="color" aria-label="Elegir fondo personalizado" value={backgroundColor === 'transparent' ? '#ffffff' : backgroundColor} onChange={(event) => changeBackground(event.target.value)} className="h-6 w-6 cursor-pointer rounded-md border-0 p-0" />
+      </div>
+
+      {isImageObject && !isCropping && (
+        <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('editor:start-crop'))} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-700">
+          <Scissors size={15} /> Recortar
+        </button>
+      )}
+
+      {isCropping && (
+        <div className="flex items-center gap-1.5 border-l border-slate-200 pl-3">
+          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('editor:confirm-crop'))} className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"><Check size={15} />Confirmar</button>
+          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('editor:cancel-crop'))} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"><X size={15} />Cancelar</button>
+          <button type="button" title="Limpiar recorte" aria-label="Limpiar recorte" onClick={() => window.dispatchEvent(new CustomEvent('editor:reset-crop'))} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600"><Eraser size={15} /></button>
+        </div>
+      )}
 
       {isTextObject && (
         <>

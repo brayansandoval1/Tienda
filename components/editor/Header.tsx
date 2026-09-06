@@ -31,17 +31,17 @@ export default function Header() {
   };
 
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="h-14 border-b border-slate-200 bg-white px-1 shadow-sm">
+      <div className="flex h-full items-center justify-between gap-3">
         <div className="flex items-center gap-3 text-slate-700">
-          <button className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800 transition hover:bg-slate-100">
+          <button className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-800 transition hover:bg-slate-100" aria-label="Cerrar editor">
             ✕
           </button>
           <button
             type="button"
             onClick={handleSave}
             disabled={saveState === 'saving'}
-            className="inline-flex items-center gap-2 text-sm font-semibold disabled:cursor-wait disabled:opacity-60"
+            className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700 disabled:cursor-wait disabled:opacity-60"
           >
             <Save size={16} />
             {saveState === 'saving' ? 'Guardando…' : 'Guardar diseño'}
@@ -49,13 +49,13 @@ export default function Header() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button className="rounded-full bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200">
+          <button className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm">
             Diseño
           </button>
-          <button className="rounded-full bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200">
+          <button className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-200">
             Opciones
           </button>
-          <button className="rounded-full bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200">
+          <button className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-200">
             Revisar
           </button>
         </div>
