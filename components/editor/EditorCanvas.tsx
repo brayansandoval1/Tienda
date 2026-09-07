@@ -6,6 +6,7 @@ import type { TextOptions } from '../../types/product';
 import type { ColorVariant, Product, ProductOptionValue, ProductView } from '@/src/store/useProductStore';
 import type { SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
 import Product3DModal from '@/components/editor/Product3DModal';
+import { saveTemplateToStorage } from '@/src/utils/templateStorage';
 
 type PrintArea = ProductView['printArea'];
 const ADMIN_BASE_SIZE = 800;
@@ -127,7 +128,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleAlign: (e: Event) => void,
       handleSaveDesign: () => void,
       handleOptionMockup: (e: Event) => void,
-      handleOptionsChanged: (e: Event) => void;
+      handleOptionsChanged: (e: Event) => void,
+      handleApplyTemplate: (e: Event) => void,
+      handleExportTemplate: (e: Event) => void;
 
     // Carga dinámica de Fabric solo en el cliente
     import('fabric').then((fabricModule) => {
@@ -2214,6 +2217,137 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         }
       };
 
+      // Plantillas prediseñadas: sustituye los objetos del diseño mediante
+      // canvas.loadFromJSON, preservando el mockup (backgroundImage) y las
+      // guías de la zona segura del producto activo.
+      handleApplyTemplate = (e: Event) => {
+        const detail = (e as CustomEvent<{ objects?: Record<string, unknown>[] }>).detail;
+        const canvas = fabricCanvasRef.current;
+        const incomingObjects = detail?.objects;
+        if (!canvas || !Array.isArray(incomingObjects)) return;
+
+        // Confirmación: si el usuario ya tiene elementos en el canvas, pedir
+        // consentimiento antes de reemplazar su diseño por la plantilla.
+        const hasUserDesign = canvas
+          .getObjects()
+          .some((object: any) => !object.isGuide && !object.isDesignBackground);
+        if (hasUserDesign && !window.confirm('¿Deseas reemplazar tu diseño actual por esta plantilla?')) {
+          return;
+        }
+
+        // loadFromJSON limpia TODO el lienzo: guardar la base para restaurarla
+        // inmediatamente después de la carga. El mockup NO es backgroundImage:
+        // es un objeto Image con flag `isMockup` anclado al fondo del escenario,
+        // así que también se preserva y se re-inserta (siempre sendToBack). Los
+        // objetos de diseño previos sí se descartan aquí.
+        const preservedBase = canvas
+          .getObjects()
+          .filter((object: any) => object.isGuide || object.isDesignBackground || object.isMockup);
+
+        // Normalización defensiva: los IText/Textbox sin la propiedad `styles`
+        // hacen que enlivenObjects explote con "styles[i] undefined". Fabric
+        // serializa siempre `styles`, pero JSONs hechos a mano pueden omitirlo.
+        const normalizedObjects = incomingObjects.map((object: Record<string, any>) => {
+          const objectType = String(object?.type ?? '').toLowerCase();
+          if (objectType === 'itext' || objectType === 'i-text' || objectType === 'textbox') {
+            return { ...object, styles: object.styles ?? {} };
+          }
+          return object;
+        });
+
+        canvas.loadFromJSON({ objects: normalizedObjects }, () => {
+          if (fabricCanvasRef.current !== canvas) return;
+          // Re-insertar la base (mockup + guías); el mockup SIEMPRE al fondo,
+          // por debajo de cualquier objeto de la plantilla.
+          preservedBase.forEach((baseObject: any) => {
+            canvas.add(baseObject);
+            if (baseObject.isMockup) canvas.sendToBack(baseObject);
+          });
+          canvas.getObjects().forEach((object: any) => {
+            if (object.isGuide || object.isDesignBackground || object.isMockup) return;
+            // Los textos de la plantilla nacen listos para doble clic.
+            const objectType = String(object.type ?? '').toLowerCase();
+            if (objectType === 'itext' || objectType === 'i-text' || objectType === 'textbox') {
+              object.set({ editable: true });
+            }
+            makeObjectInteractive(object);
+            // Controles visuales limpios: esquinas circulares compactas,
+            // borde definido y rotación suave (mtr visible al seleccionar).
+            object.set({
+              cornerStyle: 'circle',
+              cornerSize: 10,
+              cornerColor: '#ffffff',
+              cornerStrokeColor: '#0f172a',
+              transparentCorners: false,
+              borderScaleFactor: 1.5,
+              padding: 4,
+              objectCaching: false,
+            });
+            object.setCoords();
+            clampToPrintArea(object);
+          });
+          canvas.renderAll();
+          window.dispatchEvent(
+            new CustomEvent('editor:selection-changed', { detail: { selectedObject: null } }),
+          );
+          if (typeof saveState === 'function') saveState();
+        });
+      };
+
+      // Guardar como Plantilla (modo Administrador): serializa el diseño del
+      // canvas actual (sin el mockup ni las guías) junto a una miniatura.
+      handleExportTemplate = (e: Event) => {
+        const detail = (e as CustomEvent<{ name?: string; category?: string }>).detail;
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
+
+        const templateName = detail?.name?.trim();
+        if (!templateName) {
+          console.warn('⚠️ [PLANTILLA] Nombre requerido para guardar la plantilla');
+          return;
+        }
+
+        // 1. Miniatura ANTES de tocar nada: captura el canvas tal como se ve
+        //    (incluye el mockup, útil como vista previa de la tarjeta).
+        const thumbnail = canvas.toDataURL({
+          format: 'jpeg',
+          quality: 0.6,
+          multiplier: 0.4, // ~320px de ancho: pequeña para cuidar la cuota.
+        });
+
+        // 2. JSON de Fabric con TODOS los objetos del lienzo.
+        const canvasJSON = canvas.toJSON();
+
+        // 3. Excluir el mockup (objeto Image con flag isMockup y/o backgroundImage),
+        //    las guías de la zona segura y las capas de diseño de fondo: la
+        //    plantilla debe contener sólo vectores, formas y textos editables.
+        const designObjects = ((canvasJSON.objects ?? []) as Record<string, unknown>[]).filter(
+          (object) => !object.isGuide && !object.isDesignBackground && !object.isMockup,
+        );
+        if (!designObjects.length) {
+          console.warn('⚠️ [PLANTILLA] No hay elementos de diseño para guardar');
+          window.dispatchEvent(new CustomEvent('editor:template-saved', { detail: { ok: false, reason: 'empty' } }));
+          return;
+        }
+
+        // TODO: Reemplazar localStorage por POST /api/templates — el payload
+        // (nombre, categoría, miniatura, templateJSON) ya es lo que recibiría
+        // el endpoint; basta con subir esta misma estructura.
+        const saved = saveTemplateToStorage({
+          id: crypto.randomUUID(),
+          name: templateName,
+          category: detail?.category?.trim() || 'General',
+          thumbnail,
+          createdAt: Date.now(),
+          templateJSON: { version: canvasJSON.version, objects: designObjects },
+        });
+
+        // 4. Notificar a la barra lateral para refrescar la lista.
+        window.dispatchEvent(
+          new CustomEvent('editor:template-saved', { detail: { ok: saved, name: templateName } }),
+        );
+      };
+
       window.addEventListener('editor:add-text', handleAddText);
       window.addEventListener('editor:change-color', handleColorChange);
       window.addEventListener('editor:product-color', handleProductColor);
@@ -2241,6 +2375,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:save-design', handleSaveDesign);
       window.addEventListener('editor:option-mockup', handleOptionMockup);
       window.addEventListener('editor:options-changed', handleOptionsChanged);
+      window.addEventListener('editor:apply-template', handleApplyTemplate);
+      window.addEventListener('editor:save-as-template', handleExportTemplate);
 
       canvas.on('object:added', saveState);
       canvas.on('object:modified', saveState);
@@ -2293,6 +2429,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleAddSVG) {
         window.removeEventListener('editor:add-svg', handleAddSVG);
+      }
+      if (handleApplyTemplate) {
+        window.removeEventListener('editor:apply-template', handleApplyTemplate);
+      }
+      if (handleExportTemplate) {
+        window.removeEventListener('editor:save-as-template', handleExportTemplate);
       }
       if (handleStartCrop) {
         window.removeEventListener('editor:start-crop', handleStartCrop);
