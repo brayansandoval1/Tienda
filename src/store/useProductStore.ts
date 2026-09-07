@@ -44,7 +44,17 @@ export const useProductStore = create<ProductState>()(
       name: 'custom_products',
       storage: createJSONStorage(() => ({
         getItem: (name) => localStorage.getItem(name) ?? localStorage.getItem('product-storage'),
-        setItem: (name, value) => localStorage.setItem(name, value),
+        setItem: (name, value) => {
+          try {
+            localStorage.setItem(name, value);
+          } catch (error) {
+            // Cuota de localStorage agotada (imágenes Base64 muy grandes).
+            console.error('❌ [STORAGE] No se pudo guardar el catálogo (cuota agotada):', error);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('editor:storage-quota-error'));
+            }
+          }
+        },
         removeItem: (name) => localStorage.removeItem(name),
       })),
       partialize: (state) => ({ products: state.products }),

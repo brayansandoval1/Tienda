@@ -3,6 +3,7 @@
 import { FormEvent, type InputHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, Eye, Info, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { useProductStore, type Product, type ProductOption } from '@/src/store/useProductStore';
+import { compressImageFileToDataUrl } from '@/src/utils/imageCompression';
 import AdminProductOptionsForm from '@/components/admin/AdminProductOptionsForm';
 import MockupAreaPicker, { normalizePrintArea, type PrintArea } from '@/components/admin/MockupAreaPicker';
 
@@ -77,9 +78,11 @@ export default function AdminProductEditor() {
   };
   const handleMockupFile = (file?: File) => {
     if (!file || !activeView || !file.type.startsWith('image/')) return;
-    const reader = new FileReader();
-    reader.onload = () => setViewField(activeIndex, 'mockupUrl', String(reader.result));
-    reader.readAsDataURL(file);
+    // Se comprime antes de guardar: los mockups en Base64 sin comprimir
+    // agotan la cuota de localStorage y rompen la persistencia.
+    compressImageFileToDataUrl(file)
+      .then((dataUrl) => setViewField(activeIndex, 'mockupUrl', dataUrl))
+      .catch((error) => console.error('❌ [ADMIN] Error al procesar el mockup:', error));
   };
   const handleReplaceMockup = () => fileInputRef.current?.click();
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
