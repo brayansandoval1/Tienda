@@ -243,6 +243,7 @@ export const PRODUCTS: Product[] = [
     options: [
       { id: 'capacidad', name: 'Capacidad', type: 'radio', values: [
         { id: '10oz', label: '10 oz', priceModifier: 0 }, { id: '20oz', label: '20 oz', priceModifier: 4 },
+        { id: '25oz', label: '25 oz', priceModifier: 8 },
       ] },
     ],
     views: [

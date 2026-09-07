@@ -128,10 +128,12 @@ export default function TextToolbar() {
   }
 
   return (
-    // La capa externa nunca intercepta gestos dirigidos al editor; sólo el
-    // panel y sus controles internos reciben eventos de puntero.
-    <div className="pointer-events-none">
-      <div className="pointer-events-auto flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+    // Barra de herramientas contextual de ancho completo, fija justo debajo de
+    // la barra de navegación principal. NO ocupa espacio del lienzo ni lo tapa:
+    // es una franja horizontal blanca independiente que libera por completo el
+    // área visual sobre el producto. Siempre presente (aunque deshabilitada por
+    // defecto en los controles internos si no hay selección activa).
+    <div className="w-full bg-white border-b border-slate-200 h-12 px-6 flex items-center gap-4">
       <div className="flex items-center gap-2 text-slate-700">
         <label className="text-sm font-semibold text-slate-600">Color</label>
         <input
@@ -224,7 +226,6 @@ export default function TextToolbar() {
           </div>
         </>
       )}
-      </div>
     </div>
   );
 }

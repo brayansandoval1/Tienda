@@ -28,6 +28,9 @@ interface EditorCanvasProps {
 
 export default function EditorCanvas({ product: initialProduct }: EditorCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Contenedor del lienzo central: se usa para dimensionar el canvas y aplicar
+  // "zoom to fit" de forma proporcional al área disponible del editor.
+  const canvasAreaRef = useRef<HTMLDivElement>(null);
   const fabricCanvasRef = useRef<any>(null);
   const safeZoneRef = useRef<any>(null);
   const historyRef = useRef<string[]>([]);
@@ -88,6 +91,14 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
     if (!canvasRef.current) return;
 
     let isMounted = true;
+    // Referencia al "zoom to fit" definido dentro de la carga asíncrona de
+    // Fabric, para poder reaplicarlo desde el listener de resize y limpiarlo.
+    let fitOnResize: (() => void) | null = null;
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    const handleWindowResize = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => fitOnResize?.(), 120);
+    };
     let handleAddText: (e: Event) => void,
       handleColorChange: (e: Event) => void,
       handleProductColor: (e: Event) => void,
@@ -175,6 +186,54 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       fabricCanvasRef.current = canvas;
 
+      // ===== ZOOM TO FIT =====================================================
+      // Escala el lienzo para que el teléfono/mockup completo (de arriba a
+      // abajo) sea siempre visible en el contenedor sin importar la resolución.
+      // Se conserva el plano lógico fijo (ADMIN_BASE_SIZE) para no romper las
+      // coordenadas de la zona segura, el clipPath ni la exportación: el zoom
+      // escala TODO de forma proporcional y uniforme.
+      const fitCanvasToContainer = () => {
+        const canvasInstance = fabricCanvasRef.current;
+        const containerEl = canvasAreaRef.current;
+        if (!canvasInstance || !containerEl) return;
+
+        const containerWidth = containerEl.clientWidth;
+        const containerHeight = containerEl.clientHeight;
+        if (!containerWidth || !containerHeight) return;
+
+        // Dimensiones nativas de la plantilla de la funda (aspecto 3:4 vertical).
+        const originalWidth = 600;
+        const originalHeight = 800;
+
+        // La funda (mockup) debe ocupar el 92% del ALTO disponible del área
+        // central. El ancho no es limitante (la funda es vertical), pero se
+        // acota para que el plano lógico 800×800 nunca desborde horizontalmente.
+        const scale = Math.min(
+          (containerHeight * 0.92) / originalHeight,
+          containerWidth / ADMIN_BASE_SIZE,
+        );
+
+        // El plano lógico sigue siendo 800×800 (con el mockup 600×800 centrado
+        // dentro), pero el BUFFER del canvas se dimensiona al plano escalado:
+        // así el elemento respeta la proporción, el mockup llena el alto al 92%
+        // y no hay estiramiento ni recorte por CSS.
+        canvasInstance.setDimensions({
+          width: ADMIN_BASE_SIZE * scale,
+          height: ADMIN_BASE_SIZE * scale,
+        });
+
+        canvasInstance.setZoom(scale);
+        canvasInstance.calcOffset();
+        canvasInstance.requestRenderAll();
+      };
+
+      // Ajuste inicial una vez montado el contenedor.
+      fitCanvasToContainer();
+      fitOnResize = fitCanvasToContainer;
+
+      // Reajuste automático al redimensionar la ventana (debounced).
+      window.addEventListener('resize', handleWindowResize);
+
       // Propiedades por defecto para que todos los objetos sean libremente movibles/redimensionables
       const defaultObjectProps = {
         selectable: true,
@@ -225,7 +284,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // Filtrar objetos normales excluyendo la guía y el overlay de recorte temporal
         const userObjects = canvas
           .getObjects()
-          .filter((obj: any) => !obj.isGuide && !obj.isCropOverlay && !obj.isDesignBackground);
+          .filter((obj: any) => !obj.isGuide && !obj.isMockup && !obj.isCropOverlay && !obj.isDesignBackground);
         const jsonState = userObjects.map((obj: any) => obj.toJSON());
         historyRef.current.push(JSON.stringify(jsonState));
         redoStackRef.current = [];
@@ -374,7 +433,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       // visibles completos, mientras que el diseño del usuario sólo aparece
       // dentro del área imprimible sobre el cuerpo del producto.
       const applyPrintAreaClip = (object: any, view = activeView) => {
-        if (!object || object.isGuide || object.isCropOverlay) return;
+        if (!object || object.isGuide || object.isMockup || object.isCropOverlay) return;
         const area = getRenderedPrintArea(view);
         object.set({
           clipPath: new fabric.Rect({
@@ -421,7 +480,17 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           scaleY: scale,
           selectable: false,
           evented: false,
+          // El mockup se excluye del JSON exportado, del PNG de imprenta y de
+          // la interactividad; es únicamente la base visual fija del escenario.
           excludeFromExport: true,
+          isMockup: true,
+          lockMovementX: true,
+          lockMovementY: true,
+          lockScalingX: true,
+          lockScalingY: true,
+          lockRotation: true,
+          hasControls: false,
+          hasBorders: false,
         });
         console.log('📐 [MOCKUP AJUSTADO]', { naturalWidth, naturalHeight, scale, renderedBounds: activeMockupBounds });
       };
@@ -488,21 +557,29 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
               });
               fitMockupToCanvas(img);
 
-              await new Promise<void>((setBackgroundResolve) => {
-                canvas.setBackgroundImage(img, () => {
-                  if (requestId !== currentLoadRequestId.current || renderToken !== currentRenderToken) {
-                    console.log('⛔ Petición obsoleta descartada:', mockupUrl);
-                    setBackgroundResolve();
-                    return;
-                  }
+              // El mockup se añade como objeto fijo al escenario (no como
+              // backgroundImage). Así el "zoom to fit" escala proporcionalmente
+              // el mockup, la guía de la zona segura y el clipPath por igual, y
+              // la imagen del producto siempre queda superpuesta al cuerpo del
+              // teléfono sin quedar descuadrada por el viewport.
+              //
+              // Se elimina el mockup previo (mismo flag) y se re-inserta al
+              // fondo para que nunca tape el área imprimible ni los objetos.
+              canvas.getObjects()
+                .filter((obj: any) => obj?.isMockup)
+                .forEach((obj: any) => canvas.remove(obj));
 
-                  console.log('✅ BackgroundImage aplicado correctamente al Canvas');
-                  setupSafeAreaAndClipping(view);
-                  canvas.renderAll();
-                  canvas.requestRenderAll();
-                  setBackgroundResolve();
-                });
-              });
+              canvas.add(img);
+              img.sendToBack();
+              // Flag propio para que guías/interactividad/exportación reconozcan
+              // el mockup como base fija y no lo traten como objeto de usuario.
+              (img as any).isMockup = true;
+              (img as any).excludeFromExport = true;
+
+              console.log('✅ Mockup anclado como objeto base del escenario');
+              setupSafeAreaAndClipping(view);
+              canvas.renderAll();
+              canvas.requestRenderAll();
             } catch (err) {
               console.error(`❌ Error al decodificar el mockup: ${mockupUrl}`, err);
               activeMockupBounds = { left: 0, top: 0, width: canvas.getWidth(), height: canvas.getHeight() };
@@ -514,8 +591,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           };
 
           canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
-          canvas.setZoom(1);
-          canvas.calcOffset();
+          // En vez de forzar zoom=1, re-aplicamos el "zoom to fit" para que el
+          // mockup y la zona segura queden proporcionados al contenedor.
+          fitCanvasToContainer();
           canvas.setBackgroundImage(null, () => canvas.requestRenderAll());
 
           if (!mockupUrl) {
@@ -890,6 +968,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         safeZoneRef.current = safeZone;
         c.add(safeZone);
         c.sendToBack(safeZone); // Siempre detrás de los objetos del usuario
+        // El mockup base se mantiene SIEMPRE en el fondo, por debajo de la zona
+        // segura, para que el rectángulo punteado verde marque la zona imprimible
+        // sobre el teléfono (y no al revés). Esto aplica a todas las rutas.
+        c.getObjects()
+          .filter((obj: any) => obj?.isMockup)
+          .forEach((obj: any) => c.sendToBack(obj));
         applyPrintAreaClipping(activeView);
         c.requestRenderAll();
       };
@@ -947,7 +1031,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       // Restringe los objetos del usuario para que no se dibujen fuera del printArea
       const clampToPrintArea = (obj: any) => {
-        if (!obj || obj.isGuide || !activeView) return;
+        if (!obj || obj.isGuide || obj.isMockup || !activeView) return;
         const area = getRenderedPrintArea(activeView);
         const left = area.x;
         const top = area.y;
@@ -956,7 +1040,10 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         let bound = { left: obj.left || 0, top: obj.top || 0, width: obj.width || 0, height: obj.height || 0 };
         if (typeof obj.getBoundingRect === 'function') {
-          const br = obj.getBoundingRect();
+          // `true` = coordenadas ABSOLUTAS (sin viewport transform/zoom). Sin
+          // esto, con zoom ≠ 1 el rect parece desplazado y el clamp empuja el
+          // objeto hacia la derecha en cada frame del arrastre.
+          const br = obj.getBoundingRect(true);
           bound = { left: br.left, top: br.top, width: br.width, height: br.height };
         }
         // `getBoundingRect()` usa la esquina visual, mientras que `left/top`
@@ -986,7 +1073,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const c = fabricCanvasRef.current;
         if (!c) return;
         c.forEachObject((obj: any) => {
-          if (obj && obj !== safeZoneRef.current && !obj.isGuide) {
+          if (obj && obj !== safeZoneRef.current && !obj.isGuide && !obj.isMockup) {
             obj.set({
               selectable: true,
               evented: true,
@@ -1073,11 +1160,22 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       const open3DPreview = () => {
         const c = fabricCanvasRef.current;
         if (!c) return;
-        const dataUrl = c.toDataURL({
-          format: 'png',
-          multiplier: 1,
-        });
-        setThreeDTextureUrl(dataUrl);
+        // La textura del modal 3D debe mostrar el mockup como base para que el
+        // teléfono se vea con su funda; se reactiva temporalmente el objeto y
+        // se restaura justo después de exportar (equivalente al comportamiento
+        // del antiguo backgroundImage).
+        const mockups = c.getObjects().filter((obj: any) => obj?.isMockup);
+        const previousExportFlags = mockups.map((m: any) => m.excludeFromExport);
+        mockups.forEach((m: any) => (m.excludeFromExport = false));
+        try {
+          const dataUrl = c.toDataURL({
+            format: 'png',
+            multiplier: 1,
+          });
+          setThreeDTextureUrl(dataUrl);
+        } finally {
+          mockups.forEach((m: any, index: number) => (m.excludeFromExport = previousExportFlags[index]));
+        }
         setIs3DModalOpen(true);
       };
 
@@ -1185,8 +1283,17 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         object.setCoords();
         canvas.requestRenderAll();
       });
-      canvas.on('object:scaling', (e: any) => clampToPrintArea(e.target));
-      canvas.on('object:modified', (e: any) => clampToPrintArea(e.target));
+      canvas.on('object:scaling', (e: any) => {
+        clampToPrintArea(e.target);
+        e.target?.setCoords?.();
+      });
+      canvas.on('object:modified', (e: any) => {
+        clampToPrintArea(e.target);
+        // Recalcular coordenadas y offset tras cada transformación para que
+        // el cursor y el objeto queden perfectamente sincronizados (sin saltos).
+        e.target?.setCoords?.();
+        canvas.calcOffset();
+      });
       // Fabric modifica el objeto en memoria durante las transformaciones.
       // Forzar el render mantiene sincronizado el upper-canvas visible con
       // esas modificaciones, especialmente en pantallas con escala Retina.
@@ -1628,12 +1735,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const { text, fontSize, fontWeight, fontFamily } = customEvent.detail || {};
         // Estas dimensiones son las coordenadas lógicas reales del mockup.
         // Fabric aplica el multiplicador HDPI solamente a su buffer interno.
-        const rawWidth = canvas.getWidth();
-        const rawHeight = canvas.getHeight();
-
         const newText = makeObjectInteractive(new fabric.IText(text || 'Texto', {
-          left: rawWidth / 2,
-          top: rawHeight / 3,
           originX: 'center',
           originY: 'center',
           fontSize: fontSize || 24,
@@ -1645,6 +1747,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         }));
 
         fabricCanvasRef.current.add(newText);
+        // Centrar SIEMPRE en el punto medio visible del área de trabajo
+        // (nunca en coordenadas fijas de esquina).
+        fabricCanvasRef.current.centerObject(newText);
         fabricCanvasRef.current.setActiveObject(newText);
         fabricCanvasRef.current.bringToFront(newText);
         fabricCanvasRef.current.requestRenderAll();
@@ -1751,8 +1856,10 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleClear = () => {
         if (!fabricCanvasRef.current) return;
         const objects = fabricCanvasRef.current.getObjects();
-        // No eliminar la zona segura
-        const userObjects = objects.filter((obj: any) => obj !== safeZoneRef.current);
+        // Mantener zona segura y mockup base; eliminar sólo objetos del usuario
+        const userObjects = objects.filter(
+          (obj: any) => obj !== safeZoneRef.current && !obj.isGuide && !obj.isMockup,
+        );
         userObjects.forEach((obj: any) => fabricCanvasRef.current.remove(obj));
         fabricCanvasRef.current.discardActiveObject();
         fabricCanvasRef.current.renderAll();
@@ -1764,7 +1871,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const canvas = fabricCanvasRef.current;
 
         // 1. Remove only user objects
-        const userObjects = canvas.getObjects().filter((obj: any) => !obj.isGuide);
+        const userObjects = canvas.getObjects().filter((obj: any) => !obj.isGuide && !obj.isMockup);
         userObjects.forEach((obj: any) => canvas.remove(obj));
 
         // 2. Enliven and add new objects
@@ -2229,33 +2336,42 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       delete (window as any).__openEditor3DPreview;
       setupProductRef.current = null;
+      window.removeEventListener('resize', handleWindowResize);
+      clearTimeout(resizeTimer);
+      fitOnResize = null;
     };
   }, []);
 
   return (
-    <div className="relative flex min-h-0 h-full w-full items-center justify-center overflow-hidden rounded-[20px] bg-[radial-gradient(circle_at_center,_#f8fafc_0,_#e8edf2_72%)] p-5">
-        <div
-          className="pointer-events-auto relative flex max-h-full max-w-full shrink-0 select-none items-center justify-center overflow-hidden rounded-xl bg-white shadow-[0_20px_50px_rgba(15,23,42,0.18)] ring-1 ring-slate-900/5"
-          style={{
-            aspectRatio: '1 / 1',
-            width: 'min(100%, 70vh)',
-          }}
-        >
-          <canvas ref={canvasRef} className="block max-h-full max-w-full object-contain" style={{ width: '100%', height: '100%', pointerEvents: 'auto' }} />
+    <div
+      ref={canvasAreaRef}
+      className="flex-1 h-full w-full flex items-center justify-center p-6 relative overflow-hidden bg-slate-100/50 mx-auto"
+    >
+      <canvas ref={canvasRef} className="block select-none" style={{ pointerEvents: 'auto' }} />
+
+      {/* Selector de Cara / Vista del Producto (pill toggle flotante) */}
+      {productViews.length > 1 && (
+        <div className="absolute top-4 right-4 z-20 flex items-center gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-md backdrop-blur-md">
+          {productViews.map((view) => {
+            const isActive = view.id === currentViewId;
+            return (
+              <button
+                key={view.id}
+                type="button"
+                onClick={() => switchViewRef.current?.(view.id)}
+                aria-pressed={isActive}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                  isActive
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                {view.label || view.name || view.id}
+              </button>
+            );
+          })}
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            const canvas = fabricCanvasRef.current;
-            if (!canvas) return;
-            setThreeDTextureUrl(canvas.toDataURL({ format: 'png', multiplier: 1 }));
-            setIs3DModalOpen(true);
-          }}
-          className="absolute bottom-4 right-4 z-30 inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:bg-slate-800"
-        >
-          <span className="text-base">◼</span>
-          Ver en 3D
-        </button>
+      )}
       {false ? (
         <div className="pointer-events-none absolute left-4 top-4 z-20 w-60 space-y-3 rounded-2xl border border-gray-200 bg-white/95 p-3 shadow-xl backdrop-blur-md">
           {productViews.length > 1 && <div>

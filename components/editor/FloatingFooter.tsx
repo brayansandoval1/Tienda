@@ -4,10 +4,9 @@ import { useState, useEffect } from 'react'; // Import useState and useEffect
 import {
   Trash2,
   RefreshCcw,
-  Copy,
-  Download,
   Undo2,
   Redo2,
+  Box,
 } from 'lucide-react';
 
 interface FloatingFooterProps {
@@ -41,53 +40,50 @@ export default function FloatingFooter({ onReset }: FloatingFooterProps) { // Re
   }, []);
 
   return (
-    <div className="absolute bottom-3 left-1/2 z-10 w-11/12 max-w-[760px] -translate-x-1/2 rounded-2xl border border-slate-200/90 bg-white/95 px-3 py-2 shadow-xl backdrop-blur">
-      <div className="flex flex-wrap items-center justify-center gap-2 text-slate-700">
-          <button
-            onClick={() => window.dispatchEvent(new CustomEvent('editor:delete-active'))}
-            className={`inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium transition hover:bg-slate-100 ${
-              !isObjectSelected && 'opacity-50 pointer-events-none'
-            }`}
-            type="button"
-            disabled={!isObjectSelected}
-          >
-            <Trash2 size={16} />
-            Eliminar elemento
-          </button>
+    <div className="absolute bottom-2 left-1/2 z-30 flex -translate-x-1/2 scale-90 items-center gap-3 rounded-full bg-slate-900/90 px-3 py-1 text-xs font-medium text-white shadow-2xl backdrop-blur-md sm:scale-100">
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent('editor:delete-active'))}
+          className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-white transition hover:bg-white/10 ${
+            !isObjectSelected && 'opacity-50 pointer-events-none'
+          }`}
+          type="button"
+          disabled={!isObjectSelected}
+        >
+          <Trash2 size={14} />
+          Eliminar
+        </button>
 
-          <button onClick={() => window.dispatchEvent(new CustomEvent('editor:duplicate-active'))} className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100 ${
-              !isObjectSelected && 'opacity-50 pointer-events-none'
-            }`} type="button" title="Duplicar" disabled={!isObjectSelected}>
-            <Copy size={16} />
-          </button>
-          <button onClick={() => window.dispatchEvent(new CustomEvent('editor:undo'))} className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100 ${
-            !historyState.canUndo && 'opacity-50 pointer-events-none'
-          }`} type="button" title="Deshacer" disabled={!historyState.canUndo}>
-            <Undo2 size={16} />
-          </button>
-          <button onClick={() => window.dispatchEvent(new CustomEvent('editor:redo'))} className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100 ${
-            !historyState.canRedo && 'opacity-50 pointer-events-none'
-          }`} type="button" title="Rehacer" disabled={!historyState.canRedo}>
-            <Redo2 size={16} />
-          </button>
+        <button onClick={() => window.dispatchEvent(new CustomEvent('editor:undo'))} className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-white transition hover:bg-white/10 ${
+          !historyState.canUndo && 'opacity-50 pointer-events-none'
+        }`} type="button" title="Deshacer" disabled={!historyState.canUndo}>
+          <Undo2 size={15} />
+        </button>
+        <button onClick={() => window.dispatchEvent(new CustomEvent('editor:redo'))} className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-white transition hover:bg-white/10 ${
+          !historyState.canRedo && 'opacity-50 pointer-events-none'
+        }`} type="button" title="Rehacer" disabled={!historyState.canRedo}>
+          <Redo2 size={15} />
+        </button>
 
-          <button
-            onClick={() => {
-              window.dispatchEvent(new CustomEvent('editor:clear-canvas'));
-              onReset?.();
-            }}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium transition hover:bg-slate-100"
-            type="button"
-          >
-            <RefreshCcw size={16} />
-            Reiniciar
-          </button>
+        <button
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent('editor:clear-canvas'));
+            onReset?.();
+          }}
+          className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-white transition hover:bg-white/10"
+          type="button"
+        >
+          <RefreshCcw size={14} />
+          Reiniciar
+        </button>
 
-          <button onClick={() => window.dispatchEvent(new CustomEvent('editor:export-print'))} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800" type="button">
-            <Download size={16} />
-            Descargar impresión
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => (window as any).__openEditor3DPreview?.()}
+          className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-900 transition hover:bg-slate-200"
+        >
+          <Box size={14} />
+          Ver en 3D
+        </button>
       </div>
   );
 }

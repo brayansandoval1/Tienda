@@ -64,20 +64,22 @@ export default function SidebarPanel() { // Removed onAddShape prop
 
   return (
     <aside className="min-h-0 w-full max-w-[292px] space-y-5 overflow-y-auto rounded-[22px] border border-slate-200/80 bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
-      <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-700">
-        <Search size={18} />
-        <input
-          type="search"
-          placeholder="Ej: star, heart, coffee, car..."
-          value={iconQuery}
-          onChange={(e) => setIconQuery(e.target.value)}
-          className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
-        />
+      {/* Buscador de Iconos / Vectores Compacto */}
+      <div className="space-y-1.5 mb-4">
+        <div className="relative">
+          <Search className="h-3.5 w-3.5 absolute left-2.5 top-2.5 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Buscar iconos o formas (ej: star, leaf)..."
+            value={iconQuery}
+            onChange={(e) => setIconQuery(e.target.value)}
+            className="w-full rounded-lg border border-slate-200 py-1.5 pl-8 pr-3 text-xs text-slate-900 outline-none focus:ring-1 focus:ring-black"
+          />
+        </div>
+        <p className="px-1 text-[10px] italic text-slate-400">
+          💡 Tip: Busca en inglés para más resultados.
+        </p>
       </div>
-
-      <p className="mt-1.5 px-1 text-xs text-slate-500">
-        💡 <strong>Tip:</strong> Busca conceptos en inglés para obtener miles de iconos (ej: <i>shirt, leaf, fire, smile</i>).
-      </p>
 
       {iconQuery.trim().length <= 2 && (
         <div className="py-6 text-center text-xs text-slate-400">

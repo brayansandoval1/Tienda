@@ -1,14 +1,11 @@
 'use client';
 
 import { useRef } from 'react';
-import { Edit3, Upload, ImageIcon, Sparkles, SlidersHorizontal } from 'lucide-react';
+import { Edit3, Upload, ImageIcon, Sparkles } from 'lucide-react';
 
-interface SidebarIconsProps {
-  onAddImage?: (dataUrl: string) => void;
-  onOpenOptions?: () => void;
-}
+interface SidebarIconsProps {}
 
-export default function SidebarIcons({ onAddImage, onOpenOptions }: SidebarIconsProps) {
+export default function SidebarIcons({ }: SidebarIconsProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUploadClick = () => {
@@ -36,7 +33,6 @@ export default function SidebarIcons({ onAddImage, onOpenOptions }: SidebarIcons
     { label: 'Archivos subidos', icon: Upload, action: handleUploadClick },
     { label: 'Fondo', icon: ImageIcon, action: () => {} },
     { label: 'Decora', icon: Sparkles, action: () => {} },
-    { label: 'Opciones', icon: SlidersHorizontal, action: onOpenOptions ?? (() => {}) },
   ];
 
   return (
