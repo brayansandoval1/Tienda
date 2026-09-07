@@ -57,6 +57,23 @@ export function deleteSavedTemplate(templateId: string): SavedTemplate[] {
   return templates;
 }
 
+/**
+ * Reemplaza una plantilla existente (por id) conservando su createdAt.
+ * TODO: cuando exista BD, esto pasa a PUT /api/templates/:id.
+ */
+export function updateTemplateInStorage(template: SavedTemplate): boolean {
+  try {
+    const templates = listSavedTemplates().map((item) =>
+      item.id === template.id ? template : item,
+    );
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(templates));
+    return true;
+  } catch (error) {
+    console.error('❌ [TEMPLATES] No se pudo actualizar la plantilla (cuota agotada):', error);
+    return false;
+  }
+}
+
 // TODO: Reemplazar localStorage por POST /api/templates (y GET /api/templates
 // en listSavedTemplates, DELETE /api/templates/:id en deleteSavedTemplate).
 // El shape de SavedTemplate ya es compatible con un documento MongoDB/SQL.

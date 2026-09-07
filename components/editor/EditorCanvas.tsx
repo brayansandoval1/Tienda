@@ -6,7 +6,7 @@ import type { TextOptions } from '../../types/product';
 import type { ColorVariant, Product, ProductOptionValue, ProductView } from '@/src/store/useProductStore';
 import type { SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
 import Product3DModal from '@/components/editor/Product3DModal';
-import { saveTemplateToStorage } from '@/src/utils/templateStorage';
+import { saveTemplateToStorage, updateTemplateInStorage, listSavedTemplates } from '@/src/utils/templateStorage';
 
 type PrintArea = ProductView['printArea'];
 const ADMIN_BASE_SIZE = 800;
@@ -576,7 +576,10 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
               img.sendToBack();
               // Flag propio para que guías/interactividad/exportación reconozcan
               // el mockup como base fija y no lo traten como objeto de usuario.
+              // `isProductImage` es el alias canónico pedido para la exclusión
+              // en el guardado de plantillas.
               (img as any).isMockup = true;
+              (img as any).isProductImage = true;
               (img as any).excludeFromExport = true;
 
               console.log('✅ Mockup anclado como objeto base del escenario');
@@ -2297,7 +2300,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       // Guardar como Plantilla (modo Administrador): serializa el diseño del
       // canvas actual (sin el mockup ni las guías) junto a una miniatura.
       handleExportTemplate = (e: Event) => {
-        const detail = (e as CustomEvent<{ name?: string; category?: string }>).detail;
+        const detail = (e as CustomEvent<{ name?: string; category?: string; updateId?: string }>).detail;
         const canvas = fabricCanvasRef.current;
         if (!canvas) return;
 
@@ -2307,22 +2310,95 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           return;
         }
 
-        // 1. Miniatura ANTES de tocar nada: captura el canvas tal como se ve
-        //    (incluye el mockup, útil como vista previa de la tarjeta).
-        const thumbnail = canvas.toDataURL({
-          format: 'jpeg',
-          quality: 0.6,
-          multiplier: 0.4, // ~320px de ancho: pequeña para cuidar la cuota.
+        // 1. Ocultar temporalmente la capa del mockup (imagen base del
+        //    producto / fondo) para que no aparezca ni en la miniatura ni en
+        //    el JSON de la plantilla.
+        const isMockupLayer = (obj: unknown) => {
+          const candidate = obj as { isMockup?: boolean; isProductImage?: boolean; excludeFromExport?: boolean };
+          return Boolean(candidate?.isMockup || candidate?.isProductImage || candidate?.excludeFromExport);
+        };
+        const hiddenLayers: { object: fabric.Object; wasVisible: boolean }[] = [];
+        canvas.getObjects().forEach((object: fabric.Object) => {
+          if (isMockupLayer(object)) {
+            hiddenLayers.push({ object, wasVisible: object.visible ?? true });
+            object.visible = false;
+          }
         });
+        // Además, si el mockup vive como backgroundImage del canvas, ocultarlo
+        // también para la captura.
+        const backgroundImage = canvas.backgroundImage as fabric.Object | undefined;
+        const hideBackgroundImage = Boolean(backgroundImage && isMockupLayer(backgroundImage));
+        if (hideBackgroundImage && backgroundImage) backgroundImage.visible = false;
 
-        // 2. JSON de Fabric con TODOS los objetos del lienzo.
-        const canvasJSON = canvas.toJSON();
+        // 2. Fondo blanco temporal para la captura (evita negros en JPEG en
+        //    zonas transparentes y da una miniatura limpia).
+        const originalBackgroundColor = canvas.backgroundColor;
+        canvas.backgroundColor = '#ffffff';
 
-        // 3. Excluir el mockup (objeto Image con flag isMockup y/o backgroundImage),
-        //    las guías de la zona segura y las capas de diseño de fondo: la
-        //    plantilla debe contener sólo vectores, formas y textos editables.
+        // 3. Generar miniatura limpia (sin mockup, sobre fondo blanco).
+        //    Calidad adaptativa para cuidar la cuota de localStorage:
+        //    se intenta primero PNG 2x (retina nítido) y, si pesa demasiado,
+        //    se degrada a JPEG de alta calidad antes de persistir.
+        const THUMBNAIL_MAX_CHARS = 180_000; // ~135KB por imagen Base64
+        const generateThumbnail = (
+          format: 'png' | 'jpeg',
+          multiplier: number,
+          quality: number,
+        ) =>
+          canvas.toDataURL({
+            format,
+            multiplier,
+            quality,
+            backgroundColor: '#ffffff',
+          });
+
+        let thumbnail = generateThumbnail('png', 2, 1);
+        if (thumbnail.length > THUMBNAIL_MAX_CHARS) {
+          thumbnail = generateThumbnail('jpeg', 1.5, 0.85);
+          if (thumbnail.length > THUMBNAIL_MAX_CHARS) {
+            thumbnail = generateThumbnail('jpeg', 1, 0.8);
+          }
+        }
+
+        // 2. JSON de Fabric. IMPORTANTE: los flags personalizados (isMockup,
+        //    isGuide, etc.) NO se serializan por defecto — hay que pedirlos
+        //    explícitamente via propertiesToInclude para poder filtrarlos
+        //    después. Sin esto, el mockup se colaba en el JSON de la plantilla.
+        const TEMPLATE_EXCLUDED_FLAGS = [
+          'isMockup',
+          'isProductImage',
+          'isGuide',
+          'isGuideLine',
+          'isDesignBackground',
+          'isCropOverlay',
+        ];
+        const canvasJSON = canvas.toJSON([...TEMPLATE_EXCLUDED_FLAGS]);
+
+        // 4. Restaurar el estado original del canvas: visibilidad del mockup,
+        //    fondo original y re-render. El usuario/admin no nota ningún
+        //    parpadeo y puede seguir editando normalmente.
+        hiddenLayers.forEach(({ object, wasVisible }) => {
+          object.visible = wasVisible;
+        });
+        if (hideBackgroundImage && backgroundImage) backgroundImage.visible = true;
+        canvas.backgroundColor = originalBackgroundColor;
+        canvas.renderAll();
+
+        // 3. Excluir del JSON de la plantilla:
+        //    - el mockup del producto (isMockup / isProductImage / excludeFromExport,
+        //      cubre también el caso backgroundImage),
+        //    - las guías de la zona segura y capas de diseño de fondo,
+        //    - los overlays de recorte.
+        //    Sólo quedan los vectores, formas y textos añadidos por el usuario.
         const designObjects = ((canvasJSON.objects ?? []) as Record<string, unknown>[]).filter(
-          (object) => !object.isGuide && !object.isDesignBackground && !object.isMockup,
+          (object) =>
+            !object.isMockup &&
+            !object.isProductImage &&
+            !object.isGuide &&
+            !object.isGuideLine &&
+            !object.isDesignBackground &&
+            !object.isCropOverlay &&
+            !object.excludeFromExport,
         );
         if (!designObjects.length) {
           console.warn('⚠️ [PLANTILLA] No hay elementos de diseño para guardar');
@@ -2330,17 +2406,46 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           return;
         }
 
-        // TODO: Reemplazar localStorage por POST /api/templates — el payload
-        // (nombre, categoría, miniatura, templateJSON) ya es lo que recibiría
-        // el endpoint; basta con subir esta misma estructura.
-        const saved = saveTemplateToStorage({
-          id: crypto.randomUUID(),
+        // TODO: Reemplazar localStorage por POST /api/templates (o PUT
+        // /api/templates/:id cuando venga updateId, edición de plantilla) —
+        // el payload (nombre, categoría, miniatura, templateJSON) ya es lo que
+        // recibiría el endpoint; basta con subir esta misma estructura.
+        // Si el evento trae updateId, se ACTUALIZA la plantilla existente
+        // (conservando su fecha de creación) en lugar de crear una nueva.
+        const existing = detail?.updateId
+          ? listSavedTemplates().find((item) => item.id === detail.updateId)
+          : undefined;
+        // Guardado con reintento: si la cuota se agota, se reintenta una vez
+        // con una miniatura mínima (JPEG 1x). Si aún así falla, el problema
+        // son los datos embebidos del JSON (p.ej. imágenes del usuario muy
+        // grandes) o la cuota global agotada — se notifica a la UI.
+        const basePayload = {
+          id: detail?.updateId ?? crypto.randomUUID(),
           name: templateName,
           category: detail?.category?.trim() || 'General',
-          thumbnail,
-          createdAt: Date.now(),
+          createdAt: existing?.createdAt ?? Date.now(),
           templateJSON: { version: canvasJSON.version, objects: designObjects },
-        });
+        };
+        let saved = existing
+          ? updateTemplateInStorage({ ...basePayload, thumbnail })
+          : saveTemplateToStorage({ ...basePayload, thumbnail });
+
+        if (!saved) {
+          console.warn('⚠️ [PLANTILLA] Cuota agotada; reintentando con miniatura mínima');
+          thumbnail = generateThumbnail('jpeg', 1, 0.7);
+          saved = existing
+            ? updateTemplateInStorage({ ...basePayload, thumbnail })
+            : saveTemplateToStorage({ ...basePayload, thumbnail });
+        }
+
+        if (!saved) {
+          const jsonChars = JSON.stringify(basePayload.templateJSON).length;
+          console.error(
+            `❌ [PLANTILLA] No se pudo guardar ni con miniatura mínima. ` +
+              `Tamaño del JSON de diseño: ~${Math.round(jsonChars / 1024)}KB. ` +
+              `Considere eliminar plantillas antiguas o migrar a un endpoint /api/templates.`,
+          );
+        }
 
         // 4. Notificar a la barra lateral para refrescar la lista.
         window.dispatchEvent(

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import type { TextOptions } from '@/types/product';
-import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2 } from 'lucide-react';
+import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2, Pencil } from 'lucide-react';
 import { MOCK_TEMPLATES, type MockTemplate } from '@/src/data/mockTemplates';
 import { listSavedTemplates, deleteSavedTemplate, type SavedTemplate } from '@/src/utils/templateStorage';
 
@@ -25,6 +25,9 @@ export default function SidebarPanel() { // Removed onAddShape prop
   const [templateName, setTemplateName] = useState('');
   const [templateCategory, setTemplateCategory] = useState('Cumpleaños');
   const [templateFeedback, setTemplateFeedback] = useState<string | null>(null);
+  // Plantilla en modo edición (sólo las guardadas en localStorage son editables).
+  // Cuando no es null, el botón "Guardar" se convierte en "Actualizar".
+  const [editingTemplate, setEditingTemplate] = useState<SavedTemplate | null>(null);
   // Filtro de categorías del tab "Plantillas" ("Todas" muestra el catálogo completo).
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('Todas');
   const TEMPLATE_CATEGORIES = ['Todas', 'Cumpleaños', 'Parejas / Aniversario', 'Bodas', 'Corporativo'];
@@ -55,6 +58,7 @@ export default function SidebarPanel() { // Removed onAddShape prop
       if (ok) {
         setTemplateFeedback(`✅ Plantilla "${(event as CustomEvent<{ name?: string }>).detail?.name}" guardada`);
         setTemplateName('');
+        setEditingTemplate(null); // Fin del modo edición (crear o actualizar).
       } else {
         setTemplateFeedback('⚠️ No se pudo guardar (¿canvas vacío o cuota agotada?)');
       }
@@ -65,9 +69,37 @@ export default function SidebarPanel() { // Removed onAddShape prop
   }, []);
 
   // Activa el "modo guardar" en el canvas: el editor serializa el diseño
-  // actual (sin mockup) y lo persiste vía handleSaveAsTemplate.
+  // actual (sin mockup) y lo persiste vía handleSaveAsTemplate. Si hay una
+  // plantilla en edición, el evento lleva updateId para ACTUALIZAR en vez de
+  // crear una nueva.
   const handleSaveAsTemplateRequest = (name: string, category: string) => {
-    window.dispatchEvent(new CustomEvent('editor:save-as-template', { detail: { name, category } }));
+    window.dispatchEvent(
+      new CustomEvent('editor:save-as-template', {
+        detail: { name, category, updateId: editingTemplate?.id },
+      }),
+    );
+  };
+
+  // Entra en modo edición: carga el diseño en el canvas, precarga nombre y
+  // categoría en el formulario y hace scroll visual al panel de guardado.
+  const handleEditTemplate = (template: MockTemplate & { saved?: SavedTemplate }) => {
+    if (!template.saved) return; // Las plantillas mock (código) no son editables.
+    handleSelectTemplate(template); // Carga el JSON en el canvas (textos editables).
+    setTemplateName(template.saved.name);
+    setTemplateCategory(template.saved.category);
+    setEditingTemplate(template.saved);
+    setTemplateFeedback('✏️ Editando: ' + template.saved.name + ' — modifica el diseño y pulsa Actualizar');
+    setTimeout(() => setTemplateFeedback(null), 4000);
+  };
+
+  // Elimina una plantilla guardada con confirmación previa.
+  const handleDeleteTemplate = (saved: SavedTemplate) => {
+    if (!window.confirm(`¿Eliminar la plantilla "${saved.name}"? Esta acción no se puede deshacer.`)) return;
+    setSavedTemplates(deleteSavedTemplate(saved.id));
+    if (editingTemplate?.id === saved.id) {
+      setEditingTemplate(null);
+      setTemplateName('');
+    }
   };
 
   /**
@@ -158,10 +190,12 @@ export default function SidebarPanel() { // Removed onAddShape prop
         <div className="space-y-3">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Plantillas prediseñadas</p>
 
-          {/* Modo Administrador: guardar el diseño actual como plantilla.
-              TODO: cuando exista BD, este dispatch pasa a POST /api/templates. */}
-          <div className="space-y-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-2.5">
-            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Guardar diseño actual</p>
+          {/* Modo Administrador: guardar/actualizar el diseño actual como plantilla.
+              TODO: cuando exista BD, este dispatch pasa a POST (o PUT si es edición). */}
+          <div className={`space-y-2 rounded-xl border border-dashed p-2.5 ${editingTemplate ? 'border-slate-900 bg-slate-100' : 'border-slate-300 bg-slate-50'}`}>
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+              {editingTemplate ? `✏️ Editando: ${editingTemplate.name}` : 'Guardar diseño actual'}
+            </p>
             <input
               type="text"
               placeholder="Nombre de la plantilla..."
@@ -175,9 +209,10 @@ export default function SidebarPanel() { // Removed onAddShape prop
               className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-black"
             >
               <option value="Cumpleaños">Cumpleaños</option>
-              <option value="Parejas">Parejas</option>
-              <option value="General">General</option>
+              <option value="Parejas / Aniversario">Parejas / Aniversario</option>
+              <option value="Bodas">Bodas</option>
               <option value="Corporativo">Corporativo</option>
+              <option value="General">General</option>
             </select>
             <button
               type="button"
@@ -186,8 +221,20 @@ export default function SidebarPanel() { // Removed onAddShape prop
               className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Save size={13} />
-              Guardar como Plantilla
+              {editingTemplate ? 'Actualizar Plantilla' : 'Guardar como Plantilla'}
             </button>
+            {editingTemplate && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingTemplate(null);
+                  setTemplateName('');
+                }}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+              >
+                Cancelar edición
+              </button>
+            )}
             {templateFeedback && <p className="text-[11px] text-slate-600">{templateFeedback}</p>}
           </div>
 
@@ -218,16 +265,52 @@ export default function SidebarPanel() { // Removed onAddShape prop
                 selectedCategoryFilter === 'Todas' ? true : template.category === selectedCategoryFilter,
               )
               .map((template) => (
-              <button
+              <div
                 key={template.id}
-                type="button"
-                onClick={() => handleSelectTemplate(template)}
-                className="group relative w-full overflow-hidden rounded-xl border border-slate-200 text-left transition hover:border-slate-400 hover:shadow-sm"
+                className={`group relative overflow-hidden rounded-xl border text-left transition hover:shadow-sm ${
+                  editingTemplate?.id === template.saved?.id
+                    ? 'border-slate-900 ring-1 ring-slate-900'
+                    : 'border-slate-200 hover:border-slate-400'
+                }`}
               >
+                {/* Acciones de gestión (sólo plantillas guardadas): Editar
+                    carga el diseño en el canvas y precarga el formulario;
+                    Eliminar pide confirmación antes de borrar de localStorage. */}
+                {template.saved && (
+                  <div className="absolute right-1.5 top-1.5 z-10 flex gap-1">
+                    <button
+                      type="button"
+                      title="Editar plantilla"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditTemplate(template);
+                      }}
+                      className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 bg-white/90 text-slate-700 backdrop-blur transition hover:bg-slate-900 hover:text-white"
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      title="Eliminar plantilla"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteTemplate(template.saved!);
+                      }}
+                      className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 bg-white/90 text-slate-700 backdrop-blur transition hover:bg-red-600 hover:text-white"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleSelectTemplate(template)}
+                  className="block w-full text-left"
+                >
                 {/* Miniatura: dataURL real para plantillas guardadas; gradiente
                     simulado para los mocks de prueba. */}
                 {template.saved?.thumbnail ? (
-                  <img src={template.saved.thumbnail} alt={template.name} className="h-24 w-full object-cover" />
+                  <img src={template.saved.thumbnail} alt={template.name} className="h-24 w-full bg-slate-50 object-cover" />
                 ) : (
                   <div className={`flex h-20 items-center justify-center bg-gradient-to-br text-3xl ${template.accent}`}>
                     <span>{template.emoji}</span>
@@ -237,31 +320,15 @@ export default function SidebarPanel() { // Removed onAddShape prop
                   <p className="text-sm font-semibold text-slate-800">{template.name}</p>
                   <p className="text-[11px] text-slate-500">{template.description}</p>
                 </div>
-              </button>
+                </button>
+              </div>
             ))}
           </div>
 
-          {savedTemplates.length > 0 && (
-            <div className="space-y-1">
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Mis plantillas guardadas</p>
-              {savedTemplates.map((saved) => (
-                <div key={saved.id} className="flex items-center justify-between rounded-lg border border-slate-200 px-2.5 py-1.5">
-                  <span className="truncate text-xs text-slate-700">{saved.name} · {saved.category}</span>
-                  <button
-                    type="button"
-                    title="Eliminar plantilla"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSavedTemplates(deleteSavedTemplate(saved.id));
-                    }}
-                    className="text-slate-400 transition hover:text-red-500"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* Las plantillas guardadas ya viven en la lista principal de tarjetas
+              (allTemplates = mocks + localStorage), así que no hay sección
+              redundante de texto plano abajo. La eliminación se hace desde los
+              botones 🗑️ de cada tarjeta. */}
           <p className="text-[11px] italic text-slate-400">
             Las plantillas reemplazan el diseño actual; el producto y la zona segura se conservan.
           </p>
