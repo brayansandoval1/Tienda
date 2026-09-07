@@ -5,6 +5,7 @@ import type { TextOptions } from '@/types/product';
 import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2, Pencil } from 'lucide-react';
 import { MOCK_TEMPLATES, type MockTemplate } from '@/src/data/mockTemplates';
 import { listSavedTemplates, deleteSavedTemplate, type SavedTemplate } from '@/src/utils/templateStorage';
+import type { Product } from '@/src/store/useProductStore';
 
 const forms = [
   { label: 'Cuadrado', icon: Square, shape: 'rect' as const },
@@ -14,7 +15,7 @@ const forms = [
   { label: 'Corazón', icon: Heart, shape: 'heart' as const }
 ];
 
-export default function SidebarPanel() { // Removed onAddShape prop
+export default function SidebarPanel({ product }: { product?: Product }) { // Removed onAddShape prop
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
   const [iconQuery, setIconQuery] = useState('');
   const [iconResults, setIconResults] = useState<string[]>([]);
@@ -42,12 +43,21 @@ export default function SidebarPanel() { // Removed onAddShape prop
       name: saved.name,
       description: new Date(saved.createdAt).toLocaleDateString(),
       category: saved.category,
+      productType: saved.productType,
       emoji: '⭐',
       accent: 'from-slate-100 to-slate-200',
       templateJSON: saved.templateJSON,
       saved,
     })),
   ];
+
+  // Las plantillas sólo son visibles/aplicables en el producto para el que
+  // fueron diseñadas (misma categoría de producto). Las plantillas sin
+  // `productType` (mocks por defecto) se consideran universales.
+  const currentProductType = product?.category ?? '';
+  const templatesForProduct = allTemplates.filter(
+    (template) => !template.productType || template.productType === currentProductType,
+  );
 
   // Carga inicial + refresco cuando el editor guarda una plantilla nueva.
   useEffect(() => {
@@ -258,12 +268,19 @@ export default function SidebarPanel() { // Removed onAddShape prop
               ))}
             </div>
 
-            {/* Sólo se renderizan las tarjetas cuya categoría coincide con el
-                filtro; "Todas" muestra el catálogo completo. */}
-            {allTemplates
+            {/* Sólo se renderizan las plantillas del producto actual y cuya
+                categoría coincide con el filtro; "Todas" muestra todas las
+                categorías disponibles para este producto. */}
+            {templatesForProduct.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-500">
+                No hay plantillas disponibles para este producto aún.
+              </div>
+            ) : (
+            allTemplates
               .filter((template) =>
                 selectedCategoryFilter === 'Todas' ? true : template.category === selectedCategoryFilter,
               )
+              .filter((template) => templatesForProduct.includes(template))
               .map((template) => (
               <div
                 key={template.id}
@@ -322,7 +339,8 @@ export default function SidebarPanel() { // Removed onAddShape prop
                 </div>
                 </button>
               </div>
-            ))}
+            ))
+            )}
           </div>
 
           {/* Las plantillas guardadas ya viven en la lista principal de tarjetas

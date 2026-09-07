@@ -56,7 +56,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
       <div className="flex-1 flex flex-row overflow-hidden relative">
         {/* Panel Izquierdo: herramientas de diseño */}
         <div className="w-80 h-full bg-white border-r border-slate-200 flex flex-col z-10 overflow-hidden">
-          <SidebarPanel />
+          <SidebarPanel product={currentProduct} />
         </div>
 
         {/* Canvas Central (Lienzo) */}

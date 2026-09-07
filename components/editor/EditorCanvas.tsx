@@ -2423,6 +2423,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           id: detail?.updateId ?? crypto.randomUUID(),
           name: templateName,
           category: detail?.category?.trim() || 'General',
+          // Tipo de producto activo: la plantilla sólo será visible/aplicable
+          // en el editor para productos de este mismo tipo.
+          productType: activeProduct.category || activeProduct.id,
           createdAt: existing?.createdAt ?? Date.now(),
           templateJSON: { version: canvasJSON.version, objects: designObjects },
         };

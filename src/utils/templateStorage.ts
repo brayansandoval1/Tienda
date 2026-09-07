@@ -12,6 +12,8 @@ export interface SavedTemplate {
   category: string;
   /** Miniatura dataURL (Base64) generada desde el canvas. */
   thumbnail: string;
+  /** Tipo/categoría del producto para el que fue diseñada (ej. 'Funda'). */
+  productType?: string;
   createdAt: number;
   /** Documento compatible con Fabric.js: { version, objects } sin mockup. */
   templateJSON: {

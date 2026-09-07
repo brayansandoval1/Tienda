@@ -16,6 +16,11 @@ export interface MockTemplate {
   name: string;
   description: string;
   category: string;
+  /**
+   * Tipo de producto para el que fue diseñada (ej. 'Funda', 'Termo').
+   * Las plantillas mock no lo definen y se consideran universales.
+   */
+  productType?: string;
   emoji: string;
   /** Clases Tailwind para la miniatura de la tarjeta. */
   accent: string;
