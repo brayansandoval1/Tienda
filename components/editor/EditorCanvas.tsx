@@ -494,6 +494,16 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           lockRotation: true,
           hasControls: false,
           hasBorders: false,
+          // Sombra suave tipo "drop-shadow-2xl": da profundidad 3D al producto
+          // sobre el fondo del Canvas (nivel Zazzle). `nonScaling` mantiene el
+          // blur constante aunque el mockup escale con el zoom-to-fit.
+          shadow: new fabric.Shadow({
+            color: 'rgba(15, 23, 42, 0.30)',
+            blur: 40,
+            offsetX: 0,
+            offsetY: 18,
+            nonScaling: true,
+          }),
         });
         console.log('📐 [MOCKUP AJUSTADO]', { naturalWidth, naturalHeight, scale, renderedBounds: activeMockupBounds });
       };
@@ -953,6 +963,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           stroke: '#22c55e',
           strokeDashArray: [6, 6],
           strokeWidth: 2,
+          // Oculta por defecto: la guía sólo aparece mientras el usuario
+          // interactúa con el lienzo (ver flashGuides más abajo).
+          opacity: 0,
           // PROPIEDADES CLAVE PARA QUE NO BLOQUEE EL MOUSE:
           selectable: false,
           evented: false,
@@ -983,6 +996,35 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         applyPrintAreaClipping(activeView);
         c.requestRenderAll();
       };
+
+      // ── Guías visibles sólo durante la interacción ──────────────────────
+      // La zona segura punteada se muestra cuando el usuario toca/mueve objetos
+      // en el lienzo y se desvanece tras 1.5s sin actividad (vista limpia tipo
+      // Zazzle cuando se observan las vistas previas finales).
+      let guideHideTimer: ReturnType<typeof setTimeout> | null = null;
+      const setGuidesOpacity = (opacity: number) => {
+        const c = fabricCanvasRef.current;
+        if (!c) return;
+        c.getObjects()
+          .filter((obj: any) => obj?.isGuideLine)
+          .forEach((obj: any) => obj.set('opacity', opacity));
+        c.requestRenderAll();
+      };
+      const flashGuides = () => {
+        setGuidesOpacity(1);
+        if (guideHideTimer) clearTimeout(guideHideTimer);
+        guideHideTimer = setTimeout(() => setGuidesOpacity(0), 1500);
+      };
+      // Interacción: cualquier toque, arrastre, redimensionado o cambio de
+      // selección vuelve a encender la guía.
+      canvas.on('mouse:down', flashGuides);
+      canvas.on('object:moving', flashGuides);
+      canvas.on('object:scaling', flashGuides);
+      canvas.on('object:rotating', flashGuides);
+      canvas.on('object:modified', flashGuides);
+      canvas.on('selection:created', flashGuides);
+      canvas.on('selection:updated', flashGuides);
+      canvas.on('selection:cleared', flashGuides);
 
       // El fondo impreso es un objeto Fabric real: a diferencia de la guía,
       // permanece incluido al exportar y se puede guardar por cada vista.
@@ -1019,10 +1061,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           isDesignBackground: true,
         } as any);
         c.add(background);
-        if (safeZoneRef.current) c.sendToBack(safeZoneRef.current);
+        // Orden de capas correcto (de fondo a frente):
+        //   mockup → guía (zona segura) → fondo de color → arte del usuario.
+        // La secuencia anterior dejaba el fondo DEBAJO del mockup opaco, por
+        // lo que el color nunca era visible y parecía "no cambiarse".
         c.sendToBack(background);
-        // La guía debe seguir detrás del fondo, y el fondo detrás del arte.
         if (safeZoneRef.current) c.sendToBack(safeZoneRef.current);
+        c.getObjects()
+          .filter((obj: any) => obj?.isMockup)
+          .forEach((obj: any) => c.sendToBack(obj));
         c.requestRenderAll();
       };
 
@@ -1238,6 +1285,13 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // Persistir los objetos de la cara actual antes de cambiar de mockup.
         canvasDataRef.current[currentViewIdRef.current] = snapshotCurrentObjects();
         isUpdatingHistory.current = true;
+        // Cada vista tiene su diseño INDEPENDIENTE: tras guardar el snapshot,
+        // se eliminan del lienzo los objetos del usuario (y el fondo de color
+        // de esta vista, que se re-aplica al volver). Sin esto, el diseño de
+        // la vista anterior se arrastraba a la vista nueva.
+        c.getObjects()
+          .filter((obj: any) => !obj.isMockup && !obj.isGuide && !obj.isGuideLine)
+          .forEach((obj: any) => c.remove(obj));
         const nextView = getView(viewId);
         activeView = nextView;
         console.log('🔍 [EDITOR - VISTA ACTIVA]:', {
