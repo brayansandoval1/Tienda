@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import type { TextOptions } from '@/types/product';
 import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2, Pencil } from 'lucide-react';
 import { MOCK_TEMPLATES, type MockTemplate } from '@/src/data/mockTemplates';
-import { listSavedTemplates, deleteSavedTemplate, type SavedTemplate } from '@/src/utils/templateStorage';
+import { listSavedTemplates, deleteSavedTemplate, getCategoryIcon, listTemplateCategories, saveTemplateCategories, saveTemplateIcon, DEFAULT_TEMPLATE_CATEGORIES, type SavedTemplate } from '@/src/utils/templateStorage';
 import type { Product } from '@/src/store/useProductStore';
 
 const forms = [
@@ -31,7 +31,33 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   const [editingTemplate, setEditingTemplate] = useState<SavedTemplate | null>(null);
   // Filtro de categorías del tab "Plantillas" ("Todas" muestra el catálogo completo).
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('Todas');
-  const TEMPLATE_CATEGORIES = ['Todas', 'Cumpleaños', 'Parejas / Aniversario', 'Bodas', 'Corporativo'];
+
+  // Categorías de plantillas creadas por el administrador (persistidas en
+  // localStorage): alimentan tanto el select del formulario como los chips
+  // de filtro superiores.
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  // Cuando el admin elige "Nueva categoría...", se muestra este input y la
+  // categoría escrita pasa a ser la seleccionada del formulario.
+  const [isNewCategoryMode, setIsNewCategoryMode] = useState(false);
+  const [newCategoryValue, setNewCategoryValue] = useState('');
+  // Emoji que se asignará a la categoría que se está creando (opcional).
+  const [newCategoryIcon, setNewCategoryIcon] = useState('');
+  // Modo "cambiar ícono" de la categoría seleccionada en el formulario.
+  const [isIconEditMode, setIsIconEditMode] = useState(false);
+  const [iconValue, setIconValue] = useState('');
+
+  // Lista dinámica de categorías: base por defecto + creadas por el admin +
+  // cualquier categoría usada por plantillas guardadas (aunque no esté
+  // registrada en el catálogo del admin). "Todas" es pseudo-filtro, no categoría.
+  const TEMPLATE_CATEGORIES = [
+    'Todas',
+    ...Array.from(new Set([
+      ...DEFAULT_TEMPLATE_CATEGORIES,
+      ...customCategories,
+      ...savedTemplates.map((saved) => saved.category),
+      'General',
+    ])),
+  ];
 
   // Lista combinada: mocks de prueba + plantillas guardadas en localStorage
   // (TODO: cuando exista BD, MOCK_TEMPLATES se sustituye por GET /api/templates
@@ -62,6 +88,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   // Carga inicial + refresco cuando el editor guarda una plantilla nueva.
   useEffect(() => {
     setSavedTemplates(listSavedTemplates());
+    setCustomCategories(listTemplateCategories()); // Categorías creadas por el admin.
     const handleSaved = (event: Event) => {
       const ok = (event as CustomEvent<{ ok?: boolean; name?: string }>).detail?.ok;
       setSavedTemplates(listSavedTemplates());
@@ -82,7 +109,29 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   // actual (sin mockup) y lo persiste vía handleSaveAsTemplate. Si hay una
   // plantilla en edición, el evento lleva updateId para ACTUALIZAR en vez de
   // crear una nueva.
-  const handleSaveAsTemplateRequest = (name: string, category: string) => {
+  // Confirma la categoría nueva que se está escribiendo: la selecciona en el
+  // formulario, la persiste (chips de filtro) y le asigna su ícono.
+  const confirmNewCategory = () => {
+    const category = newCategoryValue.trim();
+    if (!category) return;
+    setTemplateCategory(category);
+    setIsNewCategoryMode(false);
+    setCustomCategories(saveTemplateCategories([category]));
+    saveTemplateIcon(category, newCategoryIcon.trim() || '⭐');
+  };
+
+  const handleSaveAsTemplateRequest = (name: string, categoryArg?: string) => {
+    // Categoría final: si se está escribiendo una nueva, se usa esa (aunque no
+    // se haya pulsado OK); si no, la del select. Evita que al guardar directo
+    // se use una categoría vieja como 'Cumpleaños'.
+    const category = (isNewCategoryMode ? newCategoryValue : categoryArg ?? templateCategory).trim() || 'Cumpleaños';
+    if (category !== '__new__') {
+      // Registra la categoría en localStorage para que aparezca en los chips
+      // de filtro y en futuros selects (merge, sin duplicados).
+      if (!DEFAULT_TEMPLATE_CATEGORIES.includes(category) && category !== 'General') {
+        setCustomCategories(saveTemplateCategories([category]));
+      }
+    }
     window.dispatchEvent(
       new CustomEvent('editor:save-as-template', {
         detail: { name, category, updateId: editingTemplate?.id },
@@ -94,9 +143,22 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   // categoría en el formulario y hace scroll visual al panel de guardado.
   const handleEditTemplate = (template: MockTemplate & { saved?: SavedTemplate }) => {
     if (!template.saved) return; // Las plantillas mock (código) no son editables.
-    handleSelectTemplate(template); // Carga el JSON en el canvas (textos editables).
+    // Flujo de EDICIÓN (distinto al de aplicación): carga el JSON directamente
+    // en el canvas SIN pedir confirmación de reemplazo al cliente (force:true)
+    // y activa el modo edición del formulario.
+    window.dispatchEvent(
+      new CustomEvent('editor:apply-template', {
+        detail: {
+          templateId: template.id,
+          objects: template.templateJSON.objects,
+          force: true,
+        },
+      }),
+    );
     setTemplateName(template.saved.name);
     setTemplateCategory(template.saved.category);
+    setIsNewCategoryMode(false);
+    setNewCategoryValue('');
     setEditingTemplate(template.saved);
     setTemplateFeedback('✏️ Editando: ' + template.saved.name + ' — modifica el diseño y pulsa Actualizar');
     setTimeout(() => setTemplateFeedback(null), 4000);
@@ -213,17 +275,119 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
               onChange={(e) => setTemplateName(e.target.value)}
               className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-black"
             />
-            <select
-              value={templateCategory}
-              onChange={(e) => setTemplateCategory(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-black"
-            >
-              <option value="Cumpleaños">Cumpleaños</option>
-              <option value="Parejas / Aniversario">Parejas / Aniversario</option>
-              <option value="Bodas">Bodas</option>
-              <option value="Corporativo">Corporativo</option>
-              <option value="General">General</option>
-            </select>
+            {isNewCategoryMode ? (
+              <div className="space-y-1.5">
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Nombre de la nueva categoría..."
+                    value={newCategoryValue}
+                    onChange={(e) => setNewCategoryValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newCategoryValue.trim()) confirmNewCategory();
+                    }}
+                    className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-black"
+                  />
+                  <button
+                    type="button"
+                    title="Confirmar categoría"
+                    onClick={confirmNewCategory}
+                    className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                  >
+                    OK
+                  </button>
+                </div>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    placeholder="Ícono (emoji), ej: 🎉"
+                    value={newCategoryIcon}
+                    onChange={(e) => setNewCategoryIcon(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-black"
+                  />
+                  <span className="flex w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-base">
+                    {newCategoryIcon.trim() || '⭐'}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400">Enter u OK confirma. El ícono es opcional (default ⭐).</p>
+              </div>
+            ) : isIconEditMode ? (
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Nuevo ícono (emoji)..."
+                  value={iconValue}
+                  onChange={(e) => setIconValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && templateCategory) {
+                      saveTemplateIcon(templateCategory, iconValue);
+                      setIsIconEditMode(false);
+                      setTemplateFeedback(`🎨 Ícono de "${templateCategory}" actualizado`);
+                      setTimeout(() => setTemplateFeedback(null), 3000);
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-black"
+                />
+                <button
+                  type="button"
+                  title="Guardar ícono"
+                  onClick={() => {
+                    if (!templateCategory) return;
+                    saveTemplateIcon(templateCategory, iconValue);
+                    setIsIconEditMode(false);
+                    setTemplateFeedback(`🎨 Ícono de "${templateCategory}" actualizado`);
+                    setTimeout(() => setTemplateFeedback(null), 3000);
+                  }}
+                  className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                >
+                  OK
+                </button>
+                <button
+                  type="button"
+                  title="Cancelar"
+                  onClick={() => setIsIconEditMode(false)}
+                  className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-400 transition hover:text-slate-700"
+                >
+                  ✕
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-1.5">
+                <select
+                  value={templateCategory}
+                  onChange={(e) => {
+                    if (e.target.value === '__new__') {
+                      setIsNewCategoryMode(true);
+                      setNewCategoryValue('');
+                      setNewCategoryIcon('');
+                    } else {
+                      setTemplateCategory(e.target.value);
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-black"
+                >
+                  {TEMPLATE_CATEGORIES.filter((category) => category !== 'Todas').map((category) => (
+                    <option key={category} value={category}>
+                      {getCategoryIcon(category)} {category}
+                    </option>
+                  ))}
+                  <option value="__new__">✏️ Nueva categoría…</option>
+                </select>
+                <button
+                  type="button"
+                  title={`Cambiar ícono de "${templateCategory}"`}
+                  onClick={() => {
+                    setIconValue(getCategoryIcon(templateCategory) === '⭐' ? '' : getCategoryIcon(templateCategory));
+                    setIsIconEditMode(true);
+                  }}
+                  className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm transition hover:border-slate-300"
+                >
+                  🎨
+                </button>
+              </div>
+            )}
             <button
               type="button"
               onClick={() => handleSaveAsTemplateRequest(templateName, templateCategory)}
@@ -263,6 +427,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
                       : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'
                   }`}
                 >
+                  {category !== 'Todas' && <span className="mr-1">{getCategoryIcon(category)}</span>}
                   {category}
                 </button>
               ))}
@@ -324,15 +489,34 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
                   onClick={() => handleSelectTemplate(template)}
                   className="block w-full text-left"
                 >
-                {/* Miniatura: dataURL real para plantillas guardadas; gradiente
-                    simulado para los mocks de prueba. */}
-                {template.saved?.thumbnail ? (
-                  <img src={template.saved.thumbnail} alt={template.name} className="h-24 w-full bg-slate-50 object-cover" />
-                ) : (
-                  <div className={`flex h-20 items-center justify-center bg-gradient-to-br text-3xl ${template.accent}`}>
-                    <span>{template.emoji}</span>
-                  </div>
-                )}
+                {/* Vista previa: ícono representativo grande de la categoría
+                    (ej. 🎂, ❤️) en lugar del screenshot miniaturizado del
+                    canvas; se usa el `icon` guardado, con fallback al mapa
+                    CATEGORY_ICONS para plantillas guardadas antes del cambio.
+                    El clic sigue cargando el JSON completo en el canvas. */}
+                {(() => {
+                  // Prioridad: ícono actual de la categoría (respeta cambios
+                  // del admin en tiempo real) → ícono guardado → emoji mock.
+                  const categoryIcon = template.saved ? getCategoryIcon(template.saved.category) : template.emoji;
+                  const previewIcon =
+                    categoryIcon !== '⭐' ? categoryIcon : template.saved?.icon ?? template.emoji;
+                  // Fallback: si ni la categoría ni la plantilla tienen ícono,
+                  // muestra su miniatura dataURL.
+                  if (previewIcon === '⭐' && template.saved?.thumbnail) {
+                    return (
+                      <img
+                        src={template.saved.thumbnail}
+                        alt={template.name}
+                        className="h-24 w-full bg-slate-50 object-cover"
+                      />
+                    );
+                  }
+                  return (
+                    <div className={`flex h-24 items-center justify-center bg-gradient-to-br text-5xl ${template.accent}`}>
+                      <span className="drop-shadow-sm">{previewIcon}</span>
+                    </div>
+                  );
+                })()}
                 <div className="px-3 py-2">
                   <p className="text-sm font-semibold text-slate-800">{template.name}</p>
                   <p className="text-[11px] text-slate-500">{template.description}</p>

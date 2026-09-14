@@ -6,7 +6,7 @@ import type { TextOptions } from '../../types/product';
 import type { ColorVariant, Product, ProductOptionValue, ProductView } from '@/src/store/useProductStore';
 import type { SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
 import Product3DModal from '@/components/editor/Product3DModal';
-import { saveTemplateToStorage, updateTemplateInStorage, listSavedTemplates } from '@/src/utils/templateStorage';
+import { saveTemplateToStorage, updateTemplateInStorage, listSavedTemplates, getCategoryIcon } from '@/src/utils/templateStorage';
 
 type PrintArea = ProductView['printArea'];
 const ADMIN_BASE_SIZE = 800;
@@ -2224,17 +2224,19 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       // canvas.loadFromJSON, preservando el mockup (backgroundImage) y las
       // guías de la zona segura del producto activo.
       handleApplyTemplate = (e: Event) => {
-        const detail = (e as CustomEvent<{ objects?: Record<string, unknown>[] }>).detail;
+        const detail = (e as CustomEvent<{ objects?: Record<string, unknown>[]; force?: boolean }>).detail;
         const canvas = fabricCanvasRef.current;
         const incomingObjects = detail?.objects;
         if (!canvas || !Array.isArray(incomingObjects)) return;
 
         // Confirmación: si el usuario ya tiene elementos en el canvas, pedir
         // consentimiento antes de reemplazar su diseño por la plantilla.
+        // EXCEPCIÓN: el flujo de EDICIÓN del admin (force:true, botón ✏️)
+        // carga el JSON directamente sin preguntar al cliente.
         const hasUserDesign = canvas
           .getObjects()
           .some((object: any) => !object.isGuide && !object.isDesignBackground);
-        if (hasUserDesign && !window.confirm('¿Deseas reemplazar tu diseño actual por esta plantilla?')) {
+        if (hasUserDesign && !detail?.force && !window.confirm('¿Deseas reemplazar tu diseño actual por esta plantilla?')) {
           return;
         }
 
@@ -2423,6 +2425,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           id: detail?.updateId ?? crypto.randomUUID(),
           name: templateName,
           category: detail?.category?.trim() || 'General',
+          // Ícono representativo de la categoría (ej. '🎂' Cumpleaños): se usa
+          // directamente como vista previa de la tarjeta en la sidebar.
+          icon: getCategoryIcon(detail?.category?.trim()),
           // Tipo de producto activo: la plantilla sólo será visible/aplicable
           // en el editor para productos de este mismo tipo.
           productType: activeProduct.category || activeProduct.id,

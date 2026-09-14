@@ -14,6 +14,8 @@ export interface SavedTemplate {
   thumbnail: string;
   /** Tipo/categoría del producto para el que fue diseñada (ej. 'Funda'). */
   productType?: string;
+  /** Ícono/emoji representativo según la categoría (ej. '🎂' para Cumpleaños). */
+  icon?: string;
   createdAt: number;
   /** Documento compatible con Fabric.js: { version, objects } sin mockup. */
   templateJSON: {
@@ -23,6 +25,85 @@ export interface SavedTemplate {
 }
 
 const STORAGE_KEY = 'editor_templates';
+
+/**
+ * Mapa de íconos representativos por categoría de plantilla.
+ * Se usan como vista previa grande en las tarjetas (en lugar del screenshot
+ * miniaturizado del canvas). Cualquier categoría desconocida cae en '⭐'.
+ * TODO: si luego se usan URLs de imagen, basta cambiar el valor por la URL
+ * (el renderizado ya soporta emoji/texto; para URLs se usaría <img src>).
+ */
+export const CATEGORY_ICONS: Record<string, string> = {
+  'Cumpleaños': '🎂',
+  'Parejas / Aniversario': '❤️',
+  'Bodas': '💍',
+  'Corporativo': '🏢',
+  'General': '⭐',
+};
+
+/** Ícono representativo para una categoría, con fallback universal.
+ *  Consulta primero los íconos personalizados guardados por el admin. */
+export function getCategoryIcon(category?: string): string {
+  if (!category) return '⭐';
+  return listTemplateIcons()[category] ?? CATEGORY_ICONS[category] ?? '⭐';
+}
+
+const ICONS_KEY = 'editor_template_icons';
+
+/** Mapa de íconos personalizados (categoría → emoji) creados por el admin. */
+export function listTemplateIcons(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(ICONS_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Guarda/cambia el ícono de una categoría y devuelve el mapa actualizado. */
+export function saveTemplateIcon(category: string, icon: string): Record<string, string> {
+  const icons = listTemplateIcons();
+  icons[category] = icon.trim() || '⭐';
+  try {
+    localStorage.setItem(ICONS_KEY, JSON.stringify(icons));
+  } catch (error) {
+    console.warn('⚠️ No se pudo guardar el ícono de la categoría:', error);
+  }
+  return icons;
+}
+
+/** Categorías base por defecto (más 'General' para plantillas sin categoría). */
+export const DEFAULT_TEMPLATE_CATEGORIES = ['Cumpleaños', 'Parejas / Aniversario', 'Bodas', 'Corporativo'];
+
+const CATEGORIES_KEY = 'editor_template_categories';
+
+/**
+ * Categorías de plantillas creadas por el administrador (persistidas aparte
+ * para que sigan existiendo aunque no haya plantillas que las usen aún).
+ */
+export function listTemplateCategories(): string[] {
+  try {
+    const raw = localStorage.getItem(CATEGORIES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Persiste las categorías del administrador (merge con las existentes). */
+export function saveTemplateCategories(categories: string[]): string[] {
+  const merged = Array.from(new Set([...listTemplateCategories(), ...categories]))
+    .filter((category) => category.trim())
+    .sort((a, b) => a.localeCompare(b, 'es'));
+  try {
+    localStorage.setItem(CATEGORIES_KEY, JSON.stringify(merged));
+  } catch (error) {
+    console.warn('⚠️ No se pudieron guardar las categorías de plantillas:', error);
+  }
+  return merged;
+}
 
 export function listSavedTemplates(): SavedTemplate[] {
   try {
