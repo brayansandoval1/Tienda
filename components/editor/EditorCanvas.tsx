@@ -131,6 +131,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleOptionsChanged: (e: Event) => void,
       handleApplyTemplate: (e: Event) => void,
       handleExportTemplate: (e: Event) => void;
+    let handleReplaceText: ((e: Event) => void) | undefined = undefined;
 
     // Carga dinámica de Fabric solo en el cliente
     import('fabric').then((fabricModule) => {
@@ -292,6 +293,40 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         historyRef.current.push(JSON.stringify(jsonState));
         redoStackRef.current = [];
         updateHistoryButtons();
+      };
+
+      // ── Panel de textos tipo template ────────────────────────────────────
+      // Cada objeto de texto recibe un ID de sesión (__sid). La barra lateral
+      // escucha 'editor:text-list' para renderizar un input por texto y puede
+      // reemplazarlos sin tocar el lienzo vía 'editor:replace-text'.
+      let sidCounter = 0;
+      const emitTextList = () => {
+        const c = fabricCanvasRef.current;
+        if (!c) return;
+        const texts = c
+          .getObjects()
+          .filter((obj: any) => !obj.isMockup && !obj.isGuide && !obj.isGuideLine && !obj.isDesignBackground)
+          .filter((obj: any) => typeof obj.text === 'string')
+          .map((obj: any) => {
+            if (!obj.__sid) {
+              sidCounter += 1;
+              obj.__sid = `txt-${sidCounter}-${Date.now().toString(36)}`;
+            }
+            return { id: obj.__sid, text: obj.text ?? '' };
+          });
+        window.dispatchEvent(new CustomEvent('editor:text-list', { detail: { texts } }));
+      };
+
+      const handleReplaceText = (e: Event) => {
+        const c = fabricCanvasRef.current;
+        const detail = (e as CustomEvent<{ id?: string; text?: string }>).detail;
+        if (!c || !detail?.id || typeof detail.text !== 'string') return;
+        const target = c.getObjects().find((obj: any) => obj.__sid === detail.id);
+        if (!target || typeof (target as any).text !== 'string') return;
+        (target as any).set({ text: detail.text });
+        (target as any).setCoords();
+        c.requestRenderAll();
+        emitTextList();
       };
 
       let activeProduct: Product = initialProduct;
@@ -1329,6 +1364,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         if (safeZoneRef.current) c.sendToBack(safeZoneRef.current);
         c.requestRenderAll();
         finishViewSwitch(viewId);
+        // Refresca el panel de textos de la sidebar para la vista cargada.
+        emitTextList();
       };
       // @ts-ignore ref assignment for React 19 readonly typing
       (switchViewRef as any).current = switchView;
@@ -2349,7 +2386,10 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           window.dispatchEvent(
             new CustomEvent('editor:selection-changed', { detail: { selectedObject: null } }),
           );
-          if (typeof saveState === 'function') saveState();
+                    if (typeof saveState === 'function') saveState();
+          // Refresca el panel de textos de la sidebar para que aparezcan los
+          // inputs de reemplazo rápido de los textos cargados por la plantilla.
+          emitTextList();
         });
       };
 
@@ -2543,11 +2583,19 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:option-mockup', handleOptionMockup);
       window.addEventListener('editor:options-changed', handleOptionsChanged);
       window.addEventListener('editor:apply-template', handleApplyTemplate);
+      window.addEventListener('editor:replace-text', handleReplaceText);
+      // Lista inicial de textos para la sidebar.
+      emitTextList();
       window.addEventListener('editor:save-as-template', handleExportTemplate);
 
       canvas.on('object:added', saveState);
       canvas.on('object:modified', saveState);
       canvas.on('object:removed', saveState);
+      // Panel de textos: refrescar la lista de la sidebar al añadir/eliminar
+      // objetos o al escribir directamente sobre un texto en el lienzo.
+      canvas.on('object:added', emitTextList);
+      canvas.on('object:removed', emitTextList);
+      canvas.on('text:changed', emitTextList);
     });
 
     return () => {
@@ -2602,6 +2650,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleExportTemplate) {
         window.removeEventListener('editor:save-as-template', handleExportTemplate);
+      }
+      if (handleReplaceText) {
+        window.removeEventListener('editor:replace-text', handleReplaceText);
       }
       if (handleStartCrop) {
         window.removeEventListener('editor:start-crop', handleStartCrop);

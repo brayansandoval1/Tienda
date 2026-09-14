@@ -40,6 +40,28 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   // categoría escrita pasa a ser la seleccionada del formulario.
   const [isNewCategoryMode, setIsNewCategoryMode] = useState(false);
   const [newCategoryValue, setNewCategoryValue] = useState('');
+  // Textos del diseño actual (panel de reemplazo rápido tipo template).
+  // La fuente es el evento 'editor:text-list' que emite el canvas.
+  const [canvasTexts, setCanvasTexts] = useState<Array<{ id: string; value: string }>>([]);
+
+  // Escucha la lista de textos del canvas y sincroniza los inputs,
+  // preservando lo que el usuario está escribiendo en cada campo.
+  useEffect(() => {
+    const handleTextList = (event: Event) => {
+      const texts = (event as CustomEvent<{ texts?: Array<{ id: string; text: string }> }>).detail?.texts ?? [];
+      setCanvasTexts((prev) =>
+        texts.map((item) => {
+          const existing = prev.find((entry) => entry.id === item.id);
+          // El texto editado en el lienzo gana; si no cambió, conserva el input.
+          return existing
+            ? { id: item.id, value: existing.value === item.text ? existing.value : item.text }
+            : { id: item.id, value: item.text };
+        }),
+      );
+    };
+    window.addEventListener('editor:text-list', handleTextList);
+    return () => window.removeEventListener('editor:text-list', handleTextList);
+  }, []);
   // Emoji que se asignará a la categoría que se está creando (opcional).
   const [newCategoryIcon, setNewCategoryIcon] = useState('');
   // Modo "cambiar ícono" de la categoría seleccionada en el formulario.
@@ -261,6 +283,51 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
       {activeTab === 'plantillas' && (
         <div className="space-y-3">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Plantillas prediseñadas</p>
+
+          {/* Textos del diseño: reemplazo rápido sin doble clic en el lienzo.
+              Se alimenta del evento 'editor:text-list' (un item por IText). */}
+          {canvasTexts.length > 0 && (
+            <div className="space-y-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-2.5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                Textos del diseño
+              </p>
+              {canvasTexts.map((item) => (
+                <div key={item.id} className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={item.value}
+                    placeholder="Nuevo texto..."
+                    onChange={(e) =>
+                      setCanvasTexts((prev) =>
+                        prev.map((entry) => (entry.id === item.id ? { ...entry, value: e.target.value } : entry)),
+                      )
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        window.dispatchEvent(
+                          new CustomEvent('editor:replace-text', { detail: { id: item.id, text: item.value } }),
+                        );
+                      }
+                    }}
+                    className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-black"
+                  />
+                  <button
+                    type="button"
+                    title="Reemplazar texto en el lienzo"
+                    onClick={() =>
+                      window.dispatchEvent(
+                        new CustomEvent('editor:replace-text', { detail: { id: item.id, text: item.value } }),
+                      )
+                    }
+                    className="shrink-0 rounded-lg bg-slate-900 px-2 py-1.5 text-[10px] font-semibold text-white transition hover:bg-slate-800"
+                  >
+                    Reemplazar
+                  </button>
+                </div>
+              ))}
+              <p className="text-[10px] text-slate-400">Cambia los textos sin tocar el lienzo (Enter o Reemplazar).</p>
+            </div>
+          )}
 
           {/* Modo Administrador: guardar/actualizar el diseño actual como plantilla.
               TODO: cuando exista BD, este dispatch pasa a POST (o PUT si es edición). */}
