@@ -131,7 +131,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleOptionsChanged: (e: Event) => void,
       handleApplyTemplate: (e: Event) => void,
       handleExportTemplate: (e: Event) => void;
-    let handleReplaceText: ((e: Event) => void) | undefined = undefined;
+            let handleReplaceText: ((e: Event) => void) | undefined = undefined;
 
     // Carga dinámica de Fabric solo en el cliente
     import('fabric').then((fabricModule) => {
@@ -295,39 +295,91 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         updateHistoryButtons();
       };
 
-      // ── Panel de textos tipo template ────────────────────────────────────
+            
+      // ── Panel de edición rápida (Smart Inputs) ────────────────────────────
       // Cada objeto de texto recibe un ID de sesión (__sid). La barra lateral
-      // escucha 'editor:text-list' para renderizar un input por texto y puede
-      // reemplazarlos sin tocar el lienzo vía 'editor:replace-text'.
+      // escucha 'editor:smart-inputs' para renderizar un input por texto y
+      // reemplazarlo sin tocar el lienzo vía 'editor:replace-text'.
       let sidCounter = 0;
-      const emitTextList = () => {
+      const resolveSid = (obj: any) => {
+        if (!obj.__sid) {
+          sidCounter += 1;
+          obj.__sid = `el-${sidCounter}-${Date.now().toString(36)}`;
+        }
+        return obj.__sid as string;
+      };
+      // Lee o asigna un nombre descriptivo ("layerName") al objeto; si no existe
+      // se genera uno genérico basado en el tipo ("Texto 1", "Texto 2"...).
+      const resolveLabel = (obj: any, index: number): string => {
+        if (obj.layerName) return obj.layerName;
+        if (obj.label) return obj.label;
+        return `Texto ${index}`;
+      };
+
+      const emitSmartInputs = () => {
         const c = fabricCanvasRef.current;
         if (!c) return;
+        let textIndex = 0;
         const texts = c
           .getObjects()
           .filter((obj: any) => !obj.isMockup && !obj.isGuide && !obj.isGuideLine && !obj.isDesignBackground)
           .filter((obj: any) => typeof obj.text === 'string')
           .map((obj: any) => {
-            if (!obj.__sid) {
-              sidCounter += 1;
-              obj.__sid = `txt-${sidCounter}-${Date.now().toString(36)}`;
-            }
-            return { id: obj.__sid, text: obj.text ?? '' };
+            const sid = resolveSid(obj);
+            textIndex += 1;
+            // Se recuerda el último contenido no vacío: sirve de respaldo para
+            // que un texto que queda vacío pueda restaurarse (ver más abajo).
+            if (obj.text) obj.__lastText = obj.text;
+            return {
+              id: sid,
+              text: obj.text ?? '',
+              label: resolveLabel(obj, textIndex),
+            };
           });
-        window.dispatchEvent(new CustomEvent('editor:text-list', { detail: { texts } }));
+        window.dispatchEvent(
+          new CustomEvent('editor:smart-inputs', { detail: { texts } }),
+        );
+      };
+
+      // Red de seguridad: un texto no debe quedar vacío al salir de edición,
+      // porque pierde su caja y el usuario ya no puede volver a seleccionarlo
+      // (el "párrafo" desaparecería del diseño). Se restaura su último
+      // contenido no vacío.
+      const preserveEmptyText = (e: any) => {
+        const target = e?.target;
+        if (!target || typeof target.text !== 'string') return;
+        if (target.text === '') {
+          const fallback = target.__lastText || 'Tu Texto';
+          target.set({ text: fallback });
+          target.setCoords();
+          fabricCanvasRef.current?.requestRenderAll();
+          emitSmartInputs();
+        } else {
+          target.__lastText = target.text;
+        }
       };
 
       const handleReplaceText = (e: Event) => {
         const c = fabricCanvasRef.current;
         const detail = (e as CustomEvent<{ id?: string; text?: string }>).detail;
         if (!c || !detail?.id || typeof detail.text !== 'string') return;
+        // Limpiar el campo de la edición rápida NUNCA vacía el lienzo: si el
+        // usuario borra todo el contenido del input se conserva el texto
+        // original, de modo que el objeto (y su "función" de párrafo) sigue
+        // visible y editable en la zona segura.
+        if (!detail.text.trim()) return;
         const target = c.getObjects().find((obj: any) => obj.__sid === detail.id);
         if (!target || typeof (target as any).text !== 'string') return;
+        if ((target as any).text === detail.text) return;
         (target as any).set({ text: detail.text });
         (target as any).setCoords();
         c.requestRenderAll();
-        emitTextList();
+        saveState();
+        emitSmartInputs();
       };
+
+      
+
 
       let activeProduct: Product = initialProduct;
       let activeView: ProductView = initialProduct.views[0];
@@ -1365,7 +1417,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         c.requestRenderAll();
         finishViewSwitch(viewId);
         // Refresca el panel de textos de la sidebar para la vista cargada.
-        emitTextList();
+        emitSmartInputs();
       };
       // @ts-ignore ref assignment for React 19 readonly typing
       (switchViewRef as any).current = switchView;
@@ -1896,7 +1948,18 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       // --- Listeners para manipulación de objetos ---
       handleDelete = () => {
         if (!fabricCanvasRef.current) return;
-        const activeObjects = canvas.getActiveObjects();
+        // Nunca eliminar las capas del sistema (mockup, guías, fondo de diseño):
+        // solo objetos reales del usuario.
+        const activeObjects = canvas
+          .getActiveObjects()
+          .filter(
+            (obj: any) =>
+              !obj.isMockup &&
+              !obj.isGuide &&
+              !obj.isGuideLine &&
+              !obj.isCropOverlay &&
+              !obj.isDesignBackground,
+          );
         if (activeObjects.length > 0) {
           isUpdatingHistory.current = true;
           activeObjects.forEach((obj: any) => canvas.remove(obj));
@@ -2021,7 +2084,35 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const activeObject = fabricCanvasRef.current?.getActiveObject();
         if (activeObject && (activeObject as any).isEditing) return;
 
+        const target = e.target as HTMLElement | null;
+        const activeEl = (
+          typeof document !== 'undefined' ? document.activeElement : null
+        ) as HTMLElement | null;
+        const isFormField = (el: HTMLElement | null | undefined) =>
+          !!el &&
+          (el.tagName === 'INPUT' ||
+            el.tagName === 'TEXTAREA' ||
+            el.tagName === 'SELECT' ||
+            el.isContentEditable);
+
+        // Ignorar atajos de teclado cuando el foco está en un campo de texto de
+        // la interfaz (sidebar, toolbar, panel de edición rápida, etc.).
+        if (isFormField(target) || isFormField(activeEl)) return;
+
         if (e.key === 'Delete' || e.key === 'Backspace') {
+          // Sólo se borran objetos cuando el usuario está realmente sobre el
+          // lienzo. Si el foco está en cualquier control de la UI (botón
+          // "Reemplazar", chips de categoría, miniaturas, etc.) la tecla no
+          // debe eliminar la selección del canvas: así el panel de edición
+          // rápida nunca borra el texto que se está personalizando.
+          const el = target as HTMLElement | null;
+          const focusIsOnCanvas =
+            !el ||
+            el === document.body ||
+            el === document.documentElement ||
+            el.tagName === 'CANVAS' ||
+            !!el.closest?.('.canvas-container');
+          if (!focusIsOnCanvas) return;
           handleDelete();
         }
         
@@ -2389,7 +2480,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
                     if (typeof saveState === 'function') saveState();
           // Refresca el panel de textos de la sidebar para que aparezcan los
           // inputs de reemplazo rápido de los textos cargados por la plantilla.
-          emitTextList();
+          emitSmartInputs();
         });
       };
 
@@ -2585,7 +2676,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:apply-template', handleApplyTemplate);
       window.addEventListener('editor:replace-text', handleReplaceText);
       // Lista inicial de textos para la sidebar.
-      emitTextList();
+      emitSmartInputs();
       window.addEventListener('editor:save-as-template', handleExportTemplate);
 
       canvas.on('object:added', saveState);
@@ -2593,9 +2684,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       canvas.on('object:removed', saveState);
       // Panel de textos: refrescar la lista de la sidebar al añadir/eliminar
       // objetos o al escribir directamente sobre un texto en el lienzo.
-      canvas.on('object:added', emitTextList);
-      canvas.on('object:removed', emitTextList);
-      canvas.on('text:changed', emitTextList);
+      canvas.on('object:added', emitSmartInputs);
+      canvas.on('object:removed', emitSmartInputs);
+      canvas.on('text:changed', emitSmartInputs);
+      // Un texto que quede vacío al terminar de editarlo se restaura para que
+      // el objeto no pierda su caja (y siga siendo seleccionable/editable).
+      canvas.on('text:editing:exited', preserveEmptyText);
     });
 
     return () => {
@@ -2651,7 +2745,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       if (handleExportTemplate) {
         window.removeEventListener('editor:save-as-template', handleExportTemplate);
       }
-      if (handleReplaceText) {
+            if (handleReplaceText) {
         window.removeEventListener('editor:replace-text', handleReplaceText);
       }
       if (handleStartCrop) {

@@ -15,6 +15,12 @@ const forms = [
   { label: 'Corazón', icon: Heart, shape: 'heart' as const }
 ];
 
+// Aplica un texto nuevo al objeto del lienzo identificado por su `__sid`.
+// Lo usan los inputs de "Edición rápida del diseño" (Enter o botón Reemplazar).
+const dispatchReplaceText = (id: string, text: string) => {
+  window.dispatchEvent(new CustomEvent('editor:replace-text', { detail: { id, text } }));
+};
+
 export default function SidebarPanel({ product }: { product?: Product }) { // Removed onAddShape prop
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
   const [iconQuery, setIconQuery] = useState('');
@@ -40,27 +46,45 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   // categoría escrita pasa a ser la seleccionada del formulario.
   const [isNewCategoryMode, setIsNewCategoryMode] = useState(false);
   const [newCategoryValue, setNewCategoryValue] = useState('');
-  // Textos del diseño actual (panel de reemplazo rápido tipo template).
-  // La fuente es el evento 'editor:text-list' que emite el canvas.
-  const [canvasTexts, setCanvasTexts] = useState<Array<{ id: string; value: string }>>([]);
+  // Smart Inputs: textos del diseño actual para edición rápida (solo texto).
+  // La fuente es el evento 'editor:smart-inputs' que emite el canvas.
+  // `value`   → lo que está escrito en el input.
+  // `original`→ el texto real del objeto en el lienzo (para restaurar).
+  // `dirty`   → true mientras el usuario escribe algo aún no aplicado.
+  const [canvasTexts, setCanvasTexts] = useState<
+    Array<{ id: string; value: string; original: string; label: string; dirty: boolean }>
+  >([]);
 
-  // Escucha la lista de textos del canvas y sincroniza los inputs,
-  // preservando lo que el usuario está escribiendo en cada campo.
+  // Escucha la lista de textos del canvas y sincroniza los inputs sin pisar
+  // lo que el usuario está escribiendo en cada campo.
   useEffect(() => {
-    const handleTextList = (event: Event) => {
-      const texts = (event as CustomEvent<{ texts?: Array<{ id: string; text: string }> }>).detail?.texts ?? [];
+    const handleSmartInputs = (event: Event) => {
+      const detail = (event as CustomEvent<{ texts?: Array<{ id: string; text?: string; label?: string }> }>).detail;
+      const texts = detail?.texts ?? [];
       setCanvasTexts((prev) =>
         texts.map((item) => {
+          const canvasText = item.text ?? '';
           const existing = prev.find((entry) => entry.id === item.id);
-          // El texto editado en el lienzo gana; si no cambió, conserva el input.
-          return existing
-            ? { id: item.id, value: existing.value === item.text ? existing.value : item.text }
-            : { id: item.id, value: item.text };
+          if (!existing) {
+            return { id: item.id, value: canvasText, original: canvasText, label: item.label ?? '', dirty: false };
+          }
+          const label = item.label ?? existing.label;
+          // Ya aplicado en el lienzo → deja de estar "sin aplicar".
+          if (existing.value === canvasText) {
+            return { ...existing, original: canvasText, label, dirty: false };
+          }
+          // El usuario está escribiendo: se respeta su texto y sólo se guarda
+          // el valor del lienzo como referencia para restaurar.
+          if (existing.dirty) {
+            return { ...existing, original: canvasText, label };
+          }
+          // Cambio hecho directamente en el lienzo → se refleja en el input.
+          return { id: item.id, value: canvasText, original: canvasText, label, dirty: false };
         }),
       );
     };
-    window.addEventListener('editor:text-list', handleTextList);
-    return () => window.removeEventListener('editor:text-list', handleTextList);
+    window.addEventListener('editor:smart-inputs', handleSmartInputs);
+    return () => window.removeEventListener('editor:smart-inputs', handleSmartInputs);
   }, []);
   // Emoji que se asignará a la categoría que se está creando (opcional).
   const [newCategoryIcon, setNewCategoryIcon] = useState('');
@@ -284,51 +308,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
         <div className="space-y-3">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Plantillas prediseñadas</p>
 
-          {/* Textos del diseño: reemplazo rápido sin doble clic en el lienzo.
-              Se alimenta del evento 'editor:text-list' (un item por IText). */}
-          {canvasTexts.length > 0 && (
-            <div className="space-y-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-2.5">
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                Textos del diseño
-              </p>
-              {canvasTexts.map((item) => (
-                <div key={item.id} className="flex gap-1.5">
-                  <input
-                    type="text"
-                    value={item.value}
-                    placeholder="Nuevo texto..."
-                    onChange={(e) =>
-                      setCanvasTexts((prev) =>
-                        prev.map((entry) => (entry.id === item.id ? { ...entry, value: e.target.value } : entry)),
-                      )
-                    }
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        window.dispatchEvent(
-                          new CustomEvent('editor:replace-text', { detail: { id: item.id, text: item.value } }),
-                        );
-                      }
-                    }}
-                    className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-black"
-                  />
-                  <button
-                    type="button"
-                    title="Reemplazar texto en el lienzo"
-                    onClick={() =>
-                      window.dispatchEvent(
-                        new CustomEvent('editor:replace-text', { detail: { id: item.id, text: item.value } }),
-                      )
-                    }
-                    className="shrink-0 rounded-lg bg-slate-900 px-2 py-1.5 text-[10px] font-semibold text-white transition hover:bg-slate-800"
-                  >
-                    Reemplazar
-                  </button>
-                </div>
-              ))}
-              <p className="text-[10px] text-slate-400">Cambia los textos sin tocar el lienzo (Enter o Reemplazar).</p>
-            </div>
-          )}
-
+          
           {/* Modo Administrador: guardar/actualizar el diseño actual como plantilla.
               TODO: cuando exista BD, este dispatch pasa a POST (o PUT si es edición). */}
           <div className={`space-y-2 rounded-xl border border-dashed p-2.5 ${editingTemplate ? 'border-slate-900 bg-slate-100' : 'border-slate-300 bg-slate-50'}`}>
@@ -604,7 +584,93 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
         </div>
       )}
 
-      {activeTab === 'recursos' && (<>
+            {activeTab === 'recursos' && (<>
+      {/* ── Edición rápida del diseño (Smart Inputs) ───────────────────────
+          Se alimenta del evento 'editor:smart-inputs' que emite el canvas:
+          un input por cada texto (i-text/textbox) del diseño actual. Permite
+          personalizar sin perder la vista previa fotorrealista. */}
+      {canvasTexts.length > 0 && (
+        <div className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2">
+            <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-900 text-white">
+              <Pencil size={12} />
+            </span>
+            <div className="min-w-0 leading-tight">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-700">
+                Personalización rápida
+              </p>
+              <p className="truncate text-[10px] text-slate-400">
+                Cambia los textos sin tocar el lienzo
+              </p>
+            </div>
+          </div>
+
+          <div className="divide-y divide-slate-100">
+            {canvasTexts.map((item) => (
+              <div key={item.id} className="space-y-1.5 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                    {item.label}
+                  </span>
+                  {item.dirty && item.value.trim() && (
+                    <span className="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-600">
+                      sin aplicar
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={item.value}
+                    placeholder={item.label ? `Reemplazar ${item.label}...` : 'Nuevo texto...'}
+                    onChange={(e) =>
+                      setCanvasTexts((prev) =>
+                        prev.map((entry) =>
+                          entry.id === item.id ? { ...entry, value: e.target.value, dirty: true } : entry,
+                        ),
+                      )
+                    }
+                    onKeyDown={(e) => {
+                      // Delete/Backspace dentro del input nunca deben alcanzar
+                      // el atajo global del lienzo (que borraría el objeto).
+                      if (e.key === 'Delete' || e.key === 'Backspace') e.stopPropagation();
+                      if (e.key === 'Enter' && item.value.trim()) {
+                        dispatchReplaceText(item.id, item.value);
+                      }
+                    }}
+                    onBlur={() => {
+                      // Si el campo quedó vacío se restaura el texto del lienzo:
+                      // así el usuario nunca "pierde" el objeto por limpiar el input.
+                      setCanvasTexts((prev) =>
+                        prev.map((entry) =>
+                          entry.id === item.id && !entry.value.trim()
+                            ? { ...entry, value: entry.original, dirty: false }
+                            : entry,
+                        ),
+                      );
+                    }}
+                    className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-900 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-900"
+                  />
+                  <button
+                    type="button"
+                    title={`Reemplazar ${item.label || 'texto'} en el lienzo`}
+                    disabled={!item.value.trim()}
+                    onClick={() => dispatchReplaceText(item.id, item.value)}
+                    className="shrink-0 rounded-lg bg-slate-900 px-2.5 py-1.5 text-[10px] font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Reemplazar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <p className="border-t border-slate-100 bg-slate-50/60 px-3 py-1.5 text-[10px] text-slate-400">
+            Enter o Reemplazar actualiza el texto en el lienzo.
+          </p>
+        </div>
+      )}
+
       {/* Buscador de Iconos / Vectores Compacto */}
       <div className="space-y-1.5 mb-4">
         <div className="relative">
