@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import type { TextOptions } from '@/types/product';
-import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2, Pencil } from 'lucide-react';
+import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2, Pencil, Layers } from 'lucide-react';
 import { MOCK_TEMPLATES, type MockTemplate } from '@/src/data/mockTemplates';
 import { listSavedTemplates, deleteSavedTemplate, getCategoryIcon, listTemplateCategories, saveTemplateCategories, saveTemplateIcon, DEFAULT_TEMPLATE_CATEGORIES, type SavedTemplate } from '@/src/utils/templateStorage';
 import type { Product } from '@/src/store/useProductStore';
+import LayersPanel from '@/components/editor/LayersPanel';
 
 const forms = [
   { label: 'Cuadrado', icon: Square, shape: 'rect' as const },
@@ -68,7 +69,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   const [illustrationCategory, setIllustrationCategory] = useState(ILLUSTRATION_CATEGORIES[0].label);
   // Texto escrito por el usuario: con más de 2 caracteres manda sobre la categoría.
   const illustrationSearch = illustrationQuery.trim();
-  const [activeTab, setActiveTab] = useState<'recursos' | 'plantillas'>('recursos');
+  const [activeTab, setActiveTab] = useState<'recursos' | 'plantillas' | 'layers'>('recursos');
   const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
   const [templateName, setTemplateName] = useState('');
   const [templateCategory, setTemplateCategory] = useState('Cumpleaños');
@@ -367,29 +368,44 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
 
   return (
     <aside className="min-h-0 w-full max-w-[292px] space-y-5 overflow-y-auto rounded-[22px] border border-slate-200/80 bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
-      {/* Pestañas: Recursos (diseño libre) / Plantillas prediseñadas */}
-      <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+      {/* Capas comparte el panel existente: no cambia el ancho ni desplaza Recursos. */}
+      <div className="flex items-center gap-1.5">
+        <div className="grid flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+          <button
+            type="button"
+            onClick={() => setActiveTab('recursos')}
+            className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-semibold transition ${
+              activeTab === 'recursos' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Shapes size={14} />
+            Recursos
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('plantillas')}
+            className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-semibold transition ${
+              activeTab === 'plantillas' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <LayoutTemplate size={14} />
+            Plantillas
+          </button>
+        </div>
         <button
           type="button"
-          onClick={() => setActiveTab('recursos')}
-          className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-semibold transition ${
-            activeTab === 'recursos' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+          onClick={() => setActiveTab('layers')}
+          aria-label="Capas"
+          title="Capas"
+          className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition ${
+            activeTab === 'layers' ? 'border-slate-900 bg-slate-900 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-900'
           }`}
         >
-          <Shapes size={14} />
-          Recursos
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('plantillas')}
-          className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-semibold transition ${
-            activeTab === 'plantillas' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          <LayoutTemplate size={14} />
-          Plantillas
+          <Layers size={16} />
         </button>
       </div>
+
+      {activeTab === 'layers' && <LayersPanel />}
 
       {activeTab === 'plantillas' && (
         <div className="space-y-3">

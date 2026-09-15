@@ -5,7 +5,6 @@ import { useState, useEffect } from 'react';
 import type { Producto, TextOptions } from '@/types/product';
 import FloatingFooter from '@/components/editor/FloatingFooter';
 import Header from '@/components/editor/Header';
-import SidebarIcons from '@/components/editor/SidebarIcons';
 import SidebarPanel from '@/components/editor/SidebarPanel';
 import TextToolbar from '@/components/editor/TextToolbar';
 import { useProductStore, type Product } from '@/src/store/useProductStore';

@@ -189,6 +189,10 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       canvas.calcOffset();
 
       fabricCanvasRef.current = canvas;
+      // Los paneles auxiliares (por ejemplo Capas) se conectan a esta misma
+      // instancia para poder escuchar los eventos nativos de Fabric.
+      (window as any).__editorFabricCanvas = canvas;
+      window.dispatchEvent(new CustomEvent('editor:canvas-ready', { detail: { canvas } }));
 
       // ===== ZOOM TO FIT =====================================================
       // Escala el lienzo para que el teléfono/mockup completo (de arriba a
@@ -2797,6 +2801,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         window.removeEventListener('editor:options-changed', handleOptionsChanged);
       }
       if (fabricCanvasRef.current) {
+        if ((window as any).__editorFabricCanvas === fabricCanvasRef.current) {
+          delete (window as any).__editorFabricCanvas;
+        }
         fabricCanvasRef.current.dispose();
         fabricCanvasRef.current = null;
       }
