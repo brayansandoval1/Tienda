@@ -1068,11 +1068,20 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         // La traducción se hace sobre el plano lógico unificado, no sobre el
         // rectángulo visible del PNG contenido dentro de él.
+        // Debe usar el mismo rectángulo que el clipPath y la alineación.
+        // El mockup puede dejar márgenes dentro del canvas (por ejemplo, una
+        // funda vertical), así que calcularlo sobre 800×800 desplazaba la guía.
+        const renderedArea = {
+          left: activeMockupBounds.left + (Number(printArea.x) / 100) * activeMockupBounds.width,
+          top: activeMockupBounds.top + (Number(printArea.y) / 100) * activeMockupBounds.height,
+          width: (Number(printArea.width) / 100) * activeMockupBounds.width,
+          height: (Number(printArea.height) / 100) * activeMockupBounds.height,
+        };
         const safeZone = new fabric.Rect({
-          left: (Number(printArea.x) / 100) * canvasWidth,
-          top: (Number(printArea.y) / 100) * canvasHeight,
-          width: (Number(printArea.width) / 100) * canvasWidth,
-          height: (Number(printArea.height) / 100) * canvasHeight,
+          left: renderedArea.left,
+          top: renderedArea.top,
+          width: renderedArea.width,
+          height: renderedArea.height,
           fill: 'rgba(34, 197, 94, 0.05)',
           stroke: '#22c55e',
           strokeDashArray: [6, 6],
@@ -1552,7 +1561,17 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const c = fabricCanvasRef.current;
         if (!c || !activeView) return;
 
-        const printArea = getRenderedPrintArea(activeView);
+        // La guía es la fuente visual de verdad: tomar sus coordenadas evita
+        // diferencias entre la zona segura visible, el mockup y el zoom.
+        const safeZone = safeZoneRef.current;
+        const printArea = safeZone
+          ? {
+              x: safeZone.left ?? 0,
+              y: safeZone.top ?? 0,
+              width: safeZone.getScaledWidth?.() ?? safeZone.width ?? 0,
+              height: safeZone.getScaledHeight?.() ?? safeZone.height ?? 0,
+            }
+          : getRenderedPrintArea(activeView);
         if (printArea.width <= 0 || printArea.height <= 0) return;
 
         const guides = c.getObjects().filter((object: any) => object.isGuideLine);
@@ -1715,7 +1734,17 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const obj = canvas.getActiveObject();
         if (!obj || (obj as any).isGuide) return;
 
-        const printArea = getRenderedPrintArea(activeView);
+        // La guía ya se calcula sobre el mockup renderizado y coincide con el
+        // clipPath. Usarla evita centrar respecto al canvas completo.
+        const safeZone = safeZoneRef.current;
+        const printArea = safeZone
+          ? {
+              x: safeZone.left ?? 0,
+              y: safeZone.top ?? 0,
+              width: safeZone.getScaledWidth?.() ?? safeZone.width ?? 0,
+              height: safeZone.getScaledHeight?.() ?? safeZone.height ?? 0,
+            }
+          : getRenderedPrintArea(activeView);
 
         // Forzar que el objeto conserve los permisos de arrastre del ratón
         obj.set({
@@ -1728,7 +1757,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           lockScalingY: false,
         });
 
-        const objBounds = obj.getBoundingRect();
+        // `true` calcula en coordenadas lógicas de Fabric y no en píxeles de
+        // pantalla; con zoom manual el resultado sin este flag se desfasaba.
+        const objBounds = obj.getBoundingRect(true);
         const objWidth = objBounds.width;
         const objHeight = objBounds.height;
         const originOffsetX = obj.left - objBounds.left;
