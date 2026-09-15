@@ -687,13 +687,14 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
         </div>
       )}
 
-            {activeTab === 'recursos' && (<>
+      {activeTab === 'recursos' && (
+        <div className="flex flex-col gap-5">
       {/* ── Edición rápida del diseño (Smart Inputs) ───────────────────────
           Se alimenta del evento 'editor:smart-inputs' que emite el canvas:
           un input por cada texto (i-text/textbox) del diseño actual. Permite
           personalizar sin perder la vista previa fotorrealista. */}
       {canvasTexts.length > 0 && (
-        <div className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="order-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2">
             <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-900 text-white">
               <Pencil size={12} />
@@ -778,7 +779,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
           Complementa al buscador de iconos: aquí el resultado ya es una
           ilustración coloreada y se inserta a un tamaño usable, en lugar de
           como mini-icono monocromo. */}
-      <div className="mb-4 space-y-2">
+      <div className="order-5 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
             Ilustraciones
@@ -827,7 +828,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
         )}
 
         {illustrationResults.length > 0 && (
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid max-h-72 grid-cols-3 gap-2 overflow-y-auto pr-0.5">
             {illustrationResults.map((iconName, index) => {
               // iconName es una string tipo "openmoji:red-heart".
               const previewUrl = iconifyIllustrationUrl(iconName, 72);
@@ -861,7 +862,9 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
       </div>
 
       {/* Buscador de Iconos / Vectores Compacto */}
-      <div className="space-y-1.5 mb-4">
+      <div className="order-6 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Iconos y vectores</p>
+        <div className="space-y-1.5">
         <div className="relative">
           <Search className="h-3.5 w-3.5 absolute left-2.5 top-2.5 text-slate-400" />
           <input
@@ -875,15 +878,15 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
         <p className="px-1 text-[10px] italic text-slate-400">
           💡 Tip: Busca en inglés para más resultados.
         </p>
-      </div>
-
-      {iconQuery.trim().length <= 2 && (
-        <div className="py-6 text-center text-xs text-slate-400">
-          <p>Escribe una palabra clave arriba para explorar recursos vectoriales.</p>
         </div>
-      )}
 
-      {iconQuery.trim().length > 2 && (
+        {iconQuery.trim().length <= 2 && (
+          <div className="py-3 text-center text-xs text-slate-400">
+            <p>Escribe una palabra clave arriba para explorar recursos vectoriales.</p>
+          </div>
+        )}
+
+        {iconQuery.trim().length > 2 && (
         <div className="space-y-3">
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Recursos</p>
 
@@ -936,9 +939,10 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
             <p className="text-sm text-slate-500">No se encontraron recursos</p>
           )}
         </div>
-      )}
+        )}
+      </div>
 
-      <div className="space-y-3">
+      <div className="order-2 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
         <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Texto</p>
         <div className="grid grid-cols-2 gap-2">
           <button
@@ -950,7 +954,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
                 }),
               )
             }
-            className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-base font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:shadow-sm"
           >
             Agregar Título
           </button>
@@ -961,14 +965,14 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
                 new CustomEvent('editor:add-text', { detail: { text: 'Escribe tu párrafo aquí...', fontSize: 16 } }),
               )
             }
-            className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:shadow-sm"
           >
             Agregar Párrafo
           </button>
         </div>
       </div>
 
-      <div className="space-y-3">
+      <div className="order-3 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
         <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Archivos subidos</p>
         <label htmlFor="upload-image" className="flex cursor-pointer items-center justify-between rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-white">
           <span>Subir imagen</span>
@@ -1012,7 +1016,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
         )}
       </div>
 
-      <div className="space-y-3">
+      <div className="order-4 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
         <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Formas</p>
         <div className="grid grid-cols-2 gap-2">
           {forms.map((item) => {
@@ -1038,7 +1042,8 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
           })}
         </div>
       </div>
-      </>)}
+        </div>
+      )}
 
     </aside>
   );
