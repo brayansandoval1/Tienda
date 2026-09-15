@@ -2360,9 +2360,13 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       };
 
       // Listener para agregar un ícono SVG desde la barra de recursos (Iconify)
+      // `detail.size` (opcional) es el lado mayor deseado en px: lo envían las
+      // ilustraciones a color para insertarse en un tamaño usable. Si se omite
+      // se conserva el escalado histórico (1.5) del buscador de iconos.
       handleAddSVG = async (e: Event) => {
-        const customEvent = e as CustomEvent<{ svgUrl?: string }>;
+        const customEvent = e as CustomEvent<{ svgUrl?: string; size?: number }>;
         const url = customEvent.detail?.svgUrl;
+        const requestedSize = customEvent.detail?.size;
         const canvas = fabricCanvasRef.current;
         if (!url || !canvas) return;
 
@@ -2377,13 +2381,21 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           fabric.loadSVGFromString(svgText, (objects: any, options: any) => {
             if (!fabricCanvasRef.current) return;
             const svgGroup = fabric.util.groupSVGElements(objects, options);
+
+            // El SVG de Iconify ya trae su tamaño natural (p. ej. height=200).
+            // Si el emisor pidió un tamaño, escalamos para alcanzarlo; si no,
+            // aplicamos el 1.5 de siempre. Los colores originales del SVG se
+            // conservan: aquí nunca se sobrescribe `fill`.
+            const naturalSize = Math.max(Number(svgGroup.width) || 0, Number(svgGroup.height) || 0);
+            const scale = requestedSize && naturalSize > 0 ? requestedSize / naturalSize : 1.5;
+
             svgGroup.set({
               left: targetCanvas.width / 2,
               top: targetCanvas.height / 2,
               originX: 'center',
               originY: 'center',
-              scaleX: 1.5,
-              scaleY: 1.5,
+              scaleX: scale,
+              scaleY: scale,
               ...defaultObjectProps,
             });
             makeObjectInteractive(svgGroup);

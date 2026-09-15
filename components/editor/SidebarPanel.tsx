@@ -15,6 +15,36 @@ const forms = [
   { label: 'Corazón', icon: Heart, shape: 'heart' as const }
 ];
 
+// ── Galería de ilustraciones a color ────────────────────────────────────────
+// Se alimenta de la API pública de Iconify (gratuita y sin API key), pero
+// restringida a los sets que ya vienen ilustrados a color: si no, devolvería
+// iconos monocromos que no encajan con el mockup del producto.
+// El parámetro `?height=` obliga al SVG a traer ancho/alto numéricos, de modo
+// que Fabric lo inserte justo en el tamaño pedido (ver 'editor:add-svg' en
+// EditorCanvas: escala = size / tamaño natural del SVG).
+const ILLUSTRATION_ICON_SETS = 'openmoji,twemoji,noto,fluent-emoji-flat';
+
+/** Consultas curadas: todas devuelven resultados con los sets de arriba. */
+const ILLUSTRATION_CATEGORIES = [
+  { label: 'Fiesta', query: 'party' },
+  { label: 'Cumpleaños', query: 'birthday cake' },
+  { label: 'Amor', query: 'heart' },
+  { label: 'Bodas', query: 'wedding' },
+  { label: 'Regalos', query: 'gift' },
+  { label: 'Trabajo', query: 'business' },
+  { label: 'Mascotas', query: 'dog' },
+  { label: 'Comida', query: 'food' },
+  { label: 'Naturaleza', query: 'flower' },
+  { label: 'Viajes', query: 'car' },
+];
+
+/** Lado mayor (px) con el que se inserta una ilustración en el lienzo. */
+const ILLUSTRATION_INSERT_SIZE = 160;
+
+/** URL del SVG de Iconify con un alto concreto (vista previa y lienzo). */
+const iconifyIllustrationUrl = (iconName: string, height: number) =>
+  `https://api.iconify.design/${iconName.replace(':', '/')}.svg?height=${height}`;
+
 // Aplica un texto nuevo al objeto del lienzo identificado por su `__sid`.
 // Lo usan los inputs de "Edición rápida del diseño" (Enter o botón Reemplazar).
 const dispatchReplaceText = (id: string, text: string) => {
@@ -27,6 +57,17 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   const [iconResults, setIconResults] = useState<string[]>([]);
   const [iconLoading, setIconLoading] = useState(false);
   const [iconError, setIconError] = useState<string | null>(null);
+
+  // Galería de ilustraciones a color (sets ilustrados de Iconify). Igual que el
+  // buscador de iconos, se consulta sin API key y con CORS abierto.
+  const [illustrationQuery, setIllustrationQuery] = useState('');
+  const [illustrationResults, setIllustrationResults] = useState<string[]>([]);
+  const [illustrationLoading, setIllustrationLoading] = useState(false);
+  const [illustrationError, setIllustrationError] = useState<string | null>(null);
+  // Categoría curada activa (se ignora mientras haya una búsqueda manual).
+  const [illustrationCategory, setIllustrationCategory] = useState(ILLUSTRATION_CATEGORIES[0].label);
+  // Texto escrito por el usuario: con más de 2 caracteres manda sobre la categoría.
+  const illustrationSearch = illustrationQuery.trim();
   const [activeTab, setActiveTab] = useState<'recursos' | 'plantillas'>('recursos');
   const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
   const [templateName, setTemplateName] = useState('');
@@ -274,6 +315,52 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
       controller.abort();
     };
   }, [iconQuery]);
+
+  // ✅ Galería de ilustraciones: misma API gratuita de Iconify, pero forzando
+  // los sets a color. Se recarga al pulsar una categoría curada o al escribir
+  // una búsqueda propia (>2 caracteres, con debounce de 350ms).
+  useEffect(() => {
+    const term =
+      illustrationSearch.length > 2
+        ? illustrationSearch
+        : ILLUSTRATION_CATEGORIES.find((category) => category.label === illustrationCategory)?.query ?? '';
+
+    if (!term) {
+      setIllustrationResults([]);
+      setIllustrationLoading(false);
+      setIllustrationError(null);
+      return;
+    }
+
+    setIllustrationLoading(true);
+    setIllustrationError(null);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `https://api.iconify.design/search?query=${encodeURIComponent(term)}&prefixes=${ILLUSTRATION_ICON_SETS}&limit=24`,
+          { signal: controller.signal },
+        );
+        if (!res.ok) throw new Error('Error al buscar ilustraciones');
+        const data = await res.json();
+        // Iconify devuelve { icons: ["openmoji:red-heart", ...] }
+        setIllustrationResults(data && Array.isArray(data.icons) ? data.icons : []);
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') {
+          setIllustrationError('No se pudieron cargar las ilustraciones');
+          setIllustrationResults([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) setIllustrationLoading(false);
+      }
+    }, illustrationSearch.length > 2 ? 350 : 0);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [illustrationSearch, illustrationCategory]);
 
   // ✅ SOLO se agrega al estado cuando el usuario SUBE un archivo NUEVO
   // El evento 'editor:add-image' solo se usa para AGREGAR AL CANVAS, NO para actualizar la lista
@@ -670,6 +757,92 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
           </p>
         </div>
       )}
+
+      {/* ── Ilustraciones a color (Iconify, sin API key) ─────────────────────
+          Complementa al buscador de iconos: aquí el resultado ya es una
+          ilustración coloreada y se inserta a un tamaño usable, en lugar de
+          como mini-icono monocromo. */}
+      <div className="mb-4 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+            Ilustraciones
+          </p>
+          {illustrationLoading && <Loader2 size={12} className="animate-spin text-slate-400" />}
+        </div>
+
+        <div className="relative">
+          <Search className="h-3.5 w-3.5 absolute left-2.5 top-2.5 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Buscar ilustración (ej: cake, heart)..."
+            value={illustrationQuery}
+            onChange={(e) => setIllustrationQuery(e.target.value)}
+            className="w-full rounded-lg border border-slate-200 py-1.5 pl-8 pr-3 text-xs text-slate-900 outline-none focus:ring-1 focus:ring-black"
+          />
+        </div>
+
+        <div className="flex flex-wrap gap-1">
+          {ILLUSTRATION_CATEGORIES.map((category) => {
+            const isActive = illustrationSearch.length <= 2 && illustrationCategory === category.label;
+            return (
+              <button
+                key={category.label}
+                type="button"
+                onClick={() => {
+                  setIllustrationQuery('');
+                  setIllustrationCategory(category.label);
+                }}
+                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
+                  isActive
+                    ? 'border-slate-900 bg-slate-900 text-white'
+                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
+                }`}
+              >
+                {category.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {illustrationError && <p className="text-[11px] text-red-500">{illustrationError}</p>}
+
+        {!illustrationLoading && !illustrationError && illustrationResults.length === 0 && (
+          <p className="text-[11px] text-slate-400">Sin ilustraciones para esta búsqueda.</p>
+        )}
+
+        {illustrationResults.length > 0 && (
+          <div className="grid grid-cols-3 gap-2">
+            {illustrationResults.map((iconName, index) => {
+              // iconName es una string tipo "openmoji:red-heart".
+              const previewUrl = iconifyIllustrationUrl(iconName, 72);
+              return (
+                <button
+                  key={`${iconName}-${index}`}
+                  type="button"
+                  title={iconName}
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent('editor:add-svg', {
+                        detail: {
+                          svgUrl: iconifyIllustrationUrl(iconName, ILLUSTRATION_INSERT_SIZE),
+                          size: ILLUSTRATION_INSERT_SIZE,
+                        },
+                      }),
+                    )
+                  }
+                  className="flex h-16 items-center justify-center rounded-xl border border-slate-200 bg-white p-1.5 transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  <img src={previewUrl} alt={iconName} width={48} height={48} className="h-12 w-12" />
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <p className="text-[10px] italic text-slate-400">
+          OpenMoji / Twemoji / Noto / Fluent · se agregan con su color original.
+        </p>
+      </div>
 
       {/* Buscador de Iconos / Vectores Compacto */}
       <div className="space-y-1.5 mb-4">
