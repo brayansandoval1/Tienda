@@ -126,6 +126,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleExportPrint: () => void,
       handleResetCrop: () => void,
       handleAlign: (e: Event) => void,
+      handleZoom: (e: Event) => void,
       handleSaveDesign: () => void,
       handleOptionMockup: (e: Event) => void,
       handleOptionsChanged: (e: Event) => void,
@@ -200,6 +201,13 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       // Se conserva el plano lógico fijo (ADMIN_BASE_SIZE) para no romper las
       // coordenadas de la zona segura, el clipPath ni la exportación: el zoom
       // escala TODO de forma proporcional y uniforme.
+      let fitZoom = 1;
+      let relativeZoom = 1;
+      const emitZoomChanged = () => {
+        window.dispatchEvent(
+          new CustomEvent('editor:zoom-changed', { detail: { percentage: Math.round(relativeZoom * 100) } }),
+        );
+      };
       const fitCanvasToContainer = () => {
         const canvasInstance = fabricCanvasRef.current;
         const containerEl = canvasAreaRef.current;
@@ -230,14 +238,29 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           height: ADMIN_BASE_SIZE * scale,
         });
 
-        canvasInstance.setZoom(scale);
+        fitZoom = scale;
+        relativeZoom = 1;
+        canvasInstance.setZoom(fitZoom);
         canvasInstance.calcOffset();
         canvasInstance.requestRenderAll();
+        emitZoomChanged();
       };
 
       // Ajuste inicial una vez montado el contenedor.
       fitCanvasToContainer();
       fitOnResize = fitCanvasToContainer;
+
+      handleZoom = (e: Event) => {
+        const detail = (e as CustomEvent<{ delta?: number; zoom?: number }>).detail;
+        const nextZoom = typeof detail?.zoom === 'number'
+          ? detail.zoom
+          : relativeZoom + (detail?.delta ?? 0);
+        relativeZoom = Math.min(2, Math.max(0.5, nextZoom));
+        canvas.setZoom(fitZoom * relativeZoom);
+        canvas.calcOffset();
+        canvas.requestRenderAll();
+        emitZoomChanged();
+      };
 
       // Reajuste automático al redimensionar la ventana (debounced).
       window.addEventListener('resize', handleWindowResize);
@@ -2686,6 +2709,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:request-export', handleRequestExport);
       window.addEventListener('editor:export-print', handleExportPrint);
       window.addEventListener('editor:align', handleAlign);
+      window.addEventListener('editor:zoom', handleZoom);
       window.addEventListener('editor:save-design', handleSaveDesign);
       window.addEventListener('editor:option-mockup', handleOptionMockup);
       window.addEventListener('editor:options-changed', handleOptionsChanged);
@@ -2790,6 +2814,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleAlign) {
         window.removeEventListener('editor:align', handleAlign);
+      }
+      if (handleZoom) {
+        window.removeEventListener('editor:zoom', handleZoom);
       }
       if (handleSaveDesign) {
         window.removeEventListener('editor:save-design', handleSaveDesign);
