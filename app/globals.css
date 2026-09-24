@@ -36,6 +36,61 @@ select {
   color: white;
 }
 
+.hero-mesh {
+  background:
+    radial-gradient(ellipse 55% 60% at 7% 12%, rgba(196, 181, 253, .68), transparent 70%),
+    radial-gradient(ellipse 48% 52% at 88% 45%, rgba(191, 219, 254, .65), transparent 72%),
+    radial-gradient(ellipse 45% 42% at 46% 100%, rgba(251, 207, 232, .55), transparent 75%),
+    #fcfbff;
+}
+
+.premium-grid {
+  background-image: linear-gradient(rgba(109,88,150,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(109,88,150,.035) 1px, transparent 1px);
+  background-size: 46px 46px;
+}
+
+.hero-noise {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.35'/%3E%3C/svg%3E");
+}
+
+.orbital-light {
+  position: absolute;
+  z-index: -1;
+  width: 28rem;
+  height: 7rem;
+  border: 1px solid rgba(196, 181, 253, .14);
+  border-radius: 50%;
+  filter: blur(.2px);
+}
+
+.orbital-light-one { right: -7rem; top: 9rem; rotate: -29deg; border-color: rgba(139, 92, 246, .25); box-shadow: 0 0 48px rgba(139, 92, 246, .16); animation: orbit-drift 14s ease-in-out infinite; }
+.orbital-light-two { left: -11rem; bottom: 1rem; rotate: 23deg; border-color: rgba(244, 114, 182, .2); animation: orbit-drift 17s ease-in-out -5s infinite reverse; }
+
+.hero-product { animation: product-float 5s ease-in-out infinite, product-turn 9s ease-in-out infinite; }
+.hero-ring { animation: ring-breathe 6s ease-in-out infinite; }
+.neon-pulse { animation: neon-breathe 3.5s ease-in-out infinite; }
+.step-line { animation: flow-line 3s linear infinite; background-size: 200% 100%; }
+.liquid-button { background-size: 160% 100%; }
+.liquid-button:hover { background-position: 100% 0; }
+
+@keyframes product-float {
+  50% { transform: translateY(-12px); }
+}
+
+@keyframes product-turn {
+  0%, 100% { rotate: -7deg; }
+  50% { rotate: 7deg; }
+}
+
+@keyframes orbit-drift { 50% { transform: translate3d(2rem, -1rem, 0) scale(1.06); opacity: .55; } }
+@keyframes ring-breathe { 50% { transform: scale(1.04); opacity: .45; } }
+@keyframes neon-breathe { 50% { border-color: rgba(196,181,253,.34); box-shadow: 0 0 26px rgba(139,92,246,.16); } }
+@keyframes flow-line { to { background-position: 200% 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-product, .hero-ring, .neon-pulse, .step-line, .orbital-light { animation: none; }
+}
+
 /* Arreglo para la edición de texto en Fabric.js */
 .upper-canvas + textarea {
   opacity: 1 !important;

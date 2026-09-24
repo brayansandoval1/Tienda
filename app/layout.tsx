@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Editor Interactivo | Tienda',
-  description: 'Fase 1 del editor interactivo estilo Zazzle'
+  title: 'RegaloLab | Regalos personalizados en 3D',
+  description: 'Diseña regalos únicos, revísalos en 3D y pídelo en minutos.'
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
