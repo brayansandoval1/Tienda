@@ -26,7 +26,7 @@ export default function Header() {
 
   const handleSave = () => {
     setSaveState('saving');
-    setSaveMessage('Validando diseño…');
+    setSaveMessage('Preparando archivos de alta resolución...');
     window.dispatchEvent(new CustomEvent('editor:save-design'));
   };
 

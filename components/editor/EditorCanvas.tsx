@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Check, X, Trash2 } from 'lucide-react';
+import { Check, X, Trash2, Loader2 } from 'lucide-react';
 import type { TextOptions } from '../../types/product';
 import type { ColorVariant, Product, ProductOptionValue, ProductView } from '@/src/store/useProductStore';
-import type { SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
+import type { ExportedDesignFiles, SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
 import Product3DModal from '@/components/editor/Product3DModal';
 import { saveTemplateToStorage, updateTemplateInStorage, listSavedTemplates, getCategoryIcon } from '@/src/utils/templateStorage';
 import { clearDraft, getDraft, saveDraft, type DesignDraft } from '@/src/utils/designDraftStorage';
+import { useCartStore } from '@/src/store/useCartStore';
 
 type PrintArea = ProductView['printArea'];
 const ADMIN_BASE_SIZE = 800;
@@ -64,6 +65,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isHydratingDraftRef = useRef(true);
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [isExporting, setIsExporting] = useState(false);
   const switchViewRef = useRef<(viewId: string) => void>(null);
   const handleColorChangeRef = useRef<((variant: ColorVariant) => void) | null>(null);
   const handleDesignBgColorChangeRef = useRef<((color: string) => void) | null>(null);
@@ -131,13 +133,13 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleResetCrop: () => void,
       handleAlign: (e: Event) => void,
       handleZoom: (e: Event) => void,
-      handleSaveDesign: () => void,
+      handleSaveDesign: () => Promise<SavedDesignPayload | null>,
       handleOptionMockup: (e: Event) => void,
       handleOptionsChanged: (e: Event) => void,
       handleApplyTemplate: (e: Event) => void,
       handleExportTemplate: (e: Event) => void,
       handleClearDraft: () => void,
-      handleAddToCart: () => void;
+      handleAddToCart: (event: Event) => void;
             let handleReplaceText: ((e: Event) => void) | undefined = undefined;
 
     // Carga dinámica de Fabric solo en el cliente
@@ -1579,8 +1581,6 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         clearDraft(activeProduct.id);
         setDraftStatus('idle');
       };
-      // El checkout puede emitir este mismo evento al confirmarse el pago.
-      handleAddToCart = handleClearDraft;
       void hydrateDraft();
 
       // Restringir movimiento/escalado de los objetos al printArea de la vista activa
@@ -1741,39 +1741,82 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
       handleExportPrint = exportToPrint;
 
-      const createPrintFile = (): string | null => {
+      const exportDesignFiles = async (): Promise<ExportedDesignFiles | null> => {
         const c = fabricCanvasRef.current;
         if (!c || !activeView) return null;
         const printArea = getRenderedPrintArea(activeView);
         if (printArea.width <= 0 || printArea.height <= 0) return null;
 
-        const guides = c.getObjects().filter((object: any) => object.isGuideLine);
-        const guideVisibility = guides.map((guide: any) => guide.visible);
+        const systemLayers = c.getObjects().filter((object: any) =>
+          object.isMockup || object.isGuide || object.isGuideLine || object.isCropOverlay || object.isDesignBackground,
+        );
+        const layerState = systemLayers.map((object: any) => ({
+          object,
+          visible: object.visible,
+          excludeFromExport: object.excludeFromExport,
+        }));
         const originalBackground = c.backgroundImage;
         const originalBackgroundColor = c.backgroundColor;
         const originalClipPath = c.clipPath;
         try {
-          guides.forEach((guide: any) => guide.set('visible', false));
+          // Preview HD: sólo se ocultan las guías. El mockup se incluye de
+          // manera explícita aunque Fabric lo marque excludeFromExport.
+          systemLayers.forEach((object: any) => {
+            if (object.isGuide || object.isGuideLine || object.isCropOverlay) object.set('visible', false);
+            if (object.isMockup) object.set({ visible: true, excludeFromExport: false });
+          });
+          c.renderAll();
+          const previewImage = c.toDataURL({ format: 'png', quality: 1, multiplier: 2 });
+
+          // Producción: las capas técnicas nunca llegan al archivo plano.
+          systemLayers.forEach((object: any) => object.set({ visible: false, excludeFromExport: true }));
           c.backgroundImage = null;
           c.backgroundColor = '';
+          // Los clipPaths individuales de los objetos se mantienen para que
+          // ningún arte fuera del área imprimible llegue al taller.
           c.clipPath = undefined;
           c.renderAll();
-          return c.toDataURL({
-            format: 'png', left: printArea.x, top: printArea.y,
-            width: printArea.width, height: printArea.height, multiplier: 3, quality: 1,
+          const printSVG = c.toSVG();
+
+          const widthCm = activeProduct.printWidthCm ?? 20;
+          const heightCm = activeProduct.printHeightCm ?? 20;
+          const multiplier = Math.max(
+            4,
+            Math.ceil(((widthCm / 2.54) * 300) / printArea.width),
+            Math.ceil(((heightCm / 2.54) * 300) / printArea.height),
+          );
+          const printPNG = c.toDataURL({
+            format: 'png',
+            left: printArea.x,
+            top: printArea.y,
+            width: printArea.width,
+            height: printArea.height,
+            multiplier,
+            quality: 1,
           });
+
+          const designJSON = c.toJSON(['id', 'label', 'layerName', 'isLock']) as Record<string, any>;
+          designJSON.objects = c.getObjects()
+            .filter(isDraftDesignObject)
+            .map((object: any) => object.toJSON(['id', 'label', 'layerName', 'isLock']));
+
+          return { previewImage, printSVG, printPNG, designJSON };
         } finally {
           c.backgroundImage = originalBackground;
           c.backgroundColor = originalBackgroundColor;
           c.clipPath = originalClipPath;
-          guides.forEach((guide: any, index: number) => guide.set('visible', guideVisibility[index]));
+          layerState.forEach(({ object, visible, excludeFromExport }: {
+            object: any;
+            visible: boolean;
+            excludeFromExport: boolean;
+          }) => object.set({ visible, excludeFromExport }));
           c.renderAll();
         }
       };
 
       const getNormalizedPrintArea = (view: ProductView): PrintArea => getPercentPrintArea(view);
 
-      handleSaveDesign = async () => {
+      handleSaveDesign = async (): Promise<SavedDesignPayload | null> => {
         const errors: string[] = [];
         if (!activeProduct.id || !activeProduct.name) errors.push('El producto seleccionado no es válido.');
         if (!activeProduct.views.length) errors.push('El producto no tiene vistas configuradas.');
@@ -1788,23 +1831,26 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           window.dispatchEvent(new CustomEvent<SaveDesignResult>('editor:save-result', {
             detail: { valid: false, errors },
           }));
-          return;
+          return null;
         }
 
         const originalViewId = currentViewIdRef.current;
         const views: SavedDesignPayload['views'] = [];
+        setIsExporting(true);
         try {
           for (const view of activeProduct.views) {
             await loadViewObjects(view);
-            const canvasJson = canvasDataRef.current[view.id] || '[]';
+            const files = await exportDesignFiles();
+            if (!files) throw new Error(`No se pudieron exportar los archivos de ${view.name || view.id}.`);
             views.push({
               id: view.id,
               name: view.name || view.label || view.id,
               printArea: getNormalizedPrintArea(view),
               printAreaUnit: 'percent',
-              canvasJson,
-              printFile: createPrintFile() || '',
-              preview: canvas.toDataURL({ format: 'png', multiplier: 1 }),
+              canvasJson: JSON.stringify(files.designJSON),
+              printFile: files.printPNG,
+              preview: files.previewImage,
+              files,
             });
           }
         } catch (error) {
@@ -1817,6 +1863,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           historyRef.current = [snapshotCurrentObjects()];
           redoStackRef.current = [];
           updateHistoryButtons();
+          setIsExporting(false);
         }
 
         if (errors.length || views.some((view) => !view.printFile)) {
@@ -1824,7 +1871,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           window.dispatchEvent(new CustomEvent<SaveDesignResult>('editor:save-result', {
             detail: { valid: false, errors },
           }));
-          return;
+          return null;
         }
 
         const payload: SavedDesignPayload = {
@@ -1845,6 +1892,32 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         window.dispatchEvent(new CustomEvent<SaveDesignResult>('editor:save-result', {
           detail: { valid: true, errors: [], payload },
         }));
+        return payload;
+      };
+
+      handleAddToCart = async (event: Event) => {
+        const cartDetail = (event as CustomEvent<{
+          productId?: string;
+          price?: number;
+          selections?: Record<string, unknown>;
+        }>).detail ?? {};
+        const payload = await handleSaveDesign();
+        if (!payload) {
+          window.dispatchEvent(new CustomEvent('editor:cart-design-error'));
+          return;
+        }
+        const cartItem = {
+          id: crypto.randomUUID(),
+          productId: activeProduct.id,
+          price: cartDetail.price ?? activeProduct.price,
+          selections: cartDetail.selections ?? {},
+          design: payload,
+          addedAt: Date.now(),
+        };
+        useCartStore.getState().addDesignItem(cartItem);
+        // Punto de enlace para un POST /api/checkout o una UI de carrito.
+        window.dispatchEvent(new CustomEvent('editor:cart-item-ready', { detail: cartItem }));
+        handleClearDraft();
       };
 
       // Alineación / centrado del objeto dentro de la Zona Segura (printArea) de la
@@ -2873,6 +2946,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:replace-text', handleReplaceText);
       window.addEventListener('editor:clear-draft', handleClearDraft);
       window.addEventListener('editor:add-to-cart', handleAddToCart);
+      window.addEventListener('editor:buy-now', handleAddToCart);
       window.addEventListener('editor:purchase-completed', handleClearDraft);
       // Lista inicial de textos para la sidebar.
       emitSmartInputs();
@@ -2948,6 +3022,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       }
       if (handleClearDraft) window.removeEventListener('editor:clear-draft', handleClearDraft);
       if (handleAddToCart) window.removeEventListener('editor:add-to-cart', handleAddToCart);
+      if (handleAddToCart) window.removeEventListener('editor:buy-now', handleAddToCart);
       if (handleClearDraft) window.removeEventListener('editor:purchase-completed', handleClearDraft);
       if (handleExportTemplate) {
         window.removeEventListener('editor:save-as-template', handleExportTemplate);
@@ -3021,6 +3096,15 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       {draftStatus !== 'idle' && (
         <div className="pointer-events-none absolute left-4 top-4 z-20 rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur" aria-live="polite">
           {draftStatus === 'saving' ? 'Guardando...' : 'Guardado en borrador'}
+        </div>
+      )}
+
+      {isExporting && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/20 backdrop-blur-[1px]" role="status" aria-live="assertive">
+          <div className="flex items-center gap-3 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-xl">
+            <Loader2 size={18} className="animate-spin" />
+            Preparando archivos de alta resolución...
+          </div>
         </div>
       )}
 

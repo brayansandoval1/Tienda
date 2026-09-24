@@ -9,6 +9,7 @@ import SidebarPanel from '@/components/editor/SidebarPanel';
 import TextToolbar from '@/components/editor/TextToolbar';
 import { useProductStore, type Product } from '@/src/store/useProductStore';
 import ViewSelector from '@/components/editor/ViewSelector';
+import CartDrawer from '@/components/editor/CartDrawer';
 
 
 const EditorCanvas = dynamic(() => import('@/components/editor/EditorCanvas'), { ssr: false });
@@ -43,6 +44,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
 
   return (
     <div className="flex h-screen w-screen min-h-0 flex-col overflow-hidden bg-slate-50 text-slate-900">
+      <CartDrawer />
       <header className="z-40 h-14 shrink-0 px-5 lg:px-7">
         <Header />
       </header>
