@@ -12,6 +12,7 @@ import { useCartStore } from '@/src/store/useCartStore';
 
 type PrintArea = ProductView['printArea'];
 const ADMIN_BASE_SIZE = 800;
+type ThreeDViewPreview = { id: string; label: string; textureUrl: string };
 
 const resolveImageUrl = (url: string) => {
   if (!url) return '';
@@ -44,6 +45,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   const [isImageSelected, setIsImageSelected] = useState(false);
   const [is3DModalOpen, setIs3DModalOpen] = useState(false);
   const [threeDTextureUrl, setThreeDTextureUrl] = useState('');
+  const [threeDViews, setThreeDViews] = useState<ThreeDViewPreview[]>([]);
   const [currentViewId, setCurrentViewId] = useState<string>(initialProduct.views[0]?.id ?? 'front');
   const [productViews, setProductViews] = useState<ProductView[]>(initialProduct.views);
   const activeView = productViews.find((view) => view.id === currentViewId) ?? productViews[0];
@@ -66,6 +68,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   const currentViewIdRef = useRef<string>(initialProduct.views[0]?.id ?? 'front');
   const currentLoadRequestId = useRef(0);
   const canvasDataRef = useRef<Record<string, string | null>>({});
+  const viewThumbnailsRef = useRef<Record<string, string>>({});
   const thumbnailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isHydratingDraftRef = useRef(true);
@@ -1270,9 +1273,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           mockups.forEach((mockup: any) => mockup.set('excludeFromExport', false));
           try {
             const thumbnail = c.toDataURL({ format: 'png', multiplier: 0.25 });
-            setViewThumbnails((current) => current[viewId] === thumbnail
-              ? current
-              : { ...current, [viewId]: thumbnail });
+            setViewThumbnails((current) => {
+              if (current[viewId] === thumbnail) return current;
+              const next = { ...current, [viewId]: thumbnail };
+              viewThumbnailsRef.current = next;
+              return next;
+            });
           } finally {
             mockups.forEach((mockup: any, index: number) => mockup.set('excludeFromExport', originalExportFlags[index]));
           }
@@ -1353,6 +1359,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         canvasDataRef.current = {};
         designBackgroundColorsRef.current = {};
+        viewThumbnailsRef.current = {};
         setViewThumbnails({});
         setDesignBackgroundColor('transparent');
         const firstColor = activeView.colorVariants?.[0] ?? null;
@@ -1386,22 +1393,21 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       const open3DPreview = () => {
         const c = fabricCanvasRef.current;
         if (!c) return;
-        // La textura del modal 3D debe mostrar el mockup como base para que el
-        // teléfono se vea con su funda; se reactiva temporalmente el objeto y
-        // se restaura justo después de exportar (equivalente al comportamiento
-        // del antiguo backgroundImage).
-        const mockups = c.getObjects().filter((obj: any) => obj?.isMockup);
-        const previousExportFlags = mockups.map((m: any) => m.excludeFromExport);
-        mockups.forEach((m: any) => (m.excludeFromExport = false));
-        try {
-          const dataUrl = c.toDataURL({
-            format: 'png',
-            multiplier: 1,
-          });
-          setThreeDTextureUrl(dataUrl);
-        } finally {
-          mockups.forEach((m: any, index: number) => (m.excludeFromExport = previousExportFlags[index]));
-        }
+        // Cada cara usa el mockup compuesto real del editor. Así no se deforma
+        // una foto 2D sobre una malla inventada y se conservan frente, espalda
+        // y cualquier vista extra creada en el producto.
+        c.discardActiveObject();
+        c.renderAll();
+        const activePreview = c.toDataURL({ format: 'png', multiplier: 1 });
+        const previews = activeProduct.views.map((view) => ({
+          id: view.id,
+          label: view.label || view.name || view.id,
+          textureUrl: view.id === currentViewIdRef.current
+            ? activePreview
+            : viewThumbnailsRef.current[view.id] || view.mockupUrl,
+        }));
+        setThreeDTextureUrl(activePreview);
+        setThreeDViews(previews);
         setIs3DModalOpen(true);
       };
 
@@ -3397,6 +3403,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       <Product3DModal
         open={is3DModalOpen}
         textureUrl={threeDTextureUrl}
+        views={threeDViews}
         onClose={() => setIs3DModalOpen(false)}
       />
     </div>
