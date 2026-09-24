@@ -28,9 +28,10 @@ const getInitialSelectedOptions = (_product: Product): Record<string, ProductOpt
 
 interface EditorCanvasProps {
   product: Product;
+  workflowStep?: 'design' | 'options' | 'review';
 }
 
-export default function EditorCanvas({ product: initialProduct }: EditorCanvasProps) {
+export default function EditorCanvas({ product: initialProduct, workflowStep = 'design' }: EditorCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Contenedor del lienzo central: se usa para dimensionar el canvas y aplicar
   // "zoom to fit" de forma proporcional al área disponible del editor.
@@ -1949,6 +1950,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           productId?: string;
           price?: number;
           selections?: Record<string, unknown>;
+          quantity?: number;
         }>).detail ?? {};
         const payload = await handleSaveDesign();
         if (!payload) {
@@ -1960,7 +1962,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           productId: activeProduct.id,
           price: cartDetail.price ?? activeProduct.price,
           selections: cartDetail.selections ?? {},
-          design: payload,
+          design: { ...payload, quantity: Math.max(1, Number(cartDetail.quantity) || 1) },
           addedAt: Date.now(),
         };
         useCartStore.getState().addDesignItem(cartItem);
@@ -3213,7 +3215,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           propio de esa cara, para que frente, espalda y vistas adicionales se
           distingan aun cuando se use el mismo mockup base. */}
       {productViews.length > 1 && (
-        <div className="absolute right-3 top-1/2 z-20 flex max-h-[calc(100%-2rem)] -translate-y-1/2 flex-col gap-3 overflow-y-auto rounded-2xl bg-white/80 p-2 shadow-lg shadow-slate-900/10 backdrop-blur-md sm:right-4">
+        <div className={`absolute top-1/2 z-20 flex max-h-[calc(100%-2rem)] -translate-y-1/2 flex-col gap-3 overflow-y-auto rounded-2xl bg-white/80 p-2 shadow-lg shadow-slate-900/10 backdrop-blur-md ${workflowStep === 'options' ? 'left-3 sm:left-4' : 'right-3 sm:right-4'}`}>
           {productViews.map((view) => {
             const isActive = view.id === currentViewId;
             const thumbnailUrl = viewThumbnails[view.id]

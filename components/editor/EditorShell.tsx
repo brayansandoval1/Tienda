@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import { useState, useEffect } from 'react';
 import type { Producto, TextOptions } from '@/types/product';
 import FloatingFooter from '@/components/editor/FloatingFooter';
-import Header from '@/components/editor/Header';
+import Header, { type EditorStep } from '@/components/editor/Header';
 import SidebarPanel from '@/components/editor/SidebarPanel';
 import TextToolbar from '@/components/editor/TextToolbar';
 import { useProductStore, type Product } from '@/src/store/useProductStore';
@@ -20,6 +20,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   const [currentProduct, setCurrentProduct] = useState<Product>(
     initialProduct || products.find((p) => p.id === producto.id) || products[0],
   );
+  const [activeStep, setActiveStep] = useState<EditorStep>('design');
 
   useEffect(() => {
     const matchingProduct = products.find((p) => p.id === producto.id);
@@ -46,17 +47,17 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
     <div className="flex h-screen w-screen min-h-0 flex-col overflow-hidden bg-slate-50 text-slate-900">
       <CartDrawer />
       <header className="z-40 h-14 shrink-0 px-5 lg:px-7">
-        <Header />
+        <Header activeStep={activeStep} onStepChange={setActiveStep} />
       </header>
 
       {/* Franja de herramientas contextual: barra blanca de ancho completo y fija,
           justo debajo de la navegación. Está FUERA del área del canvas, por lo que
           nunca tapa ni empuja el producto. */}
-      <TextToolbar />
+      {activeStep === 'design' && <TextToolbar />}
 
       <div className="flex-1 flex flex-row overflow-hidden relative">
         {/* Panel Izquierdo: herramientas de diseño */}
-        <div className="w-80 h-full bg-white border-r border-slate-200 flex flex-col z-10 overflow-hidden">
+        <div className={`${activeStep === 'design' ? 'w-80' : 'w-0 border-r-0'} h-full bg-white border-r border-slate-200 flex flex-col z-10 overflow-hidden transition-[width] duration-200`} aria-hidden={activeStep !== 'design'}>
           <SidebarPanel product={currentProduct} />
         </div>
 
@@ -65,13 +66,14 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
           <EditorCanvas
             key={`${currentProduct.id}-${currentProduct.updatedAt ?? 0}`}
             product={currentProduct}
+            workflowStep={activeStep}
           />
-          <FloatingFooter onReset={() => {}} />
+          {activeStep === 'design' && <FloatingFooter onReset={() => {}} />}
         </main>
 
         {/* Panel Derecho: producto / compra */}
-        <div className="w-80 h-full bg-white border-l border-slate-200 flex flex-col z-10 overflow-hidden">
-          <ViewSelector product={currentProduct} />
+        <div className={`${activeStep === 'design' ? 'w-80' : 'w-[42%] min-w-[400px] max-w-[600px]'} h-full bg-white border-l border-slate-200 flex flex-col z-10 overflow-hidden transition-[width] duration-200`}>
+          <ViewSelector product={currentProduct} panel={activeStep === 'review' ? 'preview' : 'options'} workflowStep={activeStep} />
         </div>
       </div>
     </div>
