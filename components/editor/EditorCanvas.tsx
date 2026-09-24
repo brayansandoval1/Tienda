@@ -57,11 +57,16 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   );
   const [currentMockupUrl, setCurrentMockupUrl] = useState(initialProduct.views[0]?.mockupUrl ?? '');
   const [currentPrintArea, setCurrentPrintArea] = useState<PrintArea | null>(initialProduct.views[0]?.printArea ?? null);
+  // Previsualización persistente por cara. No se deriva del estado de React del
+  // lienzo: se captura directamente desde Fabric para reflejar texto, imágenes,
+  // fondo y posición exactos de cada diseño.
+  const [viewThumbnails, setViewThumbnails] = useState<Record<string, string>>({});
   const selectedColorIdsRef = useRef<Record<string, string>>({});
   const designBackgroundColorsRef = useRef<Record<string, string>>({});
   const currentViewIdRef = useRef<string>(initialProduct.views[0]?.id ?? 'front');
   const currentLoadRequestId = useRef(0);
   const canvasDataRef = useRef<Record<string, string | null>>({});
+  const thumbnailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isHydratingDraftRef = useRef(true);
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
@@ -1252,6 +1257,40 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         return JSON.stringify((serializedCanvas.objects || []).filter((obj: any) => !obj.isDesignBackground));
       };
 
+      // Genera una miniatura del escenario completo sin alterar la exportación
+      // normal. Los mockups se excluyen de los archivos de impresión, pero sí
+      // deben aparecer aquí para que la tarjeta sea reconocible de un vistazo.
+      // La guía permanece fuera gracias a `excludeFromExport`.
+      const captureViewThumbnail = (viewId = currentViewIdRef.current, immediate = false) => {
+        const capture = () => {
+          const c = fabricCanvasRef.current;
+          if (!c || viewId !== currentViewIdRef.current) return;
+          const mockups = c.getObjects().filter((object: any) => object?.isMockup);
+          const originalExportFlags = mockups.map((mockup: any) => mockup.excludeFromExport);
+          mockups.forEach((mockup: any) => mockup.set('excludeFromExport', false));
+          try {
+            const thumbnail = c.toDataURL({ format: 'png', multiplier: 0.25 });
+            setViewThumbnails((current) => current[viewId] === thumbnail
+              ? current
+              : { ...current, [viewId]: thumbnail });
+          } finally {
+            mockups.forEach((mockup: any, index: number) => mockup.set('excludeFromExport', originalExportFlags[index]));
+          }
+        };
+
+        if (immediate) {
+          if (thumbnailTimerRef.current) clearTimeout(thumbnailTimerRef.current);
+          thumbnailTimerRef.current = null;
+          capture();
+          return;
+        }
+        if (thumbnailTimerRef.current) clearTimeout(thumbnailTimerRef.current);
+        thumbnailTimerRef.current = setTimeout(() => {
+          thumbnailTimerRef.current = null;
+          capture();
+        }, 120);
+      };
+
       // Garantiza que ningún objeto quede bloqueado para arrastrar/escalar
       const ensureObjectsInteractable = () => {
         const c = fabricCanvasRef.current;
@@ -1314,6 +1353,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
 
         canvasDataRef.current = {};
         designBackgroundColorsRef.current = {};
+        setViewThumbnails({});
         setDesignBackgroundColor('transparent');
         const firstColor = activeView.colorVariants?.[0] ?? null;
         const initialColorIds = firstColor ? { [activeView.id]: firstColor.id } : {};
@@ -1332,6 +1372,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         canvas.clear();
         drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(activeView));
         const mockupLoad = loadProductMockup(activeView);
+        void mockupLoad.then(() => captureViewThumbnail(activeView.id, true));
         canvas.requestRenderAll();
         isUpdatingHistory.current = false;
         ensureObjectsInteractable();
@@ -1404,6 +1445,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         redoStackRef.current = [];
         updateHistoryButtons();
         canvas.requestRenderAll();
+        captureViewThumbnail(viewId, true);
       };
 
       const switchView = async (viewId: string) => {
@@ -1415,6 +1457,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         console.log('👁️ [VISTA APUNTADA]:', activeProduct.views[requestedViewIndex]);
 
         // Persistir los objetos de la cara actual antes de cambiar de mockup.
+        captureViewThumbnail(currentViewIdRef.current, true);
         canvasDataRef.current[currentViewIdRef.current] = snapshotCurrentObjects();
         isUpdatingHistory.current = true;
         // Cada vista tiene su diseño INDEPENDIENTE: tras guardar el snapshot,
@@ -3006,6 +3049,18 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       // Un texto que quede vacío al terminar de editarlo se restaura para que
       // el objeto no pierda su caja (y siga siendo seleccionable/editable).
       canvas.on('text:editing:exited', preserveEmptyText);
+
+      // Mantiene la tarjeta de la vista activa al día sin renderizar una imagen
+      // por cada píxel de un arrastre: `captureViewThumbnail` agrupa cambios
+      // rápidos en una única captura al terminar el siguiente instante visual.
+      canvas.on('object:added', () => captureViewThumbnail());
+      canvas.on('object:removed', () => captureViewThumbnail());
+      canvas.on('object:moving', () => captureViewThumbnail());
+      canvas.on('object:scaling', () => captureViewThumbnail());
+      canvas.on('object:rotating', () => captureViewThumbnail());
+      canvas.on('object:modified', () => captureViewThumbnail());
+      canvas.on('text:changed', () => captureViewThumbnail());
+      canvas.on('path:created', () => captureViewThumbnail());
     });
 
     return () => {
@@ -3120,6 +3175,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       clearTimeout(resizeTimer);
       if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
       draftSaveTimerRef.current = null;
+      if (thumbnailTimerRef.current) clearTimeout(thumbnailTimerRef.current);
+      thumbnailTimerRef.current = null;
       fitOnResize = null;
     };
   }, []);
@@ -3146,24 +3203,45 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         </div>
       )}
 
-      {/* Selector de Cara / Vista del Producto (pill toggle flotante) */}
+      {/* Vistas del producto: cada tarjeta conserva una miniatura del diseño
+          propio de esa cara, para que frente, espalda y vistas adicionales se
+          distingan aun cuando se use el mismo mockup base. */}
       {productViews.length > 1 && (
-        <div className="absolute top-4 right-4 z-20 flex items-center gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-md backdrop-blur-md">
+        <div className="absolute right-3 top-1/2 z-20 flex max-h-[calc(100%-2rem)] -translate-y-1/2 flex-col gap-3 overflow-y-auto rounded-2xl bg-white/80 p-2 shadow-lg shadow-slate-900/10 backdrop-blur-md sm:right-4">
           {productViews.map((view) => {
             const isActive = view.id === currentViewId;
+            const thumbnailUrl = viewThumbnails[view.id]
+              || (isActive ? currentMockupUrl : view.mockupUrl)
+              || initialProduct.views.find((item) => item.id === view.id)?.mockupUrl;
             return (
               <button
                 key={view.id}
                 type="button"
                 onClick={() => switchViewRef.current?.(view.id)}
                 aria-pressed={isActive}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                aria-label={`Cambiar a la vista ${view.label || view.name || view.id}`}
+                className={`group w-[88px] overflow-hidden rounded-xl border-2 bg-white text-left shadow-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 sm:w-[104px] ${
                   isActive
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-600 hover:bg-slate-100'
+                    ? 'border-blue-700 ring-1 ring-blue-700/20'
+                    : 'border-transparent hover:border-slate-300 hover:shadow-md'
                 }`}
               >
-                {view.label || view.name || view.id}
+                <div className="aspect-square w-full overflow-hidden bg-slate-100">
+                  {thumbnailUrl ? (
+                    <img
+                      src={thumbnailUrl}
+                      alt=""
+                      className="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.03]"
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center px-2 text-center text-[10px] text-slate-400">
+                      Sin vista previa
+                    </div>
+                  )}
+                </div>
+                <span className={`block truncate px-2 py-2 text-center text-xs font-semibold ${isActive ? 'text-blue-800' : 'text-slate-700'}`}>
+                  {view.label || view.name || view.id}
+                </span>
               </button>
             );
           })}
