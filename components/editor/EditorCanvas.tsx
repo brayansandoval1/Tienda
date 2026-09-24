@@ -7,6 +7,7 @@ import type { ColorVariant, Product, ProductOptionValue, ProductView } from '@/s
 import type { SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
 import Product3DModal from '@/components/editor/Product3DModal';
 import { saveTemplateToStorage, updateTemplateInStorage, listSavedTemplates, getCategoryIcon } from '@/src/utils/templateStorage';
+import { clearDraft, getDraft, saveDraft, type DesignDraft } from '@/src/utils/designDraftStorage';
 
 type PrintArea = ProductView['printArea'];
 const ADMIN_BASE_SIZE = 800;
@@ -60,6 +61,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
   const currentViewIdRef = useRef<string>(initialProduct.views[0]?.id ?? 'front');
   const currentLoadRequestId = useRef(0);
   const canvasDataRef = useRef<Record<string, string | null>>({});
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isHydratingDraftRef = useRef(true);
+  const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const switchViewRef = useRef<(viewId: string) => void>(null);
   const handleColorChangeRef = useRef<((variant: ColorVariant) => void) | null>(null);
   const handleDesignBgColorChangeRef = useRef<((color: string) => void) | null>(null);
@@ -131,7 +135,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       handleOptionMockup: (e: Event) => void,
       handleOptionsChanged: (e: Event) => void,
       handleApplyTemplate: (e: Event) => void,
-      handleExportTemplate: (e: Event) => void;
+      handleExportTemplate: (e: Event) => void,
+      handleClearDraft: () => void,
+      handleAddToCart: () => void;
             let handleReplaceText: ((e: Event) => void) | undefined = undefined;
 
     // Carga dinámica de Fabric solo en el cliente
@@ -1240,7 +1246,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         // `toJSON()` conserva todas las propiedades necesarias para volver a
         // enlivenar textos, imágenes y vectores de esta cara. Las guías no se
         // incluyen porque se marcan con `excludeFromExport`.
-        const serializedCanvas = c.toJSON();
+        const serializedCanvas = c.toJSON(['id', 'label', 'layerName', 'isLock']);
         return JSON.stringify((serializedCanvas.objects || []).filter((obj: any) => !obj.isDesignBackground));
       };
 
@@ -1323,7 +1329,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         isUpdatingHistory.current = true;
         canvas.clear();
         drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(activeView));
-        loadProductMockup(activeView);
+        const mockupLoad = loadProductMockup(activeView);
         canvas.requestRenderAll();
         isUpdatingHistory.current = false;
         ensureObjectsInteractable();
@@ -1331,6 +1337,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         historyRef.current = [snapshotCurrentObjects()];
         redoStackRef.current = [];
         updateHistoryButtons();
+        return mockupLoad;
       };
 
       const open3DPreview = () => {
@@ -1356,7 +1363,7 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       };
 
       setupProductRef.current = setupProduct;
-      setupProduct(initialProduct);
+      const initialProductSetup = setupProduct(initialProduct);
       handleColorChangeRef.current = handleProductColorChange;
       handleProductColor = (event: Event) => {
         const variant = (event as CustomEvent<{ variant?: ColorVariant }>).detail?.variant;
@@ -1457,6 +1464,124 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       };
       // @ts-ignore ref assignment for React 19 readonly typing
       (switchViewRef as any).current = switchView;
+
+      const isDraftDesignObject = (object: any) =>
+        !object?.isMockup &&
+        !object?.isGuide &&
+        !object?.isGuideLine &&
+        !object?.isCropOverlay &&
+        !object?.isDesignBackground;
+
+      const serializeCurrentDraftView = () => {
+        // Estas propiedades son parte del contrato del diseño y deben viajar
+        // intactas a localStorage (y después al endpoint de persistencia).
+        const canvasJSON = canvas.toJSON(['id', 'label', 'layerName', 'isLock']);
+        // Las capas del sistema no forman parte del diseño: se recrean a partir
+        // del producto activo al recuperar el borrador.
+        canvasJSON.objects = canvas.getObjects()
+          .filter(isDraftDesignObject)
+          .map((object: any) => object.toJSON(['id', 'label', 'layerName', 'isLock']));
+        return canvasJSON as Record<string, unknown>;
+      };
+
+      const persistDraft = () => {
+        if (isHydratingDraftRef.current || !fabricCanvasRef.current) return;
+        const canvasJSON = serializeCurrentDraftView();
+        canvasDataRef.current[currentViewIdRef.current] = JSON.stringify(canvasJSON.objects ?? []);
+        const views = Object.fromEntries(
+          Object.entries(canvasDataRef.current).filter(([, objects]) => typeof objects === 'string'),
+        ) as Record<string, string>;
+        const draft: DesignDraft = {
+          schemaVersion: 1,
+          productId: activeProduct.id,
+          updatedAt: Date.now(),
+          currentViewId: currentViewIdRef.current,
+          views,
+          canvasJSON,
+        };
+        if (saveDraft(draft)) setDraftStatus('saved');
+      };
+
+      const scheduleDraftSave = () => {
+        if (isHydratingDraftRef.current) return;
+        if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+        setDraftStatus('saving');
+        draftSaveTimerRef.current = setTimeout(() => {
+          draftSaveTimerRef.current = null;
+          persistDraft();
+        }, 1000);
+      };
+
+      const restoreDraftCanvas = (canvasJSON: Record<string, any>) => new Promise<void>((resolve) => {
+        const preservedBase = canvas.getObjects().filter(
+          (object: any) => object.isGuide || object.isGuideLine || object.isDesignBackground || object.isMockup,
+        );
+        const objects = Array.isArray(canvasJSON.objects) ? canvasJSON.objects : [];
+        canvas.loadFromJSON({ ...canvasJSON, objects }, () => {
+          if (fabricCanvasRef.current !== canvas) return resolve();
+          preservedBase.forEach((baseObject: any) => {
+            canvas.add(baseObject);
+            if (baseObject.isMockup || baseObject.isGuide) canvas.sendToBack(baseObject);
+          });
+          canvas.getObjects().filter(isDraftDesignObject).forEach((object: any) => {
+            makeObjectInteractive(object);
+            object.setCoords?.();
+            clampToPrintArea(object);
+          });
+          if (safeZoneRef.current) canvas.sendToBack(safeZoneRef.current);
+          canvas.renderAll();
+          emitSmartInputs();
+          window.dispatchEvent(new CustomEvent('editor:selection-changed', { detail: { selectedObject: null } }));
+          resolve();
+        });
+      });
+
+      const hydrateDraft = async () => {
+        const draft = getDraft(activeProduct.id);
+        await initialProductSetup;
+        if (!draft || fabricCanvasRef.current !== canvas) {
+          isHydratingDraftRef.current = false;
+          return;
+        }
+
+        canvasDataRef.current = { ...draft.views };
+        if (draft.currentViewId !== currentViewIdRef.current && activeProduct.views.some((view) => view.id === draft.currentViewId)) {
+          await switchView(draft.currentViewId);
+        } else {
+          await restoreDraftCanvas(draft.canvasJSON);
+        }
+        // `loadFromJSON` limpia la instancia de Fabric. Aunque se reinserten
+        // las referencias de la base, una carga de mockup previa puede seguir
+        // en vuelo (por ejemplo, tras vaciar la caché del navegador). Volver a
+        // resolver la vista al terminar la hidratación hace atómica la pareja
+        // mockup + zona segura y evita una guía calculada sin imagen base.
+        const restoredView = getView(currentViewIdRef.current);
+        const restoredViewIndex = Math.max(
+          0,
+          baseProductViews.findIndex((view) => view.id === restoredView.id),
+        );
+        const restoredResolvedView = resolveCurrentViewData(
+          baseProductViews,
+          restoredViewIndex,
+          activeOptionSelections,
+        );
+        await loadResolvedViewBackground(restoredView, restoredResolvedView);
+        historyRef.current = [snapshotCurrentObjects()];
+        redoStackRef.current = [];
+        updateHistoryButtons();
+        isHydratingDraftRef.current = false;
+        setDraftStatus('saved');
+      };
+
+      handleClearDraft = () => {
+        if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+        draftSaveTimerRef.current = null;
+        clearDraft(activeProduct.id);
+        setDraftStatus('idle');
+      };
+      // El checkout puede emitir este mismo evento al confirmarse el pago.
+      handleAddToCart = handleClearDraft;
+      void hydrateDraft();
 
       // Restringir movimiento/escalado de los objetos al printArea de la vista activa
       canvas.on('object:moving', (e: any) => {
@@ -2746,6 +2871,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       window.addEventListener('editor:options-changed', handleOptionsChanged);
       window.addEventListener('editor:apply-template', handleApplyTemplate);
       window.addEventListener('editor:replace-text', handleReplaceText);
+      window.addEventListener('editor:clear-draft', handleClearDraft);
+      window.addEventListener('editor:add-to-cart', handleAddToCart);
+      window.addEventListener('editor:purchase-completed', handleClearDraft);
       // Lista inicial de textos para la sidebar.
       emitSmartInputs();
       window.addEventListener('editor:save-as-template', handleExportTemplate);
@@ -2753,6 +2881,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       canvas.on('object:added', saveState);
       canvas.on('object:modified', saveState);
       canvas.on('object:removed', saveState);
+      // Auto-guardado con debounce: incluye trazos libres creados por Fabric.
+      canvas.on('object:added', scheduleDraftSave);
+      canvas.on('object:modified', scheduleDraftSave);
+      canvas.on('object:removed', scheduleDraftSave);
+      canvas.on('path:created', scheduleDraftSave);
       // Panel de textos: refrescar la lista de la sidebar al añadir/eliminar
       // objetos o al escribir directamente sobre un texto en el lienzo.
       canvas.on('object:added', emitSmartInputs);
@@ -2813,6 +2946,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       if (handleApplyTemplate) {
         window.removeEventListener('editor:apply-template', handleApplyTemplate);
       }
+      if (handleClearDraft) window.removeEventListener('editor:clear-draft', handleClearDraft);
+      if (handleAddToCart) window.removeEventListener('editor:add-to-cart', handleAddToCart);
+      if (handleClearDraft) window.removeEventListener('editor:purchase-completed', handleClearDraft);
       if (handleExportTemplate) {
         window.removeEventListener('editor:save-as-template', handleExportTemplate);
       }
@@ -2869,6 +3005,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       setupProductRef.current = null;
       window.removeEventListener('resize', handleWindowResize);
       clearTimeout(resizeTimer);
+      if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
       fitOnResize = null;
     };
   }, []);
@@ -2879,6 +3017,12 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
       className="flex-1 h-full w-full flex items-center justify-center p-6 relative overflow-hidden bg-slate-100/50 mx-auto"
     >
       <canvas ref={canvasRef} className="block select-none" style={{ pointerEvents: 'auto' }} />
+
+      {draftStatus !== 'idle' && (
+        <div className="pointer-events-none absolute left-4 top-4 z-20 rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur" aria-live="polite">
+          {draftStatus === 'saving' ? 'Guardando...' : 'Guardado en borrador'}
+        </div>
+      )}
 
       {/* Selector de Cara / Vista del Producto (pill toggle flotante) */}
       {productViews.length > 1 && (
