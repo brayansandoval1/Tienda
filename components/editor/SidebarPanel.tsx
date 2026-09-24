@@ -51,6 +51,17 @@ const dispatchReplaceText = (id: string, text: string) => {
   window.dispatchEvent(new CustomEvent('editor:replace-text', { detail: { id, text } }));
 };
 
+/** Preview gráfica para presets y plantillas antiguas sin render persistido. */
+function TemplateGraphicPreview({ name, emoji, accent }: { name: string; emoji: string; accent: string }) {
+  return (
+    <div className={`relative aspect-square overflow-hidden bg-gradient-to-br ${accent}`}>
+      <span className="absolute -left-5 -top-5 h-16 w-16 rounded-full bg-white/40 blur-sm" />
+      <span className="absolute -bottom-7 -right-4 h-20 w-20 rounded-full border-[10px] border-white/40" />
+      <div className="relative flex h-full flex-col items-center justify-center gap-1.5 px-2 text-center"><span className="text-5xl drop-shadow-sm transition duration-300 group-hover:scale-110 group-hover:rotate-6">{emoji}</span><span className="max-w-full truncate rounded-md bg-white/55 px-1.5 py-0.5 text-[9px] font-bold text-slate-700 backdrop-blur">{name}</span></div>
+    </div>
+  );
+}
+
 export default function SidebarPanel({ product }: { product?: Product }) { // Removed onAddShape prop
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
   const [iconQuery, setIconQuery] = useState('');
@@ -618,35 +629,24 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
                   onClick={() => handleSelectTemplate(template)}
                   className="block w-full text-left"
                 >
-                {/* Vista previa: ícono representativo grande de la categoría
-                    (ej. 🎂, ❤️) en lugar del screenshot miniaturizado del
-                    canvas; se usa el `icon` guardado, con fallback al mapa
-                    CATEGORY_ICONS para plantillas guardadas antes del cambio.
-                    El clic sigue cargando el JSON completo en el canvas. */}
                 {(() => {
-                  // Prioridad: ícono actual de la categoría (respeta cambios
-                  // del admin en tiempo real) → ícono guardado → emoji mock.
                   const categoryIcon = template.saved ? getCategoryIcon(template.saved.category) : template.emoji;
                   const previewIcon =
                     categoryIcon !== '⭐' ? categoryIcon : template.saved?.icon ?? template.emoji;
-                  // Fallback: si ni la categoría ni la plantilla tienen ícono,
-                  // muestra su miniatura dataURL.
-                  if (previewIcon === '⭐' && template.saved?.thumbnail) {
+                  // Sólo una plantilla personalizada que ya tiene render
+                  // compuesto muestra producto. Los presets y datos antiguos
+                  // conservan una preview gráfica; así no se inyecta el mockup
+                  // en las tarjetas superiores ni se muestran capturas negras.
+                  if (template.saved?.previewUrl && template.saved.previewVersion === 2) {
                     return (
                       <img
-                        src={template.saved.thumbnail}
+                        src={template.saved.previewUrl}
                         alt={template.name}
                         className="aspect-square w-full bg-slate-50 object-cover"
                       />
                     );
                   }
-                  return (
-                <div className={`relative flex aspect-square items-center justify-center overflow-hidden bg-gradient-to-br text-5xl ${template.accent}`}>
-                      <span className="absolute -left-5 -top-5 h-16 w-16 rounded-full bg-white/35 blur-sm" />
-                      <span className="absolute -bottom-7 -right-4 h-20 w-20 rounded-full border-[10px] border-white/35" />
-                      <span className="relative drop-shadow-sm transition duration-300 group-hover:scale-110 group-hover:rotate-6">{previewIcon}</span>
-                    </div>
-                  );
+                  return <TemplateGraphicPreview name={template.name} emoji={previewIcon} accent={template.accent} />;
                 })()}
                 <div className="px-3 py-2.5">
                   <p className="truncate text-sm font-semibold text-slate-800">{template.name}</p>

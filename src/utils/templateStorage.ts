@@ -12,6 +12,10 @@ export interface SavedTemplate {
   category: string;
   /** Miniatura dataURL (Base64) generada desde el canvas. */
   thumbnail: string;
+  /** Mockup del producto con el diseño compuesto; se usa en la galería. */
+  previewUrl?: string;
+  /** Permite invalidar previews antiguas generadas con transparencia. */
+  previewVersion?: 2;
   /** Tipo/categoría del producto para el que fue diseñada (ej. 'Funda'). */
   productType?: string;
   /** Ícono/emoji representativo según la categoría (ej. '🎂' para Cumpleaños). */

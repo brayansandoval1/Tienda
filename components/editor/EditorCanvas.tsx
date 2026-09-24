@@ -2765,7 +2765,41 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           return;
         }
 
-        // 1. Ocultar temporalmente la capa del mockup (imagen base del
+        // 1. Capturar primero el producto compuesto con el diseño. Esta es la
+        // miniatura fotorrealista de la galería de plantillas: contiene el
+        // mockup seleccionado y el arte ya aplicado, pero no las guías.
+        const isTechnicalLayer = (obj: unknown) => {
+          const candidate = obj as { isGuide?: boolean; isGuideLine?: boolean; isCropOverlay?: boolean };
+          return Boolean(candidate?.isGuide || candidate?.isGuideLine || candidate?.isCropOverlay);
+        };
+        const hiddenTechnicalLayers: { object: fabric.Object; wasVisible: boolean }[] = [];
+        canvas.getObjects().forEach((object: fabric.Object) => {
+          if (isTechnicalLayer(object)) {
+            hiddenTechnicalLayers.push({ object, wasVisible: object.visible ?? true });
+            object.visible = false;
+          }
+        });
+        // Fabric puede exportar transparencias como negro en algunos navegadores
+        // al serializar el JPEG. Forzamos un fondo pastel claro exclusivamente
+        // para la preview y restauramos el color real al final.
+        const originalBackgroundColor = canvas.backgroundColor;
+        canvas.backgroundColor = '#eef2ff';
+        canvas.renderAll();
+        const PREVIEW_MAX_CHARS = 350_000;
+        const generateProductPreview = (multiplier: number, quality: number) =>
+          canvas.toDataURL({ format: 'jpeg', multiplier, quality, backgroundColor: '#eef2ff' });
+        // Se intenta primero una captura 4× (3200 px en el canvas lógico de
+        // 800 px), perfecta para pantallas Retina. Se reduce sólo si excede
+        // la cuota razonable de localStorage.
+        let productPreview = generateProductPreview(4, 0.9);
+        if (productPreview.length > PREVIEW_MAX_CHARS) {
+          productPreview = generateProductPreview(2.5, 0.86);
+        }
+        if (productPreview.length > PREVIEW_MAX_CHARS) {
+          productPreview = generateProductPreview(1.5, 0.82);
+        }
+
+        // 2. Ocultar temporalmente la capa del mockup (imagen base del
         //    producto / fondo) para que no aparezca ni en la miniatura ni en
         //    el JSON de la plantilla.
         const isMockupLayer = (obj: unknown) => {
@@ -2785,12 +2819,11 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         const hideBackgroundImage = Boolean(backgroundImage && isMockupLayer(backgroundImage));
         if (hideBackgroundImage && backgroundImage) backgroundImage.visible = false;
 
-        // 2. Fondo blanco temporal para la captura (evita negros en JPEG en
+        // 3. Fondo blanco temporal para la captura (evita negros en JPEG en
         //    zonas transparentes y da una miniatura limpia).
-        const originalBackgroundColor = canvas.backgroundColor;
         canvas.backgroundColor = '#ffffff';
 
-        // 3. Generar miniatura limpia (sin mockup, sobre fondo blanco).
+        // 4. Generar miniatura limpia (sin mockup, sobre fondo blanco).
         //    Calidad adaptativa para cuidar la cuota de localStorage:
         //    se intenta primero PNG 2x (retina nítido) y, si pesa demasiado,
         //    se degrada a JPEG de alta calidad antes de persistir.
@@ -2833,6 +2866,9 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
         //    fondo original y re-render. El usuario/admin no nota ningún
         //    parpadeo y puede seguir editando normalmente.
         hiddenLayers.forEach(({ object, wasVisible }) => {
+          object.visible = wasVisible;
+        });
+        hiddenTechnicalLayers.forEach(({ object, wasVisible }) => {
           object.visible = wasVisible;
         });
         if (hideBackgroundImage && backgroundImage) backgroundImage.visible = true;
@@ -2885,6 +2921,8 @@ export default function EditorCanvas({ product: initialProduct }: EditorCanvasPr
           // en el editor para productos de este mismo tipo.
           productType: activeProduct.category || activeProduct.id,
           createdAt: existing?.createdAt ?? Date.now(),
+          previewUrl: productPreview,
+          previewVersion: 2 as const,
           templateJSON: { version: canvasJSON.version, objects: designObjects },
         };
         let saved = existing
