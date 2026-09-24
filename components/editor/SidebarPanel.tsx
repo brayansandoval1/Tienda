@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import type { TextOptions } from '@/types/product';
-import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2, Pencil, Layers } from 'lucide-react';
+import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2, Pencil, Layers, X } from 'lucide-react';
 import { MOCK_TEMPLATES, type MockTemplate } from '@/src/data/mockTemplates';
 import { listSavedTemplates, deleteSavedTemplate, getCategoryIcon, listTemplateCategories, saveTemplateCategories, saveTemplateIcon, DEFAULT_TEMPLATE_CATEGORIES, type SavedTemplate } from '@/src/utils/templateStorage';
 import type { Product } from '@/src/store/useProductStore';
@@ -78,6 +78,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   const [editingTemplate, setEditingTemplate] = useState<SavedTemplate | null>(null);
   // Filtro de categorías del tab "Plantillas" ("Todas" muestra el catálogo completo).
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('Todas');
+  const [templateSearch, setTemplateSearch] = useState('');
 
   // Categorías de plantillas creadas por el administrador (persistidas en
   // localStorage): alimentan tanto el select del formulario como los chips
@@ -135,6 +136,11 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   const currentProductType = product?.category ?? '';
   const templatesForProduct = allTemplates.filter(
     (template) => !template.productType || template.productType === currentProductType,
+  );
+  const normalizedTemplateSearch = templateSearch.trim().toLocaleLowerCase();
+  const visibleTemplates = templatesForProduct.filter((template) =>
+    (selectedCategoryFilter === 'Todas' || template.category === selectedCategoryFilter) &&
+    (!normalizedTemplateSearch || `${template.name} ${template.category} ${template.description}`.toLocaleLowerCase().includes(normalizedTemplateSearch)),
   );
 
   // Carga inicial + refresco cuando el editor guarda una plantilla nueva.
@@ -373,12 +379,24 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
 
       {activeTab === 'plantillas' && (
         <div className="space-y-3">
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Plantillas prediseñadas</p>
+          <div className="flex items-center justify-between px-1 pt-0.5">
+            <div>
+              <h2 className="text-xl font-bold tracking-[-0.04em] text-slate-900">Plantillas</h2>
+              <p className="mt-0.5 text-[11px] text-slate-500">Comienza con un diseño listo.</p>
+            </div>
+            <button type="button" onClick={() => setActiveTab('recursos')} className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900" aria-label="Cerrar plantillas"><X size={20} /></button>
+          </div>
+          <label className="relative block">
+            <Search size={18} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input value={templateSearch} onChange={(event) => setTemplateSearch(event.target.value)} placeholder="Buscar plantillas" className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-100" />
+          </label>
 
           
           {/* Modo Administrador: guardar/actualizar el diseño actual como plantilla.
               TODO: cuando exista BD, este dispatch pasa a POST (o PUT si es edición). */}
-          <div className={`space-y-2 rounded-xl border border-dashed p-2.5 ${editingTemplate ? 'border-slate-900 bg-slate-100' : 'border-slate-300 bg-slate-50'}`}>
+          <details className={`rounded-xl border border-dashed p-2.5 ${editingTemplate ? 'border-slate-900 bg-slate-100' : 'border-slate-300 bg-slate-50'}`} open={Boolean(editingTemplate)}>
+            <summary className="cursor-pointer list-none text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500 marker:hidden">{editingTemplate ? `✏️ Editando: ${editingTemplate.name}` : '+ Guardar diseño actual como plantilla'}</summary>
+            <div className="mt-2 space-y-2">
             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
               {editingTemplate ? `✏️ Editando: ${editingTemplate.name}` : 'Guardar diseño actual'}
             </p>
@@ -524,7 +542,8 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
               </button>
             )}
             {templateFeedback && <p className="text-[11px] text-slate-600">{templateFeedback}</p>}
-          </div>
+            </div>
+          </details>
 
           <div className="space-y-2">
             {/* Barra de filtros por categoría: chips compactos arriba de la lista.
@@ -550,23 +569,19 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
             {/* Sólo se renderizan las plantillas del producto actual y cuya
                 categoría coincide con el filtro; "Todas" muestra todas las
                 categorías disponibles para este producto. */}
-            {templatesForProduct.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-500">
-                No hay plantillas disponibles para este producto aún.
+            <div className="grid grid-cols-2 gap-2.5">
+            {visibleTemplates.length === 0 ? (
+              <div className="col-span-2 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-500">
+                No encontramos plantillas para esta búsqueda.
               </div>
             ) : (
-            allTemplates
-              .filter((template) =>
-                selectedCategoryFilter === 'Todas' ? true : template.category === selectedCategoryFilter,
-              )
-              .filter((template) => templatesForProduct.includes(template))
-              .map((template) => (
+            visibleTemplates.map((template) => (
               <div
                 key={template.id}
-                className={`group relative overflow-hidden rounded-xl border text-left transition hover:shadow-sm ${
+                className={`group relative overflow-hidden rounded-2xl border bg-white text-left shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_12px_24px_rgba(109,88,150,.16)] ${
                   editingTemplate?.id === template.saved?.id
-                    ? 'border-slate-900 ring-1 ring-slate-900'
-                    : 'border-slate-200 hover:border-slate-400'
+                    ? 'border-violet-600 ring-2 ring-violet-200'
+                    : 'border-slate-200 hover:border-violet-300'
                 }`}
               >
                 {/* Acciones de gestión (sólo plantillas guardadas): Editar
@@ -621,24 +636,28 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
                       <img
                         src={template.saved.thumbnail}
                         alt={template.name}
-                        className="h-24 w-full bg-slate-50 object-cover"
+                        className="aspect-square w-full bg-slate-50 object-cover"
                       />
                     );
                   }
                   return (
-                    <div className={`flex h-24 items-center justify-center bg-gradient-to-br text-5xl ${template.accent}`}>
-                      <span className="drop-shadow-sm">{previewIcon}</span>
+                <div className={`relative flex aspect-square items-center justify-center overflow-hidden bg-gradient-to-br text-5xl ${template.accent}`}>
+                      <span className="absolute -left-5 -top-5 h-16 w-16 rounded-full bg-white/35 blur-sm" />
+                      <span className="absolute -bottom-7 -right-4 h-20 w-20 rounded-full border-[10px] border-white/35" />
+                      <span className="relative drop-shadow-sm transition duration-300 group-hover:scale-110 group-hover:rotate-6">{previewIcon}</span>
                     </div>
                   );
                 })()}
-                <div className="px-3 py-2">
-                  <p className="text-sm font-semibold text-slate-800">{template.name}</p>
-                  <p className="text-[11px] text-slate-500">{template.description}</p>
+                <div className="px-3 py-2.5">
+                  <p className="truncate text-sm font-semibold text-slate-800">{template.name}</p>
+                  <p className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-slate-500">{template.description}</p>
+                  <span className="mt-2 block text-[10px] font-bold text-violet-600 opacity-0 transition group-hover:opacity-100">Aplicar plantilla →</span>
                 </div>
                 </button>
               </div>
             ))
             )}
+            </div>
           </div>
 
           {/* Las plantillas guardadas ya viven en la lista principal de tarjetas
