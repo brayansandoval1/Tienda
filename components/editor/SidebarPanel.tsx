@@ -7,6 +7,7 @@ import { MOCK_TEMPLATES, type MockTemplate } from '@/src/data/mockTemplates';
 import { listSavedTemplates, deleteSavedTemplate, getCategoryIcon, listTemplateCategories, saveTemplateCategories, saveTemplateIcon, DEFAULT_TEMPLATE_CATEGORIES, type SavedTemplate } from '@/src/utils/templateStorage';
 import type { Product } from '@/src/store/useProductStore';
 import LayersPanel from '@/components/editor/LayersPanel';
+import SmartInputPanel from '@/components/editor/SmartInputPanel';
 
 const forms = [
   { label: 'Cuadrado', icon: Square, shape: 'rect' as const },
@@ -46,8 +47,6 @@ const ILLUSTRATION_INSERT_SIZE = 160;
 const iconifyIllustrationUrl = (iconName: string, height: number) =>
   `https://api.iconify.design/${iconName.replace(':', '/')}.svg?height=${height}`;
 
-// Aplica un texto nuevo al objeto del lienzo identificado por su `__sid`.
-// Lo usan los inputs de "Edición rápida del diseño" (Enter o botón Reemplazar).
 const dispatchReplaceText = (id: string, text: string) => {
   window.dispatchEvent(new CustomEvent('editor:replace-text', { detail: { id, text } }));
 };
@@ -88,46 +87,11 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   // categoría escrita pasa a ser la seleccionada del formulario.
   const [isNewCategoryMode, setIsNewCategoryMode] = useState(false);
   const [newCategoryValue, setNewCategoryValue] = useState('');
-  // Smart Inputs: textos del diseño actual para edición rápida (solo texto).
-  // La fuente es el evento 'editor:smart-inputs' que emite el canvas.
-  // `value`   → lo que está escrito en el input.
-  // `original`→ el texto real del objeto en el lienzo (para restaurar).
-  // `dirty`   → true mientras el usuario escribe algo aún no aplicado.
+  // Estado legado temporalmente conservado para que los atajos de texto
+  // existentes sigan siendo compatibles; la interfaz la renderiza SmartInputPanel.
   const [canvasTexts, setCanvasTexts] = useState<
     Array<{ id: string; value: string; original: string; label: string; dirty: boolean }>
   >([]);
-
-  // Escucha la lista de textos del canvas y sincroniza los inputs sin pisar
-  // lo que el usuario está escribiendo en cada campo.
-  useEffect(() => {
-    const handleSmartInputs = (event: Event) => {
-      const detail = (event as CustomEvent<{ texts?: Array<{ id: string; text?: string; label?: string }> }>).detail;
-      const texts = detail?.texts ?? [];
-      setCanvasTexts((prev) =>
-        texts.map((item) => {
-          const canvasText = item.text ?? '';
-          const existing = prev.find((entry) => entry.id === item.id);
-          if (!existing) {
-            return { id: item.id, value: canvasText, original: canvasText, label: item.label ?? '', dirty: false };
-          }
-          const label = item.label ?? existing.label;
-          // Ya aplicado en el lienzo → deja de estar "sin aplicar".
-          if (existing.value === canvasText) {
-            return { ...existing, original: canvasText, label, dirty: false };
-          }
-          // El usuario está escribiendo: se respeta su texto y sólo se guarda
-          // el valor del lienzo como referencia para restaurar.
-          if (existing.dirty) {
-            return { ...existing, original: canvasText, label };
-          }
-          // Cambio hecho directamente en el lienzo → se refleja en el input.
-          return { id: item.id, value: canvasText, original: canvasText, label, dirty: false };
-        }),
-      );
-    };
-    window.addEventListener('editor:smart-inputs', handleSmartInputs);
-    return () => window.removeEventListener('editor:smart-inputs', handleSmartInputs);
-  }, []);
   // Emoji que se asignará a la categoría que se está creando (opcional).
   const [newCategoryIcon, setNewCategoryIcon] = useState('');
   // Modo "cambiar ícono" de la categoría seleccionada en el formulario.
@@ -689,11 +653,12 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
 
       {activeTab === 'recursos' && (
         <div className="flex flex-col gap-5">
+      <SmartInputPanel />
       {/* ── Edición rápida del diseño (Smart Inputs) ───────────────────────
           Se alimenta del evento 'editor:smart-inputs' que emite el canvas:
           un input por cada texto (i-text/textbox) del diseño actual. Permite
           personalizar sin perder la vista previa fotorrealista. */}
-      {canvasTexts.length > 0 && (
+      {false && canvasTexts.length > 0 && (
         <div className="order-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2">
             <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-900 text-white">
