@@ -139,6 +139,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       handleCropEnd: () => void,
       handleRequestExport: () => void,
       handleExportPrint: () => void,
+      handleDesignRender: (e: Event) => Promise<void>,
       handleResetCrop: () => void,
       handleAlign: (e: Event) => void,
       handleZoom: (e: Event) => void,
@@ -439,6 +440,44 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // es porcentual respecto a la imagen, no a las franjas del canvas.
       let activeMockupBounds = { left: 0, top: 0, width: ADMIN_BASE_SIZE, height: ADMIN_BASE_SIZE };
 
+      // Dimensiones LÓGICAS del plano de trabajo (800×800). Con el "zoom to
+      // fit" activo, canvas.getWidth() devuelve píxeles de pantalla
+      // (800·fitZoom); las coordenadas de los objetos, en cambio, viven en el
+      // plano lógico ancho = width/zoom. Todo lo que coloque mockups, guías o
+      // recortes debe usar estas medidas y nunca las del buffer.
+      const logicalCanvasSize = () => {
+        const zoom = canvas.getZoom?.() || 1;
+        return {
+          width: canvas.getWidth() / zoom,
+          height: canvas.getHeight() / zoom,
+        };
+      };
+
+      // Fabric 5 (`StaticCanvas.toCanvasElement`) interpreta left/top/width/
+      // height del recorte en píxeles de PANTALLA ya aplicados el zoom y la
+      // traslación del viewport: out = multiplier·(zoom·p + vp[4] − left).
+      // Las áreas imprimibles se calculan en el plano lógico, así que hay que
+      // convertirlas; sin esto el PNG exportado sale desplazado y escalado
+      // 1/zoom (diseño "no coincide" en Revisar e imprenta). `pxPerLogical`
+      // fija la resolución de salida independientemente del fitZoom.
+      const buildCropExportOptions = (
+        c: any,
+        area: PrintArea,
+        pxPerLogical: number,
+      ) => {
+        const zoom = c.getZoom?.() || 1;
+        const vpt: number[] = c.viewportTransform || [1, 0, 0, 1, 0, 0];
+        return {
+          format: 'png' as const,
+          quality: 1,
+          left: area.x * zoom + vpt[4],
+          top: area.y * zoom + vpt[5],
+          width: area.width * zoom,
+          height: area.height * zoom,
+          multiplier: Math.max(0.5, Math.min(6, pxPerLogical / zoom)),
+        };
+      };
+
       const getView = (viewId: string): ProductView =>
         activeProduct.views.find((v) => v.id === viewId) || activeProduct.views[0];
 
@@ -594,8 +633,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const fitMockupToCanvas = (img: any) => {
         const naturalWidth = img?._element?.naturalWidth || img.width;
         const naturalHeight = img?._element?.naturalHeight || img.height;
-        const canvasWidth = canvas.getWidth();
-        const canvasHeight = canvas.getHeight();
+        // Ajustar sobre el plano lógico (no sobre los píxeles del buffer):
+        // con fitZoom activo, usar canvas.getWidth() dejaba el mockup más
+        // pequeño que el área visible y desplazado hacia arriba-izquierda.
+        const { width: canvasWidth, height: canvasHeight } = logicalCanvasSize();
         const scale = Math.min(canvasWidth / naturalWidth, canvasHeight / naturalHeight);
         const renderedWidth = naturalWidth * scale;
         const renderedHeight = naturalHeight * scale;
@@ -669,7 +710,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
               if (!img || !img.width || !img.height) {
                 console.error(`❌ Error al cargar la imagen del mockup en la ruta: ${mockupUrl}`);
-                activeMockupBounds = { left: 0, top: 0, width: canvas.getWidth(), height: canvas.getHeight() };
+                activeMockupBounds = { left: 0, top: 0, ...logicalCanvasSize() };
                 drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
                 return;
               }
@@ -729,7 +770,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
               canvas.requestRenderAll();
             } catch (err) {
               console.error(`❌ Error al decodificar el mockup: ${mockupUrl}`, err);
-              activeMockupBounds = { left: 0, top: 0, width: canvas.getWidth(), height: canvas.getHeight() };
+              activeMockupBounds = { left: 0, top: 0, ...logicalCanvasSize() };
               drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
               canvas.requestRenderAll();
             } finally {
@@ -744,7 +785,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           canvas.setBackgroundImage(null, () => canvas.requestRenderAll());
 
           if (!mockupUrl) {
-            activeMockupBounds = { left: 0, top: 0, width: canvas.getWidth(), height: canvas.getHeight() };
+            activeMockupBounds = { left: 0, top: 0, ...logicalCanvasSize() };
             drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
             finishLoad();
             return;
@@ -775,7 +816,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
                 })
                 .catch((err: unknown) => {
                   console.error(`❌ Error al cargar el mockup con Promise: ${mockupUrl}`, err);
-                  activeMockupBounds = { left: 0, top: 0, width: canvas.getWidth(), height: canvas.getHeight() };
+                  activeMockupBounds = { left: 0, top: 0, ...logicalCanvasSize() };
                   drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
                   canvas.requestRenderAll();
                   finishLoad();
@@ -810,13 +851,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         });
         await loadProductMockup(resolvedCanvasView, resolvedView.mockupUrl);
         setupSafeAreaAndClipping(resolvedCanvasView);
+        // NO mover diseños al recargar el fondo: la zona segura de una
+        // variante puede ser menor y el clamp destructivo desalinearía el
+        // diseño al volver a "Estándar". El clipPath ya recorta lo visible.
         const c = fabricCanvasRef.current;
         if (c) {
-          c.getObjects().forEach((object: any) => {
-            if (!object.isGuide && !object.isDesignBackground) {
-              clampToPrintArea(object);
-            }
-          });
           c.requestRenderAll();
         }
       };
@@ -971,7 +1010,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
               return;
             }
             setupSafeAreaAndClipping(targetView);
-            c.getObjects().filter((object: any) => !object.isGuide && !object.isDesignBackground).forEach(clampToPrintArea);
+            // NO re-clampar posiciones en bloque al cambiar de opción: eso
+            // MOVERÍA permanentemente el diseño del usuario hacia la zona de
+            // la opción y, al regresar a "Estándar", las piezas ya no
+            // coincidirían con lo diseñado. El clipPath de
+            // `setupSafeAreaAndClipping` ya oculta lo que queda fuera; el
+            // clamp solo actúa al arrastrar/transformar (listeners de
+            // object:moving/scaled/rotating), decisión del usuario.
             c.renderAll();
             c.requestRenderAll();
             console.log('✅ Canvas sincronizado correctamente con mockup resuelto:', incomingMockupUrl);
@@ -1017,7 +1062,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (!mockupUrl) {
           activeOptionPrintArea = null;
           setupSafeAreaAndClipping(activeView);
-          c.getObjects().filter((object: any) => !object.isGuide && !object.isDesignBackground).forEach(clampToPrintArea);
+          // Sin clamp masivo: ver comentario en la ruta del mockup de opción
+          // (mover el diseño aquí lo desalinearía al volver a Estándar).
           c.requestRenderAll();
           return;
         }
@@ -1028,7 +1074,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             return;
           }
           setupSafeAreaAndClipping(activeView);
-          c.getObjects().filter((object: any) => !object.isGuide && !object.isDesignBackground).forEach(clampToPrintArea);
+          // Sin clamp masivo (ver nota en handleOptionMockup): la zona de la
+          // variante solo recorta visualmente, jamás mueve el diseño.
           c.renderAll();
           c.requestRenderAll();
           console.log('✅ Canvas sincronizado correctamente');
@@ -1578,7 +1625,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           canvas.getObjects().filter(isDraftDesignObject).forEach((object: any) => {
             makeObjectInteractive(object);
             object.setCoords?.();
-            clampToPrintArea(object);
+            // Sin clamp destructivo al restaurar: el borrador es la palabra
+            // final del usuario y sus coordenadas se respetan tal cual; el
+            // clipPath oculta lo que cae fuera de la zona vigente.
           });
           if (safeZoneRef.current) canvas.sendToBack(safeZoneRef.current);
           canvas.renderAll();
@@ -1688,6 +1737,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           fabric.util.enlivenObjects(JSON.parse(stored), (enlivened: any[]) => {
             enlivened.forEach((obj: any) => c.add(obj));
             ensureObjectsInteractable();
+            // Los objetos del borrador traen su clipPath absoluto calculado
+            // con los límites de otra sesión/zoom: reafirmar el área de ESTA
+            // vista para que el recorte de exportación no los borre de un
+            // plumazo al renderizar otra cara (multi-vista sin diseño).
+            applyPrintAreaClipping(view);
             // Reafirmar interactividad global tras cargar objetos
             c.selection = true;
             c.calcOffset();
@@ -1729,6 +1783,129 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         window.dispatchEvent(new CustomEvent('editor:export-sides', { detail: renders }));
       };
 
+      // ===== Render para la pestaña "Revisar" (Review Gallery) ================
+      // La pantalla Revisar pide el diseño del usuario como PNG transparente
+      // recortado a la zona segura de la vista solicitada. El consumidor lo
+      // dibuja sobre las fotos de reseña dentro de los porcentajes guardados
+      // (`masterPrintArea` / `customPrintArea`). Mismo mecanismo de capas que
+      // `handleExportPrint`: las ayudas visuales nunca entran al PNG.
+      handleDesignRender = async (event: Event) => {
+        const c = fabricCanvasRef.current;
+        if (!c) return;
+        const detail = ((event as CustomEvent<{ viewId?: string; requestId?: string }>).detail || {}) as {
+          viewId?: string;
+          requestId?: string;
+        };
+        const targetView = activeProduct.views.find((view) => view.id === detail.viewId) ?? activeView;
+        if (!targetView) return;
+
+        // Si la foto de reseña pertenece a otra cara, renderizar esa cara en
+        // memoria (igual que `exportAll`) y restaurar la vista activa al final.
+        const originalViewId = currentViewIdRef.current;
+        const mustRestore = targetView.id !== originalViewId;
+        if (mustRestore) {
+          canvasDataRef.current[originalViewId] = snapshotCurrentObjects();
+          await loadViewObjects(targetView);
+        }
+
+        // Zona segura realmente dibujada (refleja la vista cargada arriba).
+        const safeZone = safeZoneRef.current;
+        const printArea = safeZone
+          ? {
+              x: safeZone.left ?? 0,
+              y: safeZone.top ?? 0,
+              width: safeZone.getScaledWidth?.() ?? safeZone.width ?? 0,
+              height: safeZone.getScaledHeight?.() ?? safeZone.height ?? 0,
+            }
+          : getRenderedPrintArea(targetView);
+
+        const systemLayers = c.getObjects().filter((object: any) =>
+          object.isMockup || object.isGuide || object.isGuideLine || object.isCropOverlay || object.isDesignBackground,
+        );
+        const layerState = systemLayers.map((object: any) => ({
+          object,
+          visible: object.visible,
+          excludeFromExport: object.excludeFromExport,
+        }));
+        const originalBackground = c.backgroundImage;
+        const originalBackgroundColor = c.backgroundColor;
+        const originalClipPath = c.clipPath;
+
+        // Caja realmente recortada, en porcentaje relativo a la imagen base
+        // (mismo marco que `masterPrintArea` en Revisar). Si la opción activa
+        // define una zona segura propia, este rectángulo difiere del de la
+        // vista base y ReviewStage DEBE dibujar el PNG aquí; usar siempre la
+        // caja maestra estiraría el diseño (proporción distinta) y "no
+        // coincidiría" con lo diseñado.
+        const referenceBounds = activeMockupBounds.width > 0 && activeMockupBounds.height > 0
+          ? activeMockupBounds
+          : { left: 0, top: 0, ...logicalCanvasSize() };
+        const areaPercent = printArea.width > 0 && printArea.height > 0
+          ? {
+              xPercent: ((printArea.x - referenceBounds.left) * 100) / referenceBounds.width,
+              yPercent: ((printArea.y - referenceBounds.top) * 100) / referenceBounds.height,
+              widthPercent: (printArea.width * 100) / referenceBounds.width,
+              heightPercent: (printArea.height * 100) / referenceBounds.height,
+            }
+          : undefined;
+
+        let designPNG = '';
+        // true si el export falló por canvas "tainted" (imagen externa sin
+        // CORS): ReviewStage lo traduce a un mensaje de error claro.
+        let tainted = false;
+        try {
+          if (printArea.width > 0 && printArea.height > 0) {
+            systemLayers.forEach((object: any) => object.set({ visible: false, excludeFromExport: true }));
+            c.backgroundImage = null;
+            c.backgroundColor = '';
+            c.clipPath = undefined;
+            c.getObjects().forEach((object: any) => object.setCoords());
+            c.renderAll();
+            // PNG transparente con resolución determinista (~1400 px en el
+            // lado mayor, entre 2× y 4×): nitidez suficiente para el visor de
+            // la pestaña Revisar sin inflar la memoria. Las coordenadas se
+            // convierten al espacio de pantalla que espera el recorte de
+            // Fabric (ver `buildCropExportOptions`).
+            const pxPerLogical = Math.min(4, Math.max(2, 1400 / Math.max(printArea.width, printArea.height)));
+            designPNG = c.toDataURL(buildCropExportOptions(c, printArea, pxPerLogical));
+          }
+        } catch (exportError) {
+          // Un mockup cross-origin sin cabeceras CORS "contamina" (taints) el
+          // lienzo y toDataURL lanza SecurityError ("The operation is
+          // insecure."). El error NO debe escapar como rejection sin manejar
+          // (el listener de EditorShell nadie lo espera y Next tumbaría la
+          // página): respondemos PNG vacío + tainted, y ReviewStage muestra la
+          // explicación en su propia tarjeta de error.
+          console.error('❌ [REVIEW] El lienzo no pudo exportar el diseño:', exportError);
+          designPNG = '';
+          tainted = exportError instanceof DOMException
+            ? exportError.name === 'SecurityError'
+            : /insecure|tainted/i.test(String(exportError));
+        } finally {
+          c.backgroundImage = originalBackground;
+          c.backgroundColor = originalBackgroundColor;
+          c.clipPath = originalClipPath;
+          layerState.forEach(({ object, visible, excludeFromExport }: {
+            object: any;
+            visible: boolean;
+            excludeFromExport: boolean;
+          }) => object.set({ visible, excludeFromExport }));
+          if (mustRestore) {
+            await loadViewObjects(getView(originalViewId));
+            historyRef.current = [snapshotCurrentObjects()];
+            redoStackRef.current = [];
+            updateHistoryButtons();
+          }
+          c.renderAll();
+        }
+
+        window.dispatchEvent(
+          new CustomEvent('editor:design-render', {
+            detail: { requestId: detail.requestId, viewId: targetView.id, designPNG, tainted, area: areaPercent },
+          }),
+        );
+      };
+
       // Exporta sólo el arte del usuario, recortado al área imprimible de la
       // cara actual. El canvas vuelve exactamente a su estado visual previo
       // incluso si la generación del PNG falla.
@@ -1765,15 +1942,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           c.getObjects().forEach((object: any) => object.setCoords());
           c.renderAll();
 
-          const highResDataUrl = c.toDataURL({
-            format: 'png',
-            left: printArea.x,
-            top: printArea.y,
-            width: printArea.width,
-            height: printArea.height,
-            multiplier: 3,
-            quality: 1,
-          });
+          // Recorte en el espacio de pantalla que espera Fabric 5: así el PNG
+          // de imprenta coincide exactamente con la zona segura visible,
+          // independientemente del fitZoom del contenedor (3 px por unidad
+          // lógica como antes, pero ya sin el desfase 1/zoom).
+          const highResDataUrl = c.toDataURL(buildCropExportOptions(c, printArea, 3));
 
           const link = document.createElement('a');
           link.download = `diseno-impresion-${activeView.id}.png`;
@@ -1830,20 +2003,15 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
           const widthCm = activeProduct.printWidthCm ?? 20;
           const heightCm = activeProduct.printHeightCm ?? 20;
-          const multiplier = Math.max(
+          // Píxeles deseados por unidad LÓGICA para alcanzar los 300 dpi
+          // físicos; `buildCropExportOptions` ya reparte esa resolución entre
+          // el multiplicador y el fitZoom vigente.
+          const pxPerLogical = Math.max(
             4,
             Math.ceil(((widthCm / 2.54) * 300) / printArea.width),
             Math.ceil(((heightCm / 2.54) * 300) / printArea.height),
           );
-          const printPNG = c.toDataURL({
-            format: 'png',
-            left: printArea.x,
-            top: printArea.y,
-            width: printArea.width,
-            height: printArea.height,
-            multiplier,
-            quality: 1,
-          });
+          const printPNG = c.toDataURL(buildCropExportOptions(c, printArea, pxPerLogical));
 
           const designJSON = c.toJSON(['id', 'label', 'layerName', 'isLock']) as Record<string, any>;
           designJSON.objects = c.getObjects()
@@ -3026,6 +3194,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       window.addEventListener('editor:reset-crop', handleResetCrop);
       window.addEventListener('editor:request-export', handleRequestExport);
       window.addEventListener('editor:export-print', handleExportPrint);
+      window.addEventListener('editor:design-render-request', handleDesignRender);
       window.addEventListener('editor:align', handleAlign);
       window.addEventListener('editor:zoom', handleZoom);
       window.addEventListener('editor:save-design', handleSaveDesign);
@@ -3154,6 +3323,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       }
       if (handleExportPrint) {
         window.removeEventListener('editor:export-print', handleExportPrint);
+      }
+      if (handleDesignRender) {
+        window.removeEventListener('editor:design-render-request', handleDesignRender);
       }
       if (handleAlign) {
         window.removeEventListener('editor:align', handleAlign);

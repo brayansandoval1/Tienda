@@ -9,6 +9,7 @@ import SidebarPanel from '@/components/editor/SidebarPanel';
 import TextToolbar from '@/components/editor/TextToolbar';
 import { useProductStore, type Product } from '@/src/store/useProductStore';
 import ViewSelector from '@/components/editor/ViewSelector';
+import ReviewStage from '@/components/editor/ReviewStage';
 import CartDrawer from '@/components/editor/CartDrawer';
 
 
@@ -69,6 +70,13 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
             workflowStep={activeStep}
           />
           {activeStep === 'design' && <FloatingFooter onReset={() => {}} />}
+          {/* Revisar: visor de renders sobre el lienzo. El canvas sigue montado
+              debajo porque ReviewStage le pide los diseños por eventos. */}
+          {activeStep === 'review' && (
+            <div className="absolute inset-0 z-20 bg-slate-50">
+              <ReviewStage product={currentProduct} />
+            </div>
+          )}
         </main>
 
         {/* Panel Derecho: producto / compra */}

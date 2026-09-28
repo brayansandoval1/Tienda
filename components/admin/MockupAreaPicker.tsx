@@ -21,10 +21,20 @@ interface MockupAreaPickerProps {
   mockupUrl?: string;
   initialPrintArea: PrintArea;
   onChange: (newPrintArea: PrintArea) => void;
+  /** Muestra la guía sin permitir arrastrarla (vista previa de la zona heredada). */
+  readOnly?: boolean;
+  /** Imagen alternativa cuando no hay mockup que mostrar de fondo. */
+  fallbackLabel?: string;
+  /**
+   * Proporción ancho/alto del contenedor. Al igualar la proporción real de la
+   * foto, el `object-contain` no deja bandas y el porcentaje se lee respecto a
+   * la imagen (igual que `activeMockupBounds` en el editor).
+   */
+  aspectRatio?: number;
 }
 
 /** Selector controlado sobre el mismo plano lógico 800×800 del editor. */
-export default function MockupAreaPicker({ mockupUrl, initialPrintArea, onChange }: MockupAreaPickerProps) {
+export default function MockupAreaPicker({ mockupUrl, initialPrintArea, onChange, readOnly = false, fallbackLabel, aspectRatio }: MockupAreaPickerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ mode: 'move' | 'resize'; startX: number; startY: number; area: PrintArea } | null>(null);
   const area = normalizePrintArea(initialPrintArea);
@@ -32,7 +42,7 @@ export default function MockupAreaPicker({ mockupUrl, initialPrintArea, onChange
   const updateFromPointer = (event: PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     const container = containerRef.current;
-    if (!drag || !container) return;
+    if (!drag || !container || readOnly) return;
     const rect = container.getBoundingClientRect();
     const dx = ((event.clientX - drag.startX) / rect.width) * 100;
     const dy = ((event.clientY - drag.startY) / rect.height) * 100;
@@ -43,6 +53,7 @@ export default function MockupAreaPicker({ mockupUrl, initialPrintArea, onChange
   };
 
   const startDrag = (event: PointerEvent<HTMLDivElement>, mode: 'move' | 'resize') => {
+    if (readOnly) return;
     event.preventDefault();
     event.stopPropagation();
     dragRef.current = { mode, startX: event.clientX, startY: event.clientY, area };
@@ -50,12 +61,12 @@ export default function MockupAreaPicker({ mockupUrl, initialPrintArea, onChange
   };
 
   return <div className="space-y-2">
-    <p className="text-xs font-medium text-slate-600">Arrastra la zona verde o usa el tirador para redimensionarla. La vista usa el canvas común de 800×800.</p>
-    <div ref={containerRef} onPointerMove={updateFromPointer} onPointerUp={() => { dragRef.current = null; }} onPointerCancel={() => { dragRef.current = null; }} className="relative aspect-square w-full max-w-[800px] overflow-hidden rounded-lg border bg-slate-100 touch-none select-none">
-      {mockupUrl ? <img src={mockupUrl} alt="Vista previa del mockup" className="pointer-events-none absolute inset-0 h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center p-8 text-center text-xs text-slate-400">Añade una URL de mockup para ver la zona sobre la imagen.</div>}
-      <div onPointerDown={(event) => startDrag(event, 'move')} style={{ left: `${area.x}%`, top: `${area.y}%`, width: `${area.width}%`, height: `${area.height}%` }} className="absolute cursor-move border-2 border-dashed border-emerald-500 bg-emerald-500/20">
+    <p className="text-xs font-medium text-slate-600">{readOnly ? 'Zona de estampado heredada de la referencia maestra (no editable).' : 'Arrastra la zona verde o usa el tirador para redimensionarla. La vista usa el canvas común de 800×800.'}</p>
+    <div ref={containerRef} onPointerMove={updateFromPointer} onPointerUp={() => { dragRef.current = null; }} onPointerCancel={() => { dragRef.current = null; }} style={aspectRatio ? { aspectRatio } : undefined} className="relative aspect-square w-full max-w-[800px] overflow-hidden rounded-lg border bg-slate-100 touch-none select-none">
+      {mockupUrl ? <img src={mockupUrl} alt="Vista previa del mockup" className="pointer-events-none absolute inset-0 h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center p-8 text-center text-xs text-slate-400">{fallbackLabel ?? 'Añade una URL de mockup para ver la zona sobre la imagen.'}</div>}
+      <div onPointerDown={(event) => startDrag(event, 'move')} style={{ left: `${area.x}%`, top: `${area.y}%`, width: `${area.width}%`, height: `${area.height}%` }} className={`absolute border-2 border-dashed border-emerald-500 bg-emerald-500/20 ${readOnly ? '' : 'cursor-move'}`}>
         <span className="absolute left-1 top-1 rounded bg-emerald-600 px-1.5 py-0.5 font-mono text-[10px] text-white shadow">{area.width}% × {area.height}%</span>
-        <div onPointerDown={(event) => startDrag(event, 'resize')} className="absolute bottom-[-7px] right-[-7px] h-4 w-4 cursor-nwse-resize rounded-full border-2 border-white bg-emerald-600 shadow" />
+        {!readOnly && <div onPointerDown={(event) => startDrag(event, 'resize')} className="absolute bottom-[-7px] right-[-7px] h-4 w-4 cursor-nwse-resize rounded-full border-2 border-white bg-emerald-600 shadow" />}
       </div>
     </div>
   </div>;

@@ -304,7 +304,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design' }
               const selected = selectedOptions[option.id]?.id === value.id;
               return <button key={value.id || `opt-${option.id}-${index}`} type="button" onClick={() => handleOptionSelect(option.id, value)} className={`overflow-hidden rounded-xl border p-2 text-left text-sm transition ${selected ? 'border-blue-600 bg-blue-50 text-blue-700 ring-2 ring-black/10' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                 <div className="mb-1 flex h-14 items-center justify-center overflow-hidden rounded-lg bg-slate-50">
-                  <img src={value.thumbnailUrl || value.mockupUrl || product.views[0]?.mockupUrl} alt={value.label || value.id || `Opción ${index + 1}`} className="h-full w-full object-contain p-1" />
+                  <img src={value.thumbnailUrl || value.mockupUrl || product.views[0]?.mockupUrl} alt={value.label || value.id || `Opción ${index + 1}`} crossOrigin="anonymous" className="h-full w-full object-contain p-1" />
                 </div>
                 <span className="block truncate text-xs font-medium text-slate-800">{value.label || value.id || `Opción ${index + 1}`}</span>
                 <span className="text-[10px] text-slate-500">{priceLabel(value.priceModifier)}</span>
@@ -323,7 +323,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design' }
         <div className="space-y-4">
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Vista Previa</p>
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100">
-            <img src={previewImageUrl} alt={product.name} className="h-full w-full object-cover" />
+            <img src={previewImageUrl} alt={product.name} crossOrigin="anonymous" className="h-full w-full object-cover" />
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center">
             <p className="text-xs text-slate-500">Total</p>

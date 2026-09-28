@@ -4,6 +4,29 @@
  * con su imagen de overlay (el propio artículo) y su zona de diseño activa.
  */
 
+/**
+ * Zona de estampado expresada en porcentaje (0-100) respecto a la imagen base.
+ * Al ser relativa, la misma caja se puede aplicar a fotos de distintos tamaños
+ * o proporciones sin recalcular píxeles.
+ */
+export interface PrintAreaPercent {
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
+}
+
+/** Una foto secundaria (lifestyle / ángulo) de la pestaña "Revisar". */
+export interface ReviewGalleryImage {
+  id: string;
+  title: string;
+  imageUrl: string;
+  /** true = usa `masterPrintArea`; false = usa `customPrintArea`. */
+  useMasterArea: boolean;
+  /** Caja propia, sólo válida cuando `useMasterArea` es false. */
+  customPrintArea?: PrintAreaPercent | null;
+}
+
 export interface ColorVariant {
   id: string;
   name: string;
@@ -101,6 +124,13 @@ export interface Product {
   /** Configuraciones vendibles que pueden modificar el precio final. */
   options?: ProductOption[];
   views: ProductView[];
+  /**
+   * Zona segura maestra en porcentaje respecto a la imagen base. Se hereda a
+   * cada foto de `reviewGallery` para saber dónde colocar el diseño del cliente.
+   */
+  masterPrintArea?: PrintAreaPercent & { viewId?: string };
+  /** Fotos lifestyle / ángulos adicionales mostrados en la pestaña "Revisar". */
+  reviewGallery?: ReviewGalleryImage[];
 }
 
 /** Alias temporal para los componentes existentes del editor. */
