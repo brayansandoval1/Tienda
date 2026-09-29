@@ -111,10 +111,16 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
     // Fabric, para poder reaplicarlo desde el listener de resize y limpiarlo.
     let fitOnResize: (() => void) | null = null;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
-    const handleWindowResize = () => {
+    const scheduleFit = () => {
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => fitOnResize?.(), 120);
     };
+    const handleWindowResize = () => scheduleFit();
+    // Observer sobre el propio contenedor: al habilitarse/deshabilitarse la
+    // franja de herramientas (TextToolbar) o al plegar el sidebar cambia la
+    // altura disponible SIN que ocurra un resize de ventana. Sin esto el canvas
+    // conserva el fit antiguo y el mockup desborda/queda cortado hacia abajo.
+    let containerObserver: ResizeObserver | null = null;
     let handleAddText: (e: Event) => void,
       handleColorChange: (e: Event) => void,
       handleProductColor: (e: Event) => void,
@@ -270,6 +276,16 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           height: ADMIN_BASE_SIZE * scale,
         });
 
+        // El centrado flex del contenedor (items-center) reparte el aire libre
+        // por igual arriba y abajo. Al añadir como margen inferior la banda
+        // reservada a la barra flotante, el centro efectivo pasa a ser el del
+        // área útil POR ENCIMA de la barra: el mockup sube, queda completo y
+        // alineado desde arriba en lugar de desplazado hacia el pie. El margen
+        // se aplica al wrapper que Fabric inserta en el flujo (canvas-container),
+        // no al <canvas> interno (posicionado absolutamente dentro del wrapper).
+        const wrapperEl = (canvasInstance as any).wrapperEl as HTMLElement | undefined;
+        if (wrapperEl) wrapperEl.style.marginBottom = `${footerReserve}px`;
+
         fitZoom = scale;
         relativeZoom = 1;
         canvasInstance.setZoom(fitZoom);
@@ -282,13 +298,31 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       fitCanvasToContainer();
       fitOnResize = fitCanvasToContainer;
 
+      // Reajuste cuando cambia el tamaño del propio contenedor (por ejemplo,
+      // al habilitarse la franja de herramientas o plegar el sidebar), aunque
+      // la ventana no se redimensione.
+      if (typeof ResizeObserver !== 'undefined' && canvasAreaRef.current) {
+        containerObserver = new ResizeObserver(() => scheduleFit());
+        containerObserver.observe(canvasAreaRef.current);
+      }
+
       handleZoom = (e: Event) => {
         const detail = (e as CustomEvent<{ delta?: number; zoom?: number }>).detail;
         const nextZoom = typeof detail?.zoom === 'number'
           ? detail.zoom
           : relativeZoom + (detail?.delta ?? 0);
         relativeZoom = Math.min(2, Math.max(0.5, nextZoom));
-        canvas.setZoom(fitZoom * relativeZoom);
+        // `setZoom` escala desde el origen del viewport (esquina
+        // superior-izquierda): al acercar, el zoom "enfoca" solo esa esquina y
+        // recorta los lados derecho e inferior de la imagen. `zoomToPoint`
+        // ancla el punto indicado: pasándole el centro visible del lienzo el
+        // acercamiento/alejamiento crece o encoge alrededor de toda la imagen,
+        // repartiendo el recorte por igual en los cuatro lados.
+        const zoomCenter = new (fabric as any).Point(
+          canvas.getWidth() / 2,
+          canvas.getHeight() / 2,
+        );
+        canvas.zoomToPoint(zoomCenter, fitZoom * relativeZoom);
         canvas.calcOffset();
         canvas.requestRenderAll();
         emitZoomChanged();
@@ -3449,6 +3483,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       delete (window as any).__openEditor3DPreview;
       setupProductRef.current = null;
       window.removeEventListener('resize', handleWindowResize);
+      if (containerObserver) {
+        containerObserver.disconnect();
+        containerObserver = null;
+      }
       clearTimeout(resizeTimer);
       if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
       draftSaveTimerRef.current = null;
@@ -3466,7 +3504,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       <canvas ref={canvasRef} className="block select-none" style={{ pointerEvents: 'auto' }} />
 
       {draftStatus !== 'idle' && (
-        <div className="pointer-events-none absolute left-4 top-4 z-20 rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur" aria-live="polite">
+        <div className="pointer-events-none absolute bottom-3 left-4 z-20 rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur" aria-live="polite">
           {draftStatus === 'saving' ? 'Guardando...' : 'Guardado en borrador'}
         </div>
       )}
