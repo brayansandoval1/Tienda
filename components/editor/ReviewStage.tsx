@@ -208,12 +208,63 @@ export default function ReviewStage({ product }: { product: Product }) {
             heightPercent,
           };
         }
+        // Recorte con la forma de la zona (polígono libre / óvalo / esquinas
+        // redondeadas). El PNG del lienzo ya viene recortado por su `clipPath`,
+        // pero en fotos de galería la caja puede ser la maestra o una propia:
+        // recortar aquí garantiza que el compuesto respete siempre la forma.
+        const shape = box.shape ?? design.area?.shape;
+        const clipX = (box.xPercent / 100) * width;
+        const clipY = (box.yPercent / 100) * height;
+        const clipW = (box.widthPercent / 100) * width;
+        const clipH = (box.heightPercent / 100) * height;
+        // El polígono manda sobre la forma paramétrica. Sus nodos vienen en %
+        // de SU caja, y `box` pudo re-ajustarse de proporción líneas arriba,
+        // así que cada nodo se remapea de la caja origen a la caja destino.
+        const polygon = box.polygon ?? design.area?.polygon;
+        const polygonSource = box.polygon ? box : design.area;
+        const validPolygon = Array.isArray(polygon) && polygon.length >= 3 ? polygon : null;
+        const clipActive = Boolean(validPolygon) || shape === 'ellipse' || shape === 'rounded';
+        if (clipActive) {
+          ctx.save();
+          ctx.beginPath();
+          if (validPolygon) {
+            const source = polygonSource && polygonSource.widthPercent > 0 && polygonSource.heightPercent > 0 ? polygonSource : null;
+            validPolygon.forEach((point, pointIndex) => {
+              const u = source ? (Number(point.x) - source.xPercent) / source.widthPercent : Number(point.x) / 100;
+              const v = source ? (Number(point.y) - source.yPercent) / source.heightPercent : Number(point.y) / 100;
+              const px = clipX + u * clipW;
+              const py = clipY + v * clipH;
+              if (pointIndex === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            });
+            ctx.closePath();
+          } else if (shape === 'ellipse') {
+            ctx.ellipse(clipX + clipW / 2, clipY + clipH / 2, Math.max(1, clipW / 2), Math.max(1, clipH / 2), 0, 0, Math.PI * 2);
+          } else {
+            // Mismo significado que `border-radius` en %: radioX sobre el ancho,
+            // radioY sobre el alto, sin pasar nunca de la mitad del lado corto.
+            const radiusPercent = Math.min(50, Math.max(0, Number(design.area?.radius ?? box.radius ?? 25) || 0));
+            const rx = Math.min(clipW / 2, (radiusPercent / 100) * clipW);
+            const ry = Math.min(clipH / 2, (radiusPercent / 100) * clipH);
+            ctx.moveTo(clipX + rx, clipY);
+            ctx.lineTo(clipX + clipW - rx, clipY);
+            ctx.ellipse(clipX + clipW - rx, clipY + ry, rx, ry, 0, -Math.PI / 2, 0);
+            ctx.lineTo(clipX + clipW, clipY + clipH - ry);
+            ctx.ellipse(clipX + clipW - rx, clipY + clipH - ry, rx, ry, 0, 0, Math.PI / 2);
+            ctx.lineTo(clipX + rx, clipY + clipH);
+            ctx.ellipse(clipX + rx, clipY + clipH - ry, rx, ry, 0, Math.PI / 2, Math.PI);
+            ctx.lineTo(clipX, clipY + ry);
+            ctx.ellipse(clipX + rx, clipY + ry, rx, ry, 0, Math.PI, Math.PI * 1.5);
+          }
+          ctx.closePath();
+          ctx.clip();
+        }
         ctx.drawImage(designImage,
           (box.xPercent / 100) * width,
           (box.yPercent / 100) * height,
           (box.widthPercent / 100) * width,
           (box.heightPercent / 100) * height,
         );
+        if (clipActive) ctx.restore();
       }
       setRenders((current) => ({
         ...current,

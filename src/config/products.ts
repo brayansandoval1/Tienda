@@ -5,11 +5,59 @@
  */
 
 /**
+ * Forma de la zona segura. `rect` (por defecto, y la que usan todos los
+ * productos guardados antes de esta opción) mantiene el comportamiento
+ * rectangular original; `rounded` redondea las esquinas según `radius`;
+ * `ellipse` recorta el diseño dentro de un óvalo (solapas, bolsos ovales,
+ * espejos, parches circulares, etc.).
+ */
+export type SafeAreaShape = 'rect' | 'rounded' | 'ellipse';
+
+/**
+ * Modificadores opcionales de forma que acompañan a cualquier caja de
+ * estampado. Al ser opcionales, los productos existentes siguen siendo
+ * válidos sin migración: `shape` implícito es `'rect'`.
+ */
+export interface SafeAreaModifiers {
+  shape?: SafeAreaShape;
+  /**
+   * Sólo para `shape === 'rounded'`: radio de las esquinas como porcentaje
+   * (0-50) del propio ancho/alto de la caja — misma semántica que el
+   * `border-radius` en porcentaje de CSS, así Admin, editor y Revisar
+   * dibujan la curva idéntica sin conversiones.
+   */
+  radius?: number;
+  /**
+   * Contorno vectorial libre (nodos sueltos) en porcentaje (0-100) respecto
+   * a la imagen base, en el mismo plano lógico que la caja. Cuando existe
+   * (>= 3 puntos) es LA fuente de verdad de la forma: `shape`/`radius` pasan
+   * a ser sólo la familia de la que nació (histórico) y `x/y/width/height`
+   * su bounding box derivado, de modo que todo el código basado en caja
+   * (editor, Revisar, impresión) sigue funcionando sin migración.
+   */
+  polygon?: SafeAreaPoint[];
+}
+
+/** Nodo del polígono de zona segura, en porcentaje (0-100) de la imagen base. */
+export interface SafeAreaPoint {
+  x: number;
+  y: number;
+}
+
+/** Caja de estampado en píxeles o porcentaje (según `printAreaUnit`). */
+export interface PrintAreaBox extends SafeAreaModifiers {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
  * Zona de estampado expresada en porcentaje (0-100) respecto a la imagen base.
  * Al ser relativa, la misma caja se puede aplicar a fotos de distintos tamaños
  * o proporciones sin recalcular píxeles.
  */
-export interface PrintAreaPercent {
+export interface PrintAreaPercent extends SafeAreaModifiers {
   xPercent: number;
   yPercent: number;
   widthPercent: number;
@@ -48,12 +96,7 @@ export interface ProductView {
   colorVariants?: ColorVariant[];
   /** Capa opcional para composiciones de mockup más complejas. */
   overlayUrl?: string;
-  printArea: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  };
+  printArea: PrintAreaBox;
   /** Las áreas creadas desde el panel actual se guardan relativas al mockup. */
   printAreaUnit?: 'pixels' | 'percent';
 }
@@ -71,12 +114,7 @@ export interface ProductOptionValue {
   viewsConfig?: Record<string, ProductOptionViewConfig>;
   thumbnailUrl?: string;
   /** Zona segura opcional que sustituye la zona base al elegir este valor. */
-  printArea?: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } | null;
+  printArea?: PrintAreaBox | null;
 }
 
 export interface ProductOptionViewConfig {
@@ -89,12 +127,7 @@ export interface ProductOptionView {
   viewId: string;
   name: string;
   mockupUrl?: string | null;
-  printArea?: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } | null;
+  printArea?: PrintAreaBox | null;
 }
 
 export interface ProductOption {

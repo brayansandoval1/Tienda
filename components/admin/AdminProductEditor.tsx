@@ -7,15 +7,28 @@ import { useProductStore, type Product, type ProductOption } from '@/src/store/u
 import { compressImageFileToDataUrl } from '@/src/utils/imageCompression';
 import AdminProductOptionsForm from '@/components/admin/AdminProductOptionsForm';
 import MockupAreaPicker, { normalizePrintArea, type PrintArea } from '@/components/admin/MockupAreaPicker';
+import type { SafeAreaPoint, SafeAreaShape } from '@/src/config/products';
 
-type ProductViewForm = { id: string; name: string; mockupUrl: string; x: string; y: string; width: string; height: string };
+type ProductViewForm = { id: string; name: string; mockupUrl: string; x: string; y: string; width: string; height: string; shape: SafeAreaShape; radius: string; /** Nodos del contorno libre serializados ('' = forma paramétrica). */ polygon: string };
 type ProductForm = { name: string; price: string; category: string; printWidthCm: string; printHeightCm: string; options: ProductOption[]; views: ProductViewForm[] };
 
 const REFERENCE_WIDTH = 800;
 const REFERENCE_HEIGHT = 800;
 const normalizePercentage = (value: number | undefined | null, fallback = 0) => !Number.isFinite(value) ? fallback : value && value > 0 && value <= 1 ? value * 100 : value ?? fallback;
 const cleanPercentage = (value: number) => Number(Math.min(100, Math.max(0, value)).toFixed(2));
-const createViewForm = (index: number): ProductViewForm => ({ id: index === 0 ? 'front' : `view-${crypto.randomUUID()}`, name: index === 0 ? 'Frente' : 'Espalda', mockupUrl: '', x: '25', y: '25', width: '50', height: '50' });
+/** Radio 0-50 % con dos decimales; 25 % por defecto si el campo viene vacío. */
+const cleanRadius = (value: number) => Number(Math.min(50, Math.max(0, Number.isFinite(value) ? value : 25)).toFixed(2));
+/** El polígono viaja en el formulario como JSON de nodos; '' = forma paramétrica. */
+const parsePolygonForm = (raw: string): SafeAreaPoint[] | undefined => {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length >= 3 ? parsed as SafeAreaPoint[] : undefined;
+  } catch {
+    return undefined;
+  }
+};
+const createViewForm = (index: number): ProductViewForm => ({ id: index === 0 ? 'front' : `view-${crypto.randomUUID()}`, name: index === 0 ? 'Frente' : 'Espalda', mockupUrl: '', x: '25', y: '25', width: '50', height: '50', shape: 'rect', radius: '25', polygon: '' });
 const emptyForm = (): ProductForm => ({ name: '', price: '', category: '', printWidthCm: '', printHeightCm: '', options: [], views: [createViewForm(0)] });
 
 const normalizeViewIds = (views: ProductViewForm[]): ProductViewForm[] => {
@@ -44,6 +57,10 @@ const toForm = (product: Product): ProductForm => ({
       y: String(cleanPercentage(normalizePercentage(percent ? view.printArea.y : (view.printArea.y * 100) / REFERENCE_HEIGHT, 25))),
       width: String(cleanPercentage(normalizePercentage(percent ? view.printArea.width : (view.printArea.width * 100) / REFERENCE_WIDTH, 50))),
       height: String(cleanPercentage(normalizePercentage(percent ? view.printArea.height : (view.printArea.height * 100) / REFERENCE_HEIGHT, 50))),
+      // Zona redondeada: 'rect' (o ausente) sigue funcionando igual que antes.
+      shape: view.printArea.shape === 'rounded' || view.printArea.shape === 'ellipse' ? view.printArea.shape : 'rect',
+      radius: String(view.printArea.radius ?? 25),
+      polygon: Array.isArray(view.printArea.polygon) && view.printArea.polygon.length >= 3 ? JSON.stringify(view.printArea.polygon) : '',
     };
   })),
 });
@@ -63,12 +80,12 @@ export default function AdminProductEditor() {
   const printHeight = Number(form.printHeightCm) || 0;
   const pixelsWidth = Math.round((printWidth / 2.54) * 300);
   const pixelsHeight = Math.round((printHeight / 2.54) * 300);
-  const baseViews = useMemo(() => form.views.map((view) => ({ id: view.id, name: view.name || 'Vista', mockupUrl: view.mockupUrl, printArea: normalizePrintArea({ x: Number(view.x), y: Number(view.y), width: Number(view.width), height: Number(view.height) }) })), [form.views]);
+  const baseViews = useMemo(() => form.views.map((view) => ({ id: view.id, name: view.name || 'Vista', mockupUrl: view.mockupUrl, printArea: normalizePrintArea({ x: Number(view.x), y: Number(view.y), width: Number(view.width), height: Number(view.height), shape: view.shape, radius: Number(view.radius), polygon: parsePolygonForm(view.polygon) }) })), [form.views]);
 
   useEffect(() => { if (activeTab >= form.views.length) setActiveTab(Math.max(0, form.views.length - 1)); }, [activeTab, form.views.length]);
   const setField = (field: Exclude<keyof ProductForm, 'views'>, value: string) => setForm((current) => ({ ...current, [field]: value }));
   const setViewField = (index: number, field: keyof ProductViewForm, value: string) => setForm((current) => ({ ...current, views: current.views.map((view, viewIndex) => viewIndex === index ? { ...view, [field]: value } : view) }));
-  const setViewPrintArea = (index: number, area: PrintArea) => setForm((current) => ({ ...current, views: current.views.map((view, viewIndex) => viewIndex === index ? { ...view, x: String(area.x), y: String(area.y), width: String(area.width), height: String(area.height) } : view) }));
+  const setViewPrintArea = (index: number, area: PrintArea) => setForm((current) => ({ ...current, views: current.views.map((view, viewIndex) => viewIndex === index ? { ...view, x: String(area.x), y: String(area.y), width: String(area.width), height: String(area.height), shape: area.shape ?? 'rect', radius: String(area.radius ?? 25), polygon: area.polygon && area.polygon.length >= 3 ? JSON.stringify(area.polygon) : '' } : view) }));
   const handleAddView = () => setForm((current) => { const next = [...current.views, createViewForm(current.views.length)]; setActiveTab(next.length - 1); return { ...current, views: next }; });
   const removeView = (index: number) => setForm((current) => ({ ...current, views: current.views.filter((_, viewIndex) => viewIndex !== index) }));
   const resetForm = () => { setSelectedId(null); setForm(emptyForm()); setActiveTab(0); };
@@ -89,13 +106,13 @@ export default function AdminProductEditor() {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (form.views.some((view) => !view.mockupUrl.trim())) { alert('Agrega un mockup para cada vista.'); return; }
-    const options = form.options.map((option) => ({ ...option, name: option.name.trim() || 'Opción', displayType: option.displayType ?? option.type, values: option.values.map((value, valueIndex) => ({ ...value, label: value.label.trim() || 'Variante', thumbnailUrl: value.thumbnailUrl?.trim() || undefined, mockupUrl: undefined, printArea: null, views: form.views.map((baseView) => { const configured = value.views?.find((view) => view.viewId === baseView.id); const baseArea = normalizePrintArea({ x: Number(baseView.x), y: Number(baseView.y), width: Number(baseView.width), height: Number(baseView.height) }); return { viewId: baseView.id, name: baseView.name.trim() || 'Vista', mockupUrl: configured?.mockupUrl?.trim() || null, printArea: configured?.printArea ? normalizePrintArea(configured.printArea) : valueIndex === 0 ? baseArea : null }; }) })) }));
-    const product: Product = { id: selectedId ?? crypto.randomUUID(), name: form.name.trim(), price: Number(form.price), category: form.category.trim(), canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT, printWidthCm: printWidth || undefined, printHeightCm: printHeight || undefined, options, views: form.views.map((view) => { const name = view.name.trim() || 'Vista'; return { id: view.id, name, label: name, mockupUrl: view.mockupUrl.trim(), printArea: { x: cleanPercentage(Number(view.x) || 0), y: cleanPercentage(Number(view.y) || 0), width: cleanPercentage(Number(view.width) || 0), height: cleanPercentage(Number(view.height) || 0) }, printAreaUnit: 'percent' as const }; }) };
+    const options = form.options.map((option) => ({ ...option, name: option.name.trim() || 'Opción', displayType: option.displayType ?? option.type, values: option.values.map((value, valueIndex) => ({ ...value, label: value.label.trim() || 'Variante', thumbnailUrl: value.thumbnailUrl?.trim() || undefined, mockupUrl: undefined, printArea: null, views: form.views.map((baseView) => { const configured = value.views?.find((view) => view.viewId === baseView.id); const baseArea = normalizePrintArea({ x: Number(baseView.x), y: Number(baseView.y), width: Number(baseView.width), height: Number(baseView.height), shape: baseView.shape, radius: Number(baseView.radius), polygon: parsePolygonForm(baseView.polygon) }); return { viewId: baseView.id, name: baseView.name.trim() || 'Vista', mockupUrl: configured?.mockupUrl?.trim() || null, printArea: configured?.printArea ? normalizePrintArea(configured.printArea) : valueIndex === 0 ? baseArea : null }; }) })) }));
+    const product: Product = { id: selectedId ?? crypto.randomUUID(), name: form.name.trim(), price: Number(form.price), category: form.category.trim(), canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT, printWidthCm: printWidth || undefined, printHeightCm: printHeight || undefined, options, views: form.views.map((view) => { const name = view.name.trim() || 'Vista'; const polygon = parsePolygonForm(view.polygon); return { id: view.id, name, label: name, mockupUrl: view.mockupUrl.trim(), printArea: { x: cleanPercentage(Number(view.x) || 0), y: cleanPercentage(Number(view.y) || 0), width: cleanPercentage(Number(view.width) || 0), height: cleanPercentage(Number(view.height) || 0), ...(view.shape !== 'rect' ? { shape: view.shape } : {}), ...(view.shape === 'rounded' ? { radius: cleanRadius(Number(view.radius)) } : {}), ...(polygon ? { polygon } : {}) }, printAreaUnit: 'percent' as const }; }) };
     selectedId ? updateProduct(product) : addProduct(product);
     resetForm();
   };
 
-  const activeArea = activeView ? normalizePrintArea({ x: Number(activeView.x), y: Number(activeView.y), width: Number(activeView.width), height: Number(activeView.height) }) : null;
+  const activeArea = activeView ? normalizePrintArea({ x: Number(activeView.x), y: Number(activeView.y), width: Number(activeView.width), height: Number(activeView.height), shape: activeView.shape, radius: Number(activeView.radius), polygon: parsePolygonForm(activeView.polygon) }) : null;
   return <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-10">
     <div className="mx-auto max-w-7xl">
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">

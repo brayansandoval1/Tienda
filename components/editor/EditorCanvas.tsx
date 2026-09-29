@@ -585,6 +585,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           y: (view.printArea.y * 100) / ADMIN_BASE_SIZE,
           width: (view.printArea.width * 100) / ADMIN_BASE_SIZE,
           height: (view.printArea.height * 100) / ADMIN_BASE_SIZE,
+          shape: view.printArea.shape,
+          radius: view.printArea.radius,
+          polygon: view.printArea.polygon,
         };
       };
 
@@ -599,7 +602,74 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           y: activeMockupBounds.top + (area.y / 100) * activeMockupBounds.height,
           width: (area.width / 100) * activeMockupBounds.width,
           height: (area.height / 100) * activeMockupBounds.height,
+          // La forma (rect/rounded/ellipse y su polígono libre) es relativa a
+          // la caja, así que se hereda tal cual al traducirla al plano del lienzo.
+          shape: area.shape,
+          radius: area.radius,
+          // El polígono se viaja preconvertido: sus nodos, que se persisten en
+          // % de la imagen base, pasan a px del plano del lienzo con la MISMA
+          // fórmula que la posición de la caja, para que guía y clipPath
+          // calcen con el contorno moldeado en el Admin.
+          polygon: area.polygon?.map((point) => ({
+            x: activeMockupBounds.left + (Number(point.x) / 100) * activeMockupBounds.width,
+            y: activeMockupBounds.top + (Number(point.y) / 100) * activeMockupBounds.height,
+          })),
         };
+      };
+
+      /**
+       * Crea la figura Fabric que representa la zona segura: polígono libre
+       * (`fabric.Polygon`, la fuente de verdad cuando el admin moldeó nodos),
+       * rectángulo clásico (comportamiento histórico cuando `shape` falta),
+       * rectángulo con esquinas redondeadas (`rx`/`ry` en px derivados del
+       * radio %) u óvalo (`fabric.Ellipse`). Se usa tanto para la guía punteada
+       * como para el `clipPath` por objeto: al recortar con la curva, el diseño
+       * se ve —y se exporta— con la forma real del producto.
+       *
+       * `options` permite mezclar los atributos de la guía (trazo verde) sin
+       * duplicar la traducción de la caja al plano del lienzo.
+       */
+      const buildSafeAreaShape = (area: PrintArea, options: Record<string, any> = {}) => {
+        const shared = {
+          originX: 'left',
+          originY: 'top',
+          ...options,
+        } as any;
+        // Polígono de nodos libres: los % de cada nodo se traducen a px con la
+        // misma caja ya convertida al plano del lienzo, así la guía y el
+        // clipPath calcados sobre el contorno moldeado en el Admin.
+        const polygon = Array.isArray(area.polygon) && area.polygon.length >= 3 ? area.polygon : null;
+        if (polygon) {
+          // `area.polygon` llega ya en px del plano del lienzo (ver
+          // `getRenderedPrintArea` / `drawSafeArea`), igual que left/top.
+          return new fabric.Polygon(polygon.map((point) => ({ x: Number(point.x), y: Number(point.y) })), shared);
+        }
+        const shape = area.shape === 'rounded' || area.shape === 'ellipse' ? area.shape : 'rect';
+        if (shape === 'ellipse') {
+          // En Fabric 5 `rx`/`ry` son los RADIOS de la elipse y el bounding box
+          // sigue anclándose en left/top con origen left/top (igual que Rect).
+          return new fabric.Ellipse({
+            left: area.x,
+            top: area.y,
+            rx: Math.max(1, area.width / 2),
+            ry: Math.max(1, area.height / 2),
+            ...shared,
+          } as any);
+        }
+        const radiusPercent = shape === 'rounded'
+          ? Math.min(50, Math.max(0, Number(area.radius) || 0))
+          : 0;
+        return new fabric.Rect({
+          left: area.x,
+          top: area.y,
+          width: area.width,
+          height: area.height,
+          // Misma semántica que `border-radius` en %: radioX respecto al ancho
+          // y radioY respecto al alto de la propia caja.
+          rx: radiusPercent > 0 ? (radiusPercent / 100) * area.width : 0,
+          ry: radiusPercent > 0 ? (radiusPercent / 100) * area.height : 0,
+          ...shared,
+        } as any);
       };
 
       // Fabric aplica el clipPath por objeto. Así el mockup y la guía siguen
@@ -609,15 +679,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (!object || object.isGuide || object.isMockup || object.isCropOverlay) return;
         const area = getRenderedPrintArea(view);
         object.set({
-          clipPath: new fabric.Rect({
-            left: area.x,
-            top: area.y,
-            width: area.width,
-            height: area.height,
-            originX: 'left',
-            originY: 'top',
-            absolutePositioned: true,
-          } as any),
+          clipPath: buildSafeAreaShape(area, { absolutePositioned: true }),
         });
       };
 
@@ -1136,16 +1198,23 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // El mockup puede dejar márgenes dentro del canvas (por ejemplo, una
         // funda vertical), así que calcularlo sobre 800×800 desplazaba la guía.
         const renderedArea = {
-          left: activeMockupBounds.left + (Number(printArea.x) / 100) * activeMockupBounds.width,
-          top: activeMockupBounds.top + (Number(printArea.y) / 100) * activeMockupBounds.height,
+          x: activeMockupBounds.left + (Number(printArea.x) / 100) * activeMockupBounds.width,
+          y: activeMockupBounds.top + (Number(printArea.y) / 100) * activeMockupBounds.height,
           width: (Number(printArea.width) / 100) * activeMockupBounds.width,
           height: (Number(printArea.height) / 100) * activeMockupBounds.height,
+          shape: printArea.shape,
+          radius: printArea.radius,
+          // Nodos en px del plano del lienzo (misma conversión que arriba),
+          // para que la guía punteada siga exactamente el contorno libre.
+          polygon: printArea.polygon?.map((point) => ({
+            x: activeMockupBounds.left + (Number(point.x) / 100) * activeMockupBounds.width,
+            y: activeMockupBounds.top + (Number(point.y) / 100) * activeMockupBounds.height,
+          })),
         };
-        const safeZone = new fabric.Rect({
-          left: renderedArea.left,
-          top: renderedArea.top,
-          width: renderedArea.width,
-          height: renderedArea.height,
+        // La guía se dibuja con la MISMA figura que el clipPath (rectángulo,
+        // esquinas redondeadas u óvalo), para que lo que el cliente ve recortado
+        // coincida exactamente con la línea punteada verde.
+        const safeZone = buildSafeAreaShape(renderedArea as PrintArea, {
           fill: 'rgba(34, 197, 94, 0.05)',
           stroke: '#22c55e',
           strokeDashArray: [6, 6],
@@ -1165,7 +1234,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           hasControls: false,
           hasBorders: false,
           excludeFromExport: true,
-        } as any);
+        });
 
         // Marcar como guía para excluirla de saveState/ensureObjectsInteractable
         (safeZone as any).isGuideLine = true;
@@ -1270,6 +1339,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       };
 
       // Restringe los objetos del usuario para que no se dibujen fuera del printArea
+      // Para zonas con forma ('rounded'/'ellipse') la sujeción sigue siendo la
+      // CAJA envolvente (igual que en Zazzle): la curva recorta lo visible y lo
+      // exportado vía `clipPath`, pero nunca empuja objetos de forma impredecible
+      // en las esquinas, así arrastrar sigue siendo estable.
       const clampToPrintArea = (obj: any) => {
         if (!obj || obj.isGuide || obj.isMockup || !activeView) return;
         const area = getRenderedPrintArea(activeView);
@@ -1846,6 +1919,16 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
               yPercent: ((printArea.y - referenceBounds.top) * 100) / referenceBounds.height,
               widthPercent: (printArea.width * 100) / referenceBounds.width,
               heightPercent: (printArea.height * 100) / referenceBounds.height,
+              // La forma viajando con la caja le dice a Revisar si debe recortar
+              // el compuesto con curva (óvalo/redondeado) o no. Se lee del área
+              // resuelta (opción activa o vista base), no del objeto guía.
+              ...(() => {
+                const resolvedArea = getRenderedPrintArea(targetView);
+                return {
+                  ...(resolvedArea.shape ? { shape: resolvedArea.shape } : {}),
+                  ...(resolvedArea.radius !== undefined ? { radius: resolvedArea.radius } : {}),
+                };
+              })(),
             }
           : undefined;
 

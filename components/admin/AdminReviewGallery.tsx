@@ -6,7 +6,8 @@ import { ArrowLeft, Check, Images, Info, Link2, Link2Off, Save, Trash2, Upload }
 import { useProductStore } from '@/src/store/useProductStore';
 import { compressImageFileToDataUrl } from '@/src/utils/imageCompression';
 import MockupAreaPicker from '@/components/admin/MockupAreaPicker';
-import type { PrintAreaPercent, ReviewGalleryImage } from '@/src/config/products';
+import type { PrintAreaPercent, ReviewGalleryImage, SafeAreaPoint, SafeAreaShape } from '@/src/config/products';
+import { safeAreaPolygonSignature } from '@/src/utils/safeAreaPolygon';
 import {
   percentToPickableArea,
   pickableAreaToPercent,
@@ -20,11 +21,20 @@ import {
 const REVIEW_IMAGE_MAX_DIM = 1000;
 const REVIEW_IMAGE_QUALITY = 0.82;
 
+/**
+ * Deriva de la zona maestra respecto a la zona real del editor. Compara también
+ * la forma (rect/rounded/ellipse, su radio y los nodos del polígono libre): un
+ * óvalo convertido en rectángulo en el editor es una deriva aunque la caja
+ * coincida.
+ */
 const areasAreEqual = (a: PrintAreaPercent, b: PrintAreaPercent) =>
   Math.abs(a.xPercent - b.xPercent) < 0.5 &&
   Math.abs(a.yPercent - b.yPercent) < 0.5 &&
   Math.abs(a.widthPercent - b.widthPercent) < 0.5 &&
-  Math.abs(a.heightPercent - b.heightPercent) < 0.5;
+  Math.abs(a.heightPercent - b.heightPercent) < 0.5 &&
+  (a.shape ?? 'rect') === (b.shape ?? 'rect') &&
+  Math.abs((a.radius ?? 0) - (b.radius ?? 0)) < 0.5 &&
+  safeAreaPolygonSignature(a.polygon) === safeAreaPolygonSignature(b.polygon);
 
 export default function AdminReviewGallery({ productId }: { productId: string }) {
   const products = useProductStore((state) => state.products);
@@ -77,7 +87,7 @@ export default function AdminReviewGallery({ productId }: { productId: string })
 
   const isMasterDrifted = Boolean(masterArea && !areasAreEqual(masterArea, editorAreaNow));
 
-  const handleMasterChange = (area: { x: number; y: number; width: number; height: number }) => {
+  const handleMasterChange = (area: { x: number; y: number; width: number; height: number; shape?: SafeAreaShape; radius?: number; polygon?: SafeAreaPoint[] }) => {
     setMasterArea(pickableAreaToPercent(area));
     setIsDirty(true);
   };
@@ -293,6 +303,10 @@ export default function AdminReviewGallery({ productId }: { productId: string })
                           y: key === 'yPercent' ? Number(event.target.value) : masterArea.yPercent,
                           width: key === 'widthPercent' ? Number(event.target.value) : masterArea.widthPercent,
                           height: key === 'heightPercent' ? Number(event.target.value) : masterArea.heightPercent,
+                          // Escribir una coordenada nunca debe borrar la forma.
+                          shape: masterArea.shape,
+                          radius: masterArea.radius,
+                          polygon: masterArea.polygon,
                         })}
                         className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-3 font-mono text-xs text-slate-800 focus:border-indigo-400 focus:outline-none"
                       />

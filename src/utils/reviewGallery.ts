@@ -3,7 +3,14 @@ import type {
   Product,
   ProductView,
   ReviewGalleryImage,
+  SafeAreaPoint,
+  SafeAreaShape,
 } from '@/src/config/products';
+import {
+  normalizeSafeAreaPolygon,
+  polygonBounds,
+  polygonCssClipPath,
+} from '@/src/utils/safeAreaPolygon';
 
 /**
  * Utilidades de la "Zona Segura Maestra" para la pestaña Revisar.
@@ -33,6 +40,9 @@ export const DEFAULT_MASTER_PRINT_AREA: PrintAreaPercent = {
   heightPercent: 45,
 };
 
+/** Radio por defecto (%) para zonas 'rounded' sin radio explícito. */
+export const DEFAULT_MASTER_RADIUS = 25;
+
 const toFiniteNumber = (value: unknown, fallback: number): number =>
   Number.isFinite(Number(value)) ? Number(value) : fallback;
 
@@ -42,20 +52,52 @@ const roundPercent = (value: number): number => Number(value.toFixed(2));
 const clampPercent = (value: unknown, fallback: number): number =>
   roundPercent(Math.min(100, Math.max(0, toFiniteNumber(value, fallback))));
 
+/** Valida la forma persistida; cualquier valor desconocido cae a 'rect'. */
+const normalizeShape = (shape: unknown): SafeAreaShape | undefined =>
+  shape === 'rect' || shape === 'rounded' || shape === 'ellipse' ? shape : undefined;
+
+/** Radio (0-50 %) sólo válido para 'rounded'; fuera de rango se recorta. */
+const normalizeRadius = (radius: unknown): number | undefined =>
+  Number.isFinite(Number(radius)) ? roundPercent(Math.min(50, Math.max(0, Number(radius)))) : undefined;
+
 /**
  * Normaliza una caja en porcentaje: ancho/alto nunca menores a 1 % y la caja
  * nunca sale del lienzo (x + width <= 100). Igual de estricto que
  * `normalizePrintArea` de MockupAreaPicker para que Admin y Revisar coincidan.
+ * Con polígono de nodos, la caja se DERIVA de su bounding box (el polígono
+ * manda sobre la forma; la caja mantiene vivos a los consumidores antiguos).
  */
 export function normalizePrintAreaPercent(area: Partial<PrintAreaPercent> | null | undefined): PrintAreaPercent {
+  const polygon = normalizeSafeAreaPolygon(area?.polygon);
+  if (polygon) {
+    const box = polygonBounds(polygon);
+    const shape = normalizeShape(area?.shape);
+    const radius = normalizeRadius(area?.radius);
+    return {
+      xPercent: box.x,
+      yPercent: box.y,
+      widthPercent: box.width,
+      heightPercent: box.height,
+      ...(shape && shape !== 'rect' ? { shape } : {}),
+      ...(shape === 'rounded' ? { radius: radius ?? DEFAULT_MASTER_RADIUS } : {}),
+      polygon,
+    };
+  }
+
   const widthPercent = Math.min(100, Math.max(1, toFiniteNumber(area?.widthPercent, DEFAULT_MASTER_PRINT_AREA.widthPercent)));
   const heightPercent = Math.min(100, Math.max(1, toFiniteNumber(area?.heightPercent, DEFAULT_MASTER_PRINT_AREA.heightPercent)));
+  const shape = normalizeShape(area?.shape) ?? 'rect';
+  const radius = normalizeRadius(area?.radius);
 
   return {
     xPercent: clampPercent(area?.xPercent, Math.max(0, 100 - widthPercent) / 2),
     yPercent: clampPercent(area?.yPercent, Math.max(0, 100 - heightPercent) / 2),
     widthPercent: roundPercent(widthPercent),
     heightPercent: roundPercent(heightPercent),
+    // Igual que en MockupAreaPicker: sólo se persiste lo distinto del
+    // rectángulo clásico, para no escribir claves nuevas en productos viejos.
+    ...(shape !== 'rect' ? { shape } : {}),
+    ...(shape === 'rounded' ? { radius: radius ?? DEFAULT_MASTER_RADIUS } : {}),
   };
 }
 
@@ -88,6 +130,9 @@ export function viewPrintAreaToPercent(
       yPercent: legacyPercentFix(toFiniteNumber(view.printArea.y, 25)),
       widthPercent: legacyPercentFix(toFiniteNumber(view.printArea.width, 50)),
       heightPercent: legacyPercentFix(toFiniteNumber(view.printArea.height, 50)),
+      shape: view.printArea.shape,
+      radius: view.printArea.radius,
+      polygon: view.printArea.polygon,
     });
   }
 
@@ -97,6 +142,9 @@ export function viewPrintAreaToPercent(
     yPercent: (toFiniteNumber(view.printArea.y, 200) * 100) / planeHeight,
     widthPercent: (toFiniteNumber(view.printArea.width, 400) * 100) / planeWidth,
     heightPercent: (toFiniteNumber(view.printArea.height, 400) * 100) / planeHeight,
+    shape: view.printArea.shape,
+    radius: view.printArea.radius,
+    polygon: view.printArea.polygon,
   });
 }
 
@@ -133,28 +181,53 @@ export function resolveReviewImagePrintArea(
   return masterPrintArea;
 }
 
-/** Estilos CSS para pintar la caja sobre un contenedor con la imagen dentro. */
-export function printAreaPercentToStyle(area: PrintAreaPercent): { left: string; top: string; width: string; height: string } {
+/**
+ * Estilos CSS para pintar la caja sobre un contenedor con la imagen dentro.
+ * Con polígono de nodos usa `clip-path: polygon(...)` (los nodos se
+ * reexpresan como % de la propia caja); sin él, el `border-radius` que
+ * corresponde a la forma paramétrica, así la vista previa de Revisar respeta
+ * zonas libres, redondeadas u ovaladas.
+ */
+export function printAreaPercentToStyle(area: PrintAreaPercent): { left: string; top: string; width: string; height: string; borderRadius?: string; clipPath?: string } {
+  const shape = normalizeShape(area.shape);
+  const polygon = normalizeSafeAreaPolygon(area.polygon);
+  if (polygon) {
+    return {
+      left: `${area.xPercent}%`,
+      top: `${area.yPercent}%`,
+      width: `${area.widthPercent}%`,
+      height: `${area.heightPercent}%`,
+      clipPath: polygonCssClipPath(polygon, polygonBounds(polygon)),
+    };
+  }
   return {
     left: `${area.xPercent}%`,
     top: `${area.yPercent}%`,
     width: `${area.widthPercent}%`,
     height: `${area.heightPercent}%`,
+    ...(shape === 'ellipse'
+      ? { borderRadius: '50%' }
+      : shape === 'rounded'
+        ? { borderRadius: `${normalizeRadius(area.radius) ?? DEFAULT_MASTER_RADIUS}%` }
+        : {}),
   };
 }
 
-/** Adaptación al tipo `{ x, y, width, height }` que consume MockupAreaPicker. */
-export function percentToPickableArea(area: PrintAreaPercent): { x: number; y: number; width: number; height: number } {
-  return { x: area.xPercent, y: area.yPercent, width: area.widthPercent, height: area.heightPercent };
+/** Adaptación al tipo `{ x, y, width, height, shape, radius, polygon }` que consume MockupAreaPicker. */
+export function percentToPickableArea(area: PrintAreaPercent): { x: number; y: number; width: number; height: number; shape?: SafeAreaShape; radius?: number; polygon?: SafeAreaPoint[] } {
+  return { x: area.xPercent, y: area.yPercent, width: area.widthPercent, height: area.heightPercent, shape: area.shape, radius: area.radius, polygon: area.polygon };
 }
 
 /** Adaptación inversa: del selector de Admin al formato persistido. */
-export function pickableAreaToPercent(area: { x: number; y: number; width: number; height: number }): PrintAreaPercent {
+export function pickableAreaToPercent(area: { x: number; y: number; width: number; height: number; shape?: SafeAreaShape; radius?: number; polygon?: SafeAreaPoint[] }): PrintAreaPercent {
   return normalizePrintAreaPercent({
     xPercent: area.x,
     yPercent: area.y,
     widthPercent: area.width,
     heightPercent: area.height,
+    shape: area.shape,
+    radius: area.radius,
+    polygon: area.polygon,
   });
 }
 
