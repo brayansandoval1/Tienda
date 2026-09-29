@@ -235,16 +235,30 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const containerHeight = containerEl.clientHeight;
         if (!containerWidth || !containerHeight) return;
 
+        // `clientWidth/Height` incluyen el padding del contenedor (p-6): hay
+        // que descontarlo, o el mockup se dimensiona para un área mayor que la
+        // realmente disponible y desborda/queda cortado en pantallas bajas.
+        const containerStyle = window.getComputedStyle(containerEl);
+        const verticalPadding = (parseFloat(containerStyle.paddingTop) || 0) + (parseFloat(containerStyle.paddingBottom) || 0);
+        const horizontalPadding = (parseFloat(containerStyle.paddingLeft) || 0) + (parseFloat(containerStyle.paddingRight) || 0);
+        // La barra flotante de herramientas (FloatingFooter, 'absolute
+        // bottom-2') se superpone al pie del área: se reserva su banda para
+        // que nunca tape el mockup. En pantallas estrechas la barra envuelve a
+        // dos filas, así que la reserva es mayor.
+        const footerReserve = containerWidth < 640 ? 104 : 72;
+        const availableHeight = Math.max(180, containerHeight - verticalPadding - footerReserve);
+        const availableWidth = Math.max(180, containerWidth - horizontalPadding);
+
         // Dimensiones nativas de la plantilla de la funda (aspecto 3:4 vertical).
         const originalWidth = 600;
         const originalHeight = 800;
 
-        // La funda (mockup) debe ocupar el 92% del ALTO disponible del área
-        // central. El ancho no es limitante (la funda es vertical), pero se
-        // acota para que el plano lógico 800×800 nunca desborde horizontalmente.
+        // La funda (mockup) debe ocupar como máximo el 95% del ALTO útil
+        // restante (ya descontadas padding y banda de la barra inferior). El
+        // ancho se acota para que el plano lógico 800×800 nunca desborde.
         const scale = Math.min(
-          (containerHeight * 0.92) / originalHeight,
-          containerWidth / ADMIN_BASE_SIZE,
+          (availableHeight * 0.95) / originalHeight,
+          availableWidth / ADMIN_BASE_SIZE,
         );
 
         // El plano lógico sigue siendo 800×800 (con el mockup 600×800 centrado
