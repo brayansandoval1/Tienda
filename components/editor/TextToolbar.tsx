@@ -3,6 +3,12 @@
 import { useState, useEffect } from 'react';
 import { GOOGLE_FONTS } from '../../lib/fonts';
 import {
+  designBackgroundToCss,
+  encodeDesignBackground,
+  gradientPresetToBackground,
+  GRADIENT_BACKGROUND_PRESETS,
+} from './designBackground';
+import {
   AlignCenter,
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -186,7 +192,24 @@ export default function TextToolbar() {
             style={{ background: color === 'transparent' ? 'linear-gradient(135deg, #fff 45%, #ef4444 46%, #ef4444 54%, #fff 55%)' : color }}
           />
         ))}
-        <input type="color" aria-label="Elegir fondo personalizado" value={backgroundColor === 'transparent' ? '#ffffff' : backgroundColor} onChange={(event) => changeBackground(event.target.value)} className="h-6 w-6 cursor-pointer rounded-md border-0 p-0" />
+        {/* Degradados predefinidos: colorean la Zona Segura del producto
+            (mismo evento que los sólidos; viaja la spec serializada). */}
+        {GRADIENT_BACKGROUND_PRESETS.slice(0, 5).map((preset) => {
+          const spec = gradientPresetToBackground(preset);
+          const encoded = encodeDesignBackground(spec);
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              aria-label={`Fondo degradado ${preset.name}`}
+              title={`Degradado ${preset.name}`}
+              onClick={() => changeBackground(encoded)}
+              className={`h-6 w-6 rounded-md border border-transparent ${backgroundColor === encoded ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}
+              style={{ background: designBackgroundToCss(spec) }}
+            />
+          );
+        })}
+        <input type="color" aria-label="Elegir fondo personalizado" value={/^#[0-9a-f]{6}$/i.test(backgroundColor) ? backgroundColor : '#ffffff'} onChange={(event) => changeBackground(event.target.value)} className="h-6 w-6 cursor-pointer rounded-md border-0 p-0" />
       </div>
 
       {isImageObject && !isCropping && (

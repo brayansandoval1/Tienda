@@ -9,6 +9,18 @@ import Product3DModal from '@/components/editor/Product3DModal';
 import { saveTemplateToStorage, updateTemplateInStorage, listSavedTemplates, getCategoryIcon } from '@/src/utils/templateStorage';
 import { clearDraft, getDraft, saveDraft, type DesignDraft } from '@/src/utils/designDraftStorage';
 import { useCartStore } from '@/src/store/useCartStore';
+import {
+  decodeDesignBackground,
+  designBackgroundToCss,
+  encodeDesignBackground,
+  gradientPresetToBackground,
+  GRADIENT_BACKGROUND_PRESETS,
+  GRADIENT_DIRECTIONS,
+  makeLinearBackground,
+  SOLID_BACKGROUND_SWATCHES,
+  type DesignBackground,
+} from '@/components/editor/designBackground';
+
 
 type PrintArea = ProductView['printArea'];
 const ADMIN_BASE_SIZE = 800;
@@ -38,6 +50,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   const canvasAreaRef = useRef<HTMLDivElement>(null);
   const fabricCanvasRef = useRef<any>(null);
   const safeZoneRef = useRef<any>(null);
+  // Vector gemelo de la guía punteada que recibe el color de la barra
+  // "Fondo" (`set('fill', ...)`). Existe aparte de la guía porque ésta se
+  // desvanece (opacity 0) al dejar de interactuar y el color debe verse.
+  const safeAreaBackgroundRef = useRef<any>(null);
   const historyRef = useRef<string[]>([]);
   const redoStackRef = useRef<string[]>([]);
   const isRedoingUndoRef = useRef(false);
@@ -55,6 +71,23 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   );
   const [selectedColorIds, setSelectedColorIds] = useState<Record<string, string>>({});
   const [designBackgroundColor, setDesignBackgroundColor] = useState<string>('transparent');
+  // Estado del degradado personalizado del panel "Fondo impreso": dos colores
+  // y una dirección (ángulo CSS). Se aplica como spec serializada a través de
+  // handleDesignBgColorChangeRef, igual que los colores sólidos.
+  const [customGradient, setCustomGradient] = useState({
+    from: '#a5b4fc',
+    to: '#f9a8d4',
+    angle: 180,
+  });
+  // Valor decodificado del fondo activo: la UI lo usa para saber qué muestra
+  // (sólido, preset o degradado propio) debe mostrarse como seleccionada.
+  const designBackgroundSpec = decodeDesignBackground(designBackgroundColor);
+  // Hex actual del selector de color personalizado (caída segura a blanco
+  // cuando el fondo activo es 'transparent' o un degradado).
+  const activeSolidHex =
+    designBackgroundSpec.kind === 'solid' && /^#[0-9a-f]{6}$/i.test(designBackgroundSpec.color)
+      ? designBackgroundSpec.color
+      : '#ffffff';
   const [selectedOptions, setSelectedOptions] = useState<Record<string, ProductOptionValue>>(
     () => getInitialSelectedOptions(initialProduct),
   );
@@ -178,7 +211,12 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         height: ADMIN_BASE_SIZE,
         enableRetinaScaling: true,
         imageSmoothingEnabled: true,
-        backgroundColor: '#F4F5F7',
+        // El fondo GLOBAL del canvas es SIEMPRE transparente: el color que
+        // elige el usuario en la barra "Fondo" se aplica únicamente al vector
+        // de la Zona Segura (setDesignBackground). Así la imagen base del
+        // producto (mockup) no se tapa jamás con un relleno cuadrado. El tono
+        // neutro del área de trabajo lo aporta el contenedor (bg-slate-100/50).
+        backgroundColor: 'transparent',
         selection: true,
         interactive: true,
         preserveObjectStacking: true,
@@ -724,7 +762,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // visibles completos, mientras que el diseño del usuario sólo aparece
       // dentro del área imprimible sobre el cuerpo del producto.
       const applyPrintAreaClip = (object: any, view = activeView) => {
-        if (!object || object.isGuide || object.isMockup || object.isCropOverlay) return;
+        // El relleno de la zona segura YA tiene la forma exacta del área
+        // imprimible: recortarlo con su propio clipPath es redundante.
+        if (!object || object.isGuide || object.isMockup || object.isCropOverlay || object.isSafeAreaBackground) return;
         const area = getRenderedPrintArea(view);
         object.set({
           clipPath: buildSafeAreaShape(area, { absolutePositioned: true }),
@@ -1290,7 +1330,46 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
         safeZoneRef.current = safeZone;
         c.add(safeZone);
-        c.sendToBack(safeZone); // Siempre detrás de los objetos del usuario
+
+        // ── Relleno impreso de la Zona Segura ───────────────────────────────
+        // Clon del MISMO vector (Rect, Rect redondeado, Elipse o Polygon) que
+        // sirve de guía, pero SIN trazo y siempre opaco: es el objeto que la
+        // barra "Fondo" colorea con `set('fill', color)` (ver
+        // setDesignBackground). Va separado de la guía punteada porque la
+        // guía se desvanece a opacity 0 al dejar de interactuar, y el color
+        // elegido debe permanecer visible. Lleva `isDesignBackground` para
+        // quedar excluido del historial, borradores y plantillas, y a la vez
+        // incluido en los archivos de impresión.
+        c.getObjects()
+          .filter((obj: any) => obj?.isSafeAreaBackground)
+          .forEach((obj: any) => c.remove(obj));
+        const safeAreaBackground = buildSafeAreaShape(renderedArea as PrintArea, {
+          fill: 'transparent',
+          // Oculto hasta que el usuario elija un color en la barra "Fondo".
+          // El color del fondo del termo/gorra se aplica SOLO dentro de la
+          // zona segura, nunca sobre el canvas completo.
+          selectable: false,
+          evented: false,
+          lockMovementX: true,
+          lockMovementY: true,
+          lockScalingX: true,
+          lockScalingY: true,
+          lockRotation: true,
+          hasControls: false,
+          hasBorders: false,
+          isSafeAreaBackground: true,
+          isDesignBackground: true,
+        });
+        safeAreaBackgroundRef.current = safeAreaBackground;
+        c.add(safeAreaBackground);
+
+        // Orden de capas (de fondo a frente):
+        //   mockup → relleno de zona segura → guía punteada → arte del usuario.
+        // Cada sendToBack re-ubica el objeto al índice 0, así que llamándolos
+        // en orden inverso queda la pila exacta de arriba. El relleno NUNCA
+        // tapa textos, imágenes ni stickers del cliente.
+        c.sendToBack(safeZone);
+        c.sendToBack(safeAreaBackground);
         // El mockup base se mantiene SIEMPRE en el fondo, por debajo de la zona
         // segura, para que el rectángulo punteado verde marque la zona imprimible
         // sobre el teléfono (y no al revés). Esto aplica a todas las rutas.
@@ -1330,51 +1409,113 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       canvas.on('selection:updated', flashGuides);
       canvas.on('selection:cleared', flashGuides);
 
-      // El fondo impreso es un objeto Fabric real: a diferencia de la guía,
-      // permanece incluido al exportar y se puede guardar por cada vista.
-      const setDesignBackground = (color: string, view = activeView) => {
+      // El fondo impreso es un relleno que vive EXCLUSIVAMENTE en el vector de
+      // la Zona Segura: a diferencia de la guía, permanece visible, viaja a la
+      // exportación y se guarda por cada vista.
+      //
+      // Relleno sólido, transparente o degradado en coordenadas locales de la
+      // figura de la zona segura (Rect, Rect redondeado, Elipse o Polygon).
+      const buildFabricBackgroundFill = (
+        background: DesignBackground,
+        width: number,
+        height: number,
+      ): string | fabric.Gradient => {
+        if (background.kind === 'solid') return background.color;
+        if (background.kind === 'transparent') return 'transparent';
+        const colorStops = background.stops.map((stop) => ({
+          offset: Math.min(1, Math.max(0, Number(stop.offset) || 0)),
+          color: stop.color,
+        }));
+        if (colorStops.length === 0) return '#ffffff';
+        if (background.kind === 'radial') {
+          return new fabric.Gradient({
+            type: 'radial',
+            coords: {
+              x1: width / 2,
+              y1: height * 0.4,
+              r1: 0,
+              x2: width / 2,
+              y2: height * 0.4,
+              r2: Math.hypot(width / 2, height * 0.6),
+            },
+            colorStops,
+          } as any);
+        }
+        // Ángulo estilo CSS: 0deg sube, 90deg va a la derecha, 180deg baja.
+        const angle = (background.angle * Math.PI) / 180;
+        const dx = Math.sin(angle);
+        const dy = -Math.cos(angle);
+        const half = (Math.abs(width * dx) + Math.abs(height * dy)) / 2;
+        return new fabric.Gradient({
+          type: 'linear',
+          coords: {
+            x1: width / 2 - dx * half,
+            y1: height / 2 - dy * half,
+            x2: width / 2 + dx * half,
+            y2: height / 2 + dy * half,
+          },
+          colorStops,
+        } as any);
+      };
+
+      // El color elegido en la barra "Fondo" se aplica EXCLUSIVAMENTE al
+      // vector de la Zona Segura (safeAreaBackgroundRef): el fondo global del
+      // canvas NUNCA se pinta (permanece 'transparent'), de modo que la
+      // imagen base del producto/termo no queda tapada por un cuadrado.
+      const setDesignBackground = (rawValue: string, view = activeView) => {
         const c = fabricCanvasRef.current;
         if (!c || !view) return;
-        const existing = c.getObjects().filter((obj: any) => obj.isDesignBackground);
-        existing.forEach((obj: any) => c.remove(obj));
 
-        const normalizedColor = !color || color === 'transparent' ? 'transparent' : color;
+        // 1) FONDO GLOBAL DEL CANVAS: siempre transparente. Se refuerza en
+        //    cada aplicación por si un borrador o versión previa lo dejó
+        //    pintado (canvas.setBackgroundColor(null) equivalent).
+        c.backgroundColor = 'transparent';
+
+        // Acepta hex, 'transparent' o el JSON de un degradado (ver
+        // designBackground.ts). El valor normalizado viaja al estado y al ref
+        // de vistas para seguir sobreviviendo a cambios de cara/opción.
+        const background = decodeDesignBackground(rawValue);
+        const normalizedValue = encodeDesignBackground(background);
         designBackgroundColorsRef.current = {
           ...designBackgroundColorsRef.current,
-          [view.id]: normalizedColor,
+          [view.id]: normalizedValue,
         };
-        setDesignBackgroundColor(normalizedColor);
+        setDesignBackgroundColor(normalizedValue);
 
-        if (normalizedColor === 'transparent') {
-          c.requestRenderAll();
+        // 2) APLICAR EL COLOR ÚNICAMENTE A LA ZONA SEGURA: el único objetivo
+        //    intervenido es el vector gemelo de la guía punteada
+        //    (buildSafeAreaShape). Recibe 'fill' = color sólido, 'transparent'
+        //    para la opción "Ninguno / Transparente" (diagonal roja), o un
+        //    fabric.Gradient para los degradados. Si la zona aún no existe
+        //    (mockup cargando), el valor queda guardado en el ref y
+        //    setupSafeAreaAndClipping lo reaplica en cuanto drawSafeArea la
+        //    dibuja.
+        const safeAreaBackground = safeAreaBackgroundRef.current;
+        if (!safeAreaBackground || !c.getObjects().includes(safeAreaBackground)) {
+          c.renderAll();
           return;
         }
+        safeAreaBackground.set(
+          'fill',
+          buildFabricBackgroundFill(
+            background,
+            safeAreaBackground.width ?? 0,
+            safeAreaBackground.height ?? 0,
+          ),
+        );
 
-        const area = getRenderedPrintArea(view);
-        const background = new fabric.Rect({
-          left: area.x,
-          top: area.y,
-          width: area.width,
-          height: area.height,
-          originX: 'left',
-          originY: 'top',
-          fill: normalizedColor,
-          selectable: false,
-          evented: false,
-          excludeFromExport: false,
-          isDesignBackground: true,
-        } as any);
-        c.add(background);
-        // Orden de capas correcto (de fondo a frente):
-        //   mockup → guía (zona segura) → fondo de color → arte del usuario.
-        // La secuencia anterior dejaba el fondo DEBAJO del mockup opaco, por
-        // lo que el color nunca era visible y parecía "no cambiarse".
-        c.sendToBack(background);
-        if (safeZoneRef.current) c.sendToBack(safeZoneRef.current);
+        // 3) MANTENER EL ORDEN DE CAPAS (Z-INDEX): el relleno se re-ubica en
+        //    el fondo de la zona — mockup (base) → relleno → guía punteada →
+        //    arte del usuario — para que NUNCA tape textos, imágenes ni
+        //    stickers agregados por el cliente. La guía punteada queda por
+        //    encima del relleno porque no se movió del resto de la pila.
+        c.sendToBack(safeAreaBackground);
         c.getObjects()
           .filter((obj: any) => obj?.isMockup)
           .forEach((obj: any) => c.sendToBack(obj));
-        c.requestRenderAll();
+
+        // 4) Refresco inmediato de la vista.
+        c.renderAll();
       };
 
       const handleDesignBgColorChange = (color: string) => setDesignBackground(color);
@@ -1986,7 +2127,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         let tainted = false;
         try {
           if (printArea.width > 0 && printArea.height > 0) {
-            systemLayers.forEach((object: any) => object.set({ visible: false, excludeFromExport: true }));
+            // Las capas técnicas se ocultan, PERO el relleno de la zona
+            // segura (isDesignBackground) es parte del diseño imprimible:
+            // viaja en el PNG para que el taller reciba el color elegido.
+            systemLayers.forEach((object: any) => {
+              if (object.isDesignBackground) return;
+              object.set({ visible: false, excludeFromExport: true });
+            });
             c.backgroundImage = null;
             c.backgroundColor = '';
             c.clipPath = undefined;
@@ -2122,8 +2269,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           c.renderAll();
           const previewImage = c.toDataURL({ format: 'png', quality: 1, multiplier: 2 });
 
-          // Producción: las capas técnicas nunca llegan al archivo plano.
-          systemLayers.forEach((object: any) => object.set({ visible: false, excludeFromExport: true }));
+          // Producción: las capas técnicas nunca llegan al archivo plano,
+          // salvo el relleno de la zona segura (isDesignBackground), que es
+          // diseño imprimible y debe llevar el color elegido por el cliente.
+          systemLayers.forEach((object: any) => {
+            if (object.isDesignBackground) return;
+            object.set({ visible: false, excludeFromExport: true });
+          });
           c.backgroundImage = null;
           c.backgroundColor = '';
           // Los clipPaths individuales de los objetos se mantienen para que
@@ -3634,6 +3786,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
                 <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-gray-500">
                   2. Fondo impreso
                 </label>
+                <p className="mb-1.5 text-[10px] leading-normal text-gray-400">
+                  El fondo cubre TODO el fondo del producto y se mantiene al exportar.
+                  Elige un color o un degradado, o pulsa “Transparente” para quitarlo.
+                </p>
                 <div className="flex flex-col gap-2">
                   <button
                     type="button"
@@ -3644,26 +3800,105 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
                   >
                     🚫 Transparente
                   </button>
-                  <div className="grid grid-cols-5 gap-1.5">
-                  {['#000000', '#FFFFFF', '#2d4a3e', '#1e3a8a', '#7c2d12', '#e11d48'].map((hex) => (
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                    Sólidos
+                  </span>
+                  <div className="grid grid-cols-7 gap-1.5">
+                  {SOLID_BACKGROUND_SWATCHES.map((hex) => (
                     <button
                       key={hex}
                       type="button"
                       onClick={() => handleDesignBgColorChangeRef.current?.(hex)}
                       className={`h-6 w-full rounded-md border shadow-sm transition-all ${
-                        designBackgroundColor === hex ? 'scale-105 ring-2 ring-blue-600' : 'hover:scale-105'
+                        designBackgroundColor.toLowerCase() === hex ? 'scale-105 ring-2 ring-blue-600' : 'hover:scale-105'
                       }`}
-                      style={{ backgroundColor: hex, borderColor: hex === '#FFFFFF' ? '#cbd5e1' : 'transparent' }}
+                      style={{ backgroundColor: hex, borderColor: hex === '#ffffff' ? '#cbd5e1' : 'transparent' }}
                       title={`Fondo ${hex}`}
                     />
                   ))}
                   <input
                     type="color"
-                    value={designBackgroundColor === 'transparent' ? '#ffffff' : designBackgroundColor}
+                    value={activeSolidHex}
                     onChange={(event) => handleDesignBgColorChangeRef.current?.(event.target.value)}
                     className="h-6 w-full cursor-pointer rounded-md border bg-transparent p-0"
                     title="Elegir color personalizado"
                   />
+                  </div>
+                  {/*
+                    Degradados "aesthetic": tiñen el fondo COMPLETO del mockup
+                    (no sólo la zona segura) igual que los sólidos. Un clic los
+                    aplica; la muestra muestra el desvanecido real.
+                  */}
+                  <span className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                    Degradados
+                  </span>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {GRADIENT_BACKGROUND_PRESETS.map((preset) => {
+                      const spec = gradientPresetToBackground(preset);
+                      const encoded = encodeDesignBackground(spec);
+                      const isSelected = designBackgroundColor === encoded;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => handleDesignBgColorChangeRef.current?.(encoded)}
+                          className={`h-6 w-full rounded-md border border-transparent shadow-sm transition-all ${
+                            isSelected ? 'scale-105 ring-2 ring-blue-600' : 'hover:scale-105'
+                          }`}
+                          style={{ background: designBackgroundToCss(spec) }}
+                          title={`Degradado ${preset.name}`}
+                          aria-label={`Fondo degradado ${preset.name}`}
+                        />
+                      );
+                    })}
+                  </div>
+                  {/* Degradado personalizado: dos colores + dirección. */}
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="color"
+                      value={customGradient.from}
+                      onChange={(event) => setCustomGradient((prev) => ({ ...prev, from: event.target.value }))}
+                      className="h-6 w-7 cursor-pointer rounded-md border bg-transparent p-0"
+                      title="Color inicial del degradado"
+                    />
+                    <input
+                      type="color"
+                      value={customGradient.to}
+                      onChange={(event) => setCustomGradient((prev) => ({ ...prev, to: event.target.value }))}
+                      className="h-6 w-7 cursor-pointer rounded-md border bg-transparent p-0"
+                      title="Color final del degradado"
+                    />
+                    <select
+                      value={customGradient.angle}
+                      onChange={(event) => setCustomGradient((prev) => ({ ...prev, angle: Number(event.target.value) }))}
+                      className="h-6 flex-1 cursor-pointer rounded-md border border-gray-200 bg-white px-1 text-[10px] text-gray-600 outline-none"
+                      title="Dirección del degradado"
+                    >
+                      {GRADIENT_DIRECTIONS.map((direction) => (
+                        <option key={direction.angle} value={direction.angle}>
+                          {direction.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleDesignBgColorChangeRef.current?.(
+                          encodeDesignBackground(
+                            makeLinearBackground(customGradient.angle, [customGradient.from, customGradient.to]),
+                          )
+                        )
+                      }
+                      className="h-6 flex-1 rounded-md border border-gray-200 text-[10px] font-semibold text-gray-600 transition hover:border-blue-400 hover:text-blue-600"
+                      style={{
+                        background: designBackgroundToCss(
+                          makeLinearBackground(customGradient.angle, [customGradient.from, customGradient.to]),
+                        ),
+                      }}
+                      title="Aplicar degradado personalizado a todo el fondo del producto"
+                    >
+                      <span className="rounded bg-white/70 px-1">Aplicar</span>
+                    </button>
                   </div>
                 </div>
               </div>
