@@ -3,14 +3,17 @@
 import { FormEvent, type InputHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Camera, Eye, Info, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
-import { useProductStore, type Product, type ProductOption } from '@/src/store/useProductStore';
+import * as THREE from 'three';
+import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { useProductStore, type CustomizablePart, type Product, type ProductOption } from '@/src/store/useProductStore';
 import { compressImageFileToDataUrl } from '@/src/utils/imageCompression';
 import AdminProductOptionsForm from '@/components/admin/AdminProductOptionsForm';
 import MockupAreaPicker, { normalizePrintArea, type PrintArea } from '@/components/admin/MockupAreaPicker';
 import type { SafeAreaPoint, SafeAreaShape } from '@/src/config/products';
 
 type ProductViewForm = { id: string; name: string; mockupUrl: string; x: string; y: string; width: string; height: string; shape: SafeAreaShape; radius: string; /** Nodos del contorno libre serializados ('' = forma paramétrica). */ polygon: string };
-type ProductForm = { name: string; price: string; category: string; printWidthCm: string; printHeightCm: string; model3dUrl: string; options: ProductOption[]; views: ProductViewForm[] };
+type ProductForm = { name: string; price: string; category: string; printWidthCm: string; printHeightCm: string; model3dUrl: string; customizableParts: CustomizablePart[]; options: ProductOption[]; views: ProductViewForm[] };
+type MeshInspectionState = { status: 'idle' | 'loading' | 'success' | 'error'; message: string; names: string[] };
 
 const REFERENCE_WIDTH = 800;
 const REFERENCE_HEIGHT = 800;
@@ -28,8 +31,33 @@ const parsePolygonForm = (raw: string): SafeAreaPoint[] | undefined => {
     return undefined;
   }
 };
+const getGLBMeshNames = (scene: THREE.Object3D) => {
+  const names = new Set<string>();
+  scene.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    if (mesh.isMesh && mesh.name.trim()) names.add(mesh.name.trim());
+  });
+  return [...names];
+};
+const disposeInspectedGLB = (scene: THREE.Object3D) => {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  scene.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    geometries.add(mesh.geometry);
+    (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((material) => materials.add(material));
+  });
+  geometries.forEach((geometry) => geometry.dispose());
+  materials.forEach((material) => {
+    Object.values(material).forEach((value) => {
+      if (value && typeof value === 'object' && 'isTexture' in value && (value as THREE.Texture).isTexture) (value as THREE.Texture).dispose();
+    });
+    material.dispose();
+  });
+};
 const createViewForm = (index: number): ProductViewForm => ({ id: index === 0 ? 'front' : `view-${crypto.randomUUID()}`, name: index === 0 ? 'Frente' : 'Espalda', mockupUrl: '', x: '25', y: '25', width: '50', height: '50', shape: 'rect', radius: '25', polygon: '' });
-const emptyForm = (): ProductForm => ({ name: '', price: '', category: '', printWidthCm: '', printHeightCm: '', model3dUrl: '', options: [], views: [createViewForm(0)] });
+const emptyForm = (): ProductForm => ({ name: '', price: '', category: '', printWidthCm: '', printHeightCm: '', model3dUrl: '', customizableParts: [], options: [], views: [createViewForm(0)] });
 
 const normalizeViewIds = (views: ProductViewForm[]): ProductViewForm[] => {
   const usedIds = new Set<string>();
@@ -49,6 +77,7 @@ const toForm = (product: Product): ProductForm => ({
   printWidthCm: product.printWidthCm ? String(product.printWidthCm) : '',
   printHeightCm: product.printHeightCm ? String(product.printHeightCm) : '',
   model3dUrl: product.model3dUrl ?? '',
+  customizableParts: product.customizableParts?.map((part) => ({ ...part, defaultColor: part.defaultColor || '#cbd5e1', enabled: part.enabled !== false })) ?? [],
   options: product.options?.map((option) => ({ ...option, displayType: option.displayType ?? option.type, values: option.values.map((value) => ({ ...value })) })) ?? [],
   views: normalizeViewIds(product.views.map((view, index) => {
     const percent = view.printAreaUnit === 'percent';
@@ -76,6 +105,9 @@ export default function AdminProductEditor() {
   const [activeTab, setActiveTab] = useState(0);
   const [productQuery, setProductQuery] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const modelFileInputRef = useRef<HTMLInputElement>(null);
+  const meshInspectRequestRef = useRef(0);
+  const [meshInspection, setMeshInspection] = useState<MeshInspectionState>({ status: 'idle', message: '', names: [] });
   const activeView = form.views[Math.min(activeTab, form.views.length - 1)];
   const activeIndex = Math.min(activeTab, form.views.length - 1);
   const printWidth = Number(form.printWidthCm) || 0;
@@ -86,7 +118,73 @@ export default function AdminProductEditor() {
   const filteredProducts = useMemo(() => products.filter((product) => `${product.name} ${product.category}`.toLowerCase().includes(productQuery.trim().toLowerCase())), [products, productQuery]);
 
   useEffect(() => { if (activeTab >= form.views.length) setActiveTab(Math.max(0, form.views.length - 1)); }, [activeTab, form.views.length]);
-  const setField = (field: Exclude<keyof ProductForm, 'views'>, value: string) => setForm((current) => ({ ...current, [field]: value }));
+  useEffect(() => {
+    const url = form.model3dUrl.trim();
+    if (!url) {
+      setMeshInspection({ status: 'idle', message: 'Sube un archivo .GLB válido para detectar las mallas disponibles.', names: [] });
+      return;
+    }
+    const requestId = ++meshInspectRequestRef.current;
+    if (!/\.glb(?:$|[?#])/i.test(url) && !/^data:model\/gltf-binary/i.test(url)) {
+      setMeshInspection({ status: 'error', message: 'Sube un archivo .GLB válido para detectar las mallas disponibles.', names: [] });
+      return;
+    }
+    setMeshInspection({ status: 'loading', message: 'Analizando las mallas del modelo…', names: [] });
+    const timeout = window.setTimeout(async () => {
+      let inspectedScene: THREE.Object3D | null = null;
+      try {
+        const gltf = await new GLTFLoader().loadAsync(url);
+        inspectedScene = gltf.scene;
+        if (requestId !== meshInspectRequestRef.current) return;
+        const names = getGLBMeshNames(gltf.scene);
+        setMeshInspection(names.length
+          ? { status: 'success', message: `Se detectaron ${names.length} ${names.length === 1 ? 'malla' : 'mallas'}.`, names }
+          : { status: 'error', message: 'El GLB cargó, pero no contiene mallas con nombre. Sube un archivo .GLB válido para detectar las mallas disponibles.', names: [] });
+      } catch (error) {
+        if (requestId === meshInspectRequestRef.current) {
+          console.warn('[ADMIN] No se pudo inspeccionar el GLB indicado:', error);
+          setMeshInspection({ status: 'error', message: 'No se pudo leer ese modelo. Verifica la URL y sube un archivo .GLB válido para detectar las mallas disponibles.', names: [] });
+        }
+      } finally {
+        if (inspectedScene) disposeInspectedGLB(inspectedScene);
+      }
+    }, 500);
+    return () => {
+      window.clearTimeout(timeout);
+      if (meshInspectRequestRef.current === requestId) meshInspectRequestRef.current += 1;
+    };
+  }, [form.model3dUrl]);
+
+  const inspectLocalGLB = async (file?: File) => {
+    if (!file) return;
+    const requestId = ++meshInspectRequestRef.current;
+    if (!file.name.toLowerCase().endsWith('.glb')) {
+      setMeshInspection({ status: 'error', message: 'Selecciona un archivo con extensión .GLB.', names: [] });
+      return;
+    }
+    setMeshInspection({ status: 'loading', message: `Analizando ${file.name}…`, names: [] });
+    let inspectedScene: THREE.Object3D | null = null;
+    try {
+      const buffer = await file.arrayBuffer();
+      const gltf = await new Promise<GLTF>((resolve, reject) => {
+        new GLTFLoader().parse(buffer, '', resolve, reject);
+      });
+      inspectedScene = gltf.scene;
+      if (requestId !== meshInspectRequestRef.current) return;
+      const names = getGLBMeshNames(gltf.scene);
+      setMeshInspection(names.length
+        ? { status: 'success', message: `${file.name}: ${names.length} ${names.length === 1 ? 'malla detectada' : 'mallas detectadas'}. El archivo solo se inspecciona localmente; configura abajo una URL persistente para usarlo en la tienda.`, names }
+        : { status: 'error', message: 'El GLB no contiene mallas con nombre. Sube un archivo .GLB válido para detectar las mallas disponibles.', names: [] });
+    } catch (error) {
+      console.warn('[ADMIN] No se pudo inspeccionar el archivo GLB local:', error);
+      if (requestId === meshInspectRequestRef.current) setMeshInspection({ status: 'error', message: 'No se pudo leer el archivo. Sube un archivo .GLB válido para detectar las mallas disponibles.', names: [] });
+    } finally {
+      if (inspectedScene) disposeInspectedGLB(inspectedScene);
+    }
+  };
+  const setField = (field: Exclude<keyof ProductForm, 'views' | 'options' | 'customizableParts'>, value: string) => setForm((current) => ({ ...current, [field]: value }));
+  const updateCustomizablePart = (index: number, patch: Partial<CustomizablePart>) => setForm((current) => ({ ...current, customizableParts: current.customizableParts.map((part, partIndex) => partIndex === index ? { ...part, ...patch } : part) }));
+  const addCustomizablePart = () => setForm((current) => ({ ...current, customizableParts: [...current.customizableParts, { id: crypto.randomUUID(), label: '', meshName: '', defaultColor: '#cbd5e1', enabled: true }] }));
   const setViewField = (index: number, field: keyof ProductViewForm, value: string) => setForm((current) => ({ ...current, views: current.views.map((view, viewIndex) => viewIndex === index ? { ...view, [field]: value } : view) }));
   const setViewPrintArea = (index: number, area: PrintArea) => setForm((current) => ({ ...current, views: current.views.map((view, viewIndex) => viewIndex === index ? { ...view, x: String(area.x), y: String(area.y), width: String(area.width), height: String(area.height), shape: area.shape ?? 'rect', radius: String(area.radius ?? 25), polygon: area.polygon && area.polygon.length >= 3 ? JSON.stringify(area.polygon) : '' } : view) }));
   const handleAddView = () => setForm((current) => { const next = [...current.views, createViewForm(current.views.length)]; setActiveTab(next.length - 1); return { ...current, views: next }; });
@@ -109,8 +207,13 @@ export default function AdminProductEditor() {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (form.views.some((view) => !view.mockupUrl.trim())) { alert('Agrega un mockup para cada vista.'); return; }
+    if (form.customizableParts.length > 0 && !form.model3dUrl.trim()) { alert('Configura una ruta pública o URL para el GLB antes de guardar sus mallas personalizables.'); return; }
+    if (form.customizableParts.some((part) => !part.label.trim() || !part.meshName.trim())) { alert('Completa la etiqueta y el nombre exacto de malla en cada pieza 3D, o elimina las piezas incompletas.'); return; }
+    const meshNames = form.customizableParts.map((part) => part.meshName.trim().toLocaleLowerCase());
+    if (new Set(meshNames).size !== meshNames.length) { alert('Cada pieza personalizable debe apuntar a un nombre de malla distinto.'); return; }
     const options = form.options.map((option) => ({ ...option, name: option.name.trim() || 'Opción', displayType: option.displayType ?? option.type, values: option.values.map((value, valueIndex) => ({ ...value, label: value.label.trim() || 'Variante', thumbnailUrl: value.thumbnailUrl?.trim() || undefined, mockupUrl: undefined, printArea: null, views: form.views.map((baseView) => { const configured = value.views?.find((view) => view.viewId === baseView.id); const baseArea = normalizePrintArea({ x: Number(baseView.x), y: Number(baseView.y), width: Number(baseView.width), height: Number(baseView.height), shape: baseView.shape, radius: Number(baseView.radius), polygon: parsePolygonForm(baseView.polygon) }); return { viewId: baseView.id, name: baseView.name.trim() || 'Vista', mockupUrl: configured?.mockupUrl?.trim() || null, printArea: configured?.printArea ? normalizePrintArea(configured.printArea) : valueIndex === 0 ? baseArea : null }; }) })) }));
-    const product: Product = { id: selectedId ?? crypto.randomUUID(), name: form.name.trim(), price: Number(form.price), category: form.category.trim(), canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT, printWidthCm: printWidth || undefined, printHeightCm: printHeight || undefined, model3dUrl: form.model3dUrl.trim() || undefined, options, views: form.views.map((view) => { const name = view.name.trim() || 'Vista'; const polygon = parsePolygonForm(view.polygon); return { id: view.id, name, label: name, mockupUrl: view.mockupUrl.trim(), printArea: { x: cleanPercentage(Number(view.x) || 0), y: cleanPercentage(Number(view.y) || 0), width: cleanPercentage(Number(view.width) || 0), height: cleanPercentage(Number(view.height) || 0), ...(view.shape !== 'rect' ? { shape: view.shape } : {}), ...(view.shape === 'rounded' ? { radius: cleanRadius(Number(view.radius)) } : {}), ...(polygon ? { polygon } : {}) }, printAreaUnit: 'percent' as const }; }) };
+    const customizableParts = form.customizableParts.map((part) => ({ ...part, label: part.label.trim(), meshName: part.meshName.trim(), defaultColor: part.defaultColor || '#cbd5e1' }));
+    const product: Product = { id: selectedId ?? crypto.randomUUID(), name: form.name.trim(), price: Number(form.price), category: form.category.trim(), canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT, printWidthCm: printWidth || undefined, printHeightCm: printHeight || undefined, model3dUrl: form.model3dUrl.trim() || undefined, customizableParts, options, views: form.views.map((view) => { const name = view.name.trim() || 'Vista'; const polygon = parsePolygonForm(view.polygon); return { id: view.id, name, label: name, mockupUrl: view.mockupUrl.trim(), printArea: { x: cleanPercentage(Number(view.x) || 0), y: cleanPercentage(Number(view.y) || 0), width: cleanPercentage(Number(view.width) || 0), height: cleanPercentage(Number(view.height) || 0), ...(view.shape !== 'rect' ? { shape: view.shape } : {}), ...(view.shape === 'rounded' ? { radius: cleanRadius(Number(view.radius)) } : {}), ...(polygon ? { polygon } : {}) }, printAreaUnit: 'percent' as const }; }) };
     selectedId ? updateProduct(product) : addProduct(product);
     resetForm();
   };
@@ -135,8 +238,25 @@ export default function AdminProductEditor() {
       <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-8 lg:grid-cols-12">
         <div className="space-y-6 lg:col-span-7">
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Datos básicos</h2><p className="mt-1 text-sm text-slate-500">Información que verán tus clientes al elegir el producto.</p></div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><Field className="sm:col-span-2" label="Nombre del producto" value={form.name} onChange={(value) => setField('name', value)} required /><Field label="Precio" type="number" min="0" step="0.01" value={form.price} onChange={(value) => setField('price', value)} required /><Field label="Categoría" value={form.category} onChange={(value) => setField('category', value)} required /><Field label="Ancho físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printWidthCm} onChange={(value) => setField('printWidthCm', value)} placeholder="20" /><Field label="Alto físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printHeightCm} onChange={(value) => setField('printHeightCm', value)} placeholder="9" /><Field className="sm:col-span-2" label="Modelo 3D (Archivo .GLB / URL)" value={form.model3dUrl} onChange={(value) => setField('model3dUrl', value)} placeholder="/models/termo.glb" /></div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><Field className="sm:col-span-2" label="Nombre del producto" value={form.name} onChange={(value) => setField('name', value)} required /><Field label="Precio" type="number" min="0" step="0.01" value={form.price} onChange={(value) => setField('price', value)} required /><Field label="Categoría" value={form.category} onChange={(value) => setField('category', value)} required /><Field label="Ancho físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printWidthCm} onChange={(value) => setField('printWidthCm', value)} placeholder="20" /><Field label="Alto físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printHeightCm} onChange={(value) => setField('printHeightCm', value)} placeholder="9" /><Field className="sm:col-span-2" label="Modelo 3D (ruta pública o URL .GLB)" value={form.model3dUrl} onChange={(value) => setField('model3dUrl', value)} placeholder="/models/termo.glb" />
+              <div className="sm:col-span-2"><input ref={modelFileInputRef} type="file" accept=".glb,model/gltf-binary" className="sr-only" onChange={(event) => { void inspectLocalGLB(event.target.files?.[0]); event.currentTarget.value = ''; }} /><button type="button" onClick={() => modelFileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-violet-300 hover:bg-violet-50"><Upload size={16} /> Seleccionar GLB para detectar mallas</button><p className="mt-1.5 text-xs text-slate-500">El archivo local se analiza en este navegador; para que el modelo se cargue en la tienda, coloca una URL o ruta pública en el campo superior.</p><p role="status" className={`mt-2 text-xs ${meshInspection.status === 'error' ? 'text-red-600' : meshInspection.status === 'success' ? 'text-emerald-700' : meshInspection.status === 'loading' ? 'text-violet-700' : 'text-slate-500'}`}>{meshInspection.message || 'Sube un archivo .GLB válido para detectar las mallas disponibles.'}</p>{meshInspection.names.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{meshInspection.names.map((name) => <span key={name} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-1 font-mono text-[10px] text-violet-800">{name}</span>)}</div>}</div>
+            </div>
             <div className="mt-4 flex gap-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2.5 text-xs text-sky-800"><Info className="mt-0.5 shrink-0" size={15} /><span>Salida estimada a 300 DPI: <strong>{printWidth && printHeight ? `${pixelsWidth.toLocaleString()} × ${pixelsHeight.toLocaleString()} px` : 'indica ancho y alto'}</strong>.</span></div>
+          </section>
+          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-slate-900">Configuración de mallas 3D personalizables</h2><p className="mt-1 max-w-xl text-sm text-slate-500">Agrega una opción por cada malla que el cliente podrá colorear. El nombre debe coincidir exactamente con el nodo Mesh del GLB.</p></div><button type="button" onClick={addCustomizablePart} disabled={!form.model3dUrl.trim() && meshInspection.names.length === 0} className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"><Plus size={15} /> Agregar pieza</button></div>
+            {!form.model3dUrl.trim() && meshInspection.names.length === 0 && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Agrega la ruta del GLB o selecciona un archivo local para detectar sus mallas. Para guardar, necesitarás una ruta persistente.</p>}
+            {form.customizableParts.length === 0 ? <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">Sin piezas configuradas. El panel de colores se ocultará al cliente.</p> : <div className="space-y-3">{form.customizableParts.map((part, index) => {
+              const meshIsDetected = meshInspection.names.includes(part.meshName);
+              return <div key={part.id} className="grid grid-cols-1 items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:grid-cols-2 lg:grid-cols-[1fr_1.2fr_auto_auto_auto]">
+                <Field label="Etiqueta visible" value={part.label} onChange={(value) => updateCustomizablePart(index, { label: value })} placeholder="Color del asa" />
+                <label className="grid min-w-0 gap-1.5 text-sm font-medium text-slate-700"><span>Malla del GLB</span><select value={meshIsDetected ? part.meshName : '__manual__'} onChange={(event) => { if (event.target.value !== '__manual__') updateCustomizablePart(index, { meshName: event.target.value }); }} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"><option value="__manual__">{meshInspection.names.length ? 'Escribir nombre manualmente…' : 'Sin mallas detectadas · escribir nombre'}</option>{meshInspection.names.map((name) => <option key={name} value={name}>{name}</option>)}</select>{!meshIsDetected && <input value={part.meshName} onChange={(event) => updateCustomizablePart(index, { meshName: event.target.value })} placeholder="Nombre exacto, ej. mesh_handle" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-normal text-slate-900 outline-none focus:border-violet-500" />}</label>
+                <label className="grid gap-1.5 text-sm font-medium text-slate-700"><span>Color inicial</span><input type="color" value={part.defaultColor} onChange={(event) => updateCustomizablePart(index, { defaultColor: event.target.value })} aria-label={`Color inicial para ${part.label || 'pieza'}`} className="h-10 w-full cursor-pointer rounded-lg border border-slate-300 bg-white p-1 sm:w-14" /></label>
+                <label className="flex h-10 items-center gap-2 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700"><input type="checkbox" checked={part.enabled !== false} onChange={(event) => updateCustomizablePart(index, { enabled: event.target.checked })} className="h-4 w-4 accent-violet-600" />Permitir al cliente</label>
+                <button type="button" onClick={() => setForm((current) => ({ ...current, customizableParts: current.customizableParts.filter((_, partIndex) => partIndex !== index) }))} aria-label={`Eliminar ${part.label || 'pieza'}`} title="Eliminar pieza" className="inline-flex h-10 items-center justify-center rounded-lg border border-red-200 bg-white px-3 text-red-600 hover:bg-red-50"><Trash2 size={16} /></button>
+              </div>;
+            })}</div>}
+            <div className="mt-3 flex gap-2 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2.5 text-xs text-violet-800"><Info className="mt-0.5 shrink-0" size={15} /><span>Ejemplo: etiqueta “Color del asa” y nombre de malla “mesh_handle”. Si una malla no coincide, el control se mostrará pero no podrá modificarla.</span></div>
           </section>
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Vistas del producto</h2><p className="mt-1 text-sm text-slate-500">Carga un mockup y define una zona segura para cada cara.</p></div>
             <div className="mb-5 flex gap-2 overflow-x-auto border-b border-slate-200"><div className="flex min-w-max gap-2">{form.views.map((view, index) => <button key={view.id} type="button" onClick={() => { setActiveTab(index); console.log('🔍 [EDITOR - VISTA ACTIVA]:', { id: view.id, name: view.name }); }} className={`border-b-2 px-4 py-2 text-sm font-medium transition-colors ${activeIndex === index ? 'border-emerald-600 font-semibold text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>{view.name || `Vista ${index + 1}`}</button>)}<button type="button" onClick={handleAddView} className="flex items-center gap-1 px-2 text-xs font-medium text-emerald-600 hover:underline"><Plus size={14} /> Agregar vista</button></div></div>

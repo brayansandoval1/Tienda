@@ -22,7 +22,14 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   const [currentProduct, setCurrentProduct] = useState<Product>(
     initialProduct || products.find((p) => p.id === producto.id) || products[0],
   );
+  const [componentColors, setComponentColors] = useState<Record<string, string>>({});
+  const [enabledComponentMeshes, setEnabledComponentMeshes] = useState<string[]>([]);
   const [activeStep, setActiveStep] = useState<EditorStep>('design');
+
+  useEffect(() => {
+    setComponentColors(Object.fromEntries((currentProduct.customizableParts ?? []).map((part) => [part.meshName, part.defaultColor || '#cbd5e1'])));
+    setEnabledComponentMeshes([]);
+  }, [currentProduct.id, currentProduct.customizableParts]);
 
   useEffect(() => {
     const matchingProduct = products.find((p) => p.id === producto.id);
@@ -65,7 +72,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
 
         {/* Canvas Central (Lienzo) */}
         <main className={`relative h-full min-w-0 flex-1 overflow-hidden bg-slate-100/50 p-2 xl:p-3 ${activeStep === 'design' ? 'grid grid-cols-1 gap-2 xl:grid-cols-[minmax(0,0.6fr)_minmax(0,1.4fr)] xl:gap-3' : 'flex items-center justify-center'}`}>
-          {activeStep === 'design' && <div key={currentProduct.id} className="hidden min-h-0 min-w-0 xl:block"><Product3DViewer key={currentProduct.id} product={currentProduct} /></div>}
+          {activeStep === 'design' && <div key={currentProduct.id} className="hidden min-h-0 min-w-0 xl:block"><Product3DViewer key={currentProduct.id} product={currentProduct} componentColors={componentColors} enabledMeshNames={enabledComponentMeshes} /></div>}
           <section className={`relative min-h-0 min-w-0 overflow-hidden ${activeStep === 'design' ? '' : 'h-full w-full'}`}>
           <EditorCanvas
             key={`${currentProduct.id}-${currentProduct.updatedAt ?? 0}`}
@@ -85,7 +92,15 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
 
         {/* Panel Derecho: producto / compra */}
         <div className={`${activeStep === 'design' ? 'w-[clamp(250px,16vw,320px)]' : 'w-[42%] min-w-[400px] max-w-[600px]'} h-full min-w-0 shrink-0 bg-white border-l border-slate-200 flex flex-col z-10 overflow-hidden transition-[width] duration-200`}>
-          <ViewSelector product={currentProduct} panel={activeStep === 'review' ? 'preview' : 'options'} workflowStep={activeStep} />
+          <ViewSelector
+            product={currentProduct}
+            panel={activeStep === 'review' ? 'preview' : 'options'}
+            workflowStep={activeStep}
+            componentColors={componentColors}
+            enabledComponentMeshes={enabledComponentMeshes}
+            onComponentToggle={(meshName, enabled) => setEnabledComponentMeshes((current) => enabled ? [...new Set([...current, meshName])] : current.filter((name) => name !== meshName))}
+            onComponentColorChange={(meshName, color) => setComponentColors((current) => ({ ...current, [meshName]: color }))}
+          />
         </div>
       </div>
     </div>

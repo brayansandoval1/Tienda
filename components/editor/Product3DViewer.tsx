@@ -19,6 +19,7 @@ type ProductPartColors = {
   interior: { enabled: boolean; color: string };
   handle: { enabled: boolean; color: string };
 };
+type ComponentColors = Record<string, string>;
 const neutralPartColors: Omit<ProductPartColors, 'body'> = {
   ring: { enabled: false, color: '#cbd5e1' },
   interior: { enabled: false, color: '#e2e8f0' },
@@ -155,7 +156,7 @@ function renderPrintArea(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds |
   }
 }
 
-function FabricTextureSurface({ fabricCanvas, phoneCase, modelUrl, partColors }: { fabricCanvas: FabricCanvasLike; phoneCase: boolean; modelUrl: string; partColors: ProductPartColors }) {
+function FabricTextureSurface({ fabricCanvas, phoneCase, modelUrl, partColors, componentColors, enabledMeshNames }: { fabricCanvas: FabricCanvasLike; phoneCase: boolean; modelUrl: string; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[] }) {
   const textureRef = useRef<THREE.CanvasTexture | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUpdatingTexture = useRef(false);
@@ -220,7 +221,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, modelUrl, partColors }:
     ? <PhoneCase texture={texture} bodyColor={partColors.body} />
     : <Drinkware texture={texture} partColors={partColors} />;
   if (modelUrl) return <ModelLoadBoundary key={modelUrl} fallback={fallback}>
-    <Suspense fallback={fallback}><GLBModel url={modelUrl} texture={texture} partColors={partColors} /></Suspense>
+    <Suspense fallback={fallback}><GLBModel url={modelUrl} texture={texture} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} /></Suspense>
   </ModelLoadBoundary>;
   if (phoneCase) return fallback;
   return <Drinkware texture={texture} partColors={partColors} />;
@@ -274,7 +275,7 @@ function PhoneCase({ texture, bodyColor }: { texture: THREE.CanvasTexture; bodyC
   </group>;
 }
 
-function GLBModel({ url, texture, partColors }: { url: string; texture: THREE.CanvasTexture; partColors: ProductPartColors }) {
+function GLBModel({ url, texture, partColors, componentColors, enabledMeshNames }: { url: string; texture: THREE.CanvasTexture; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[] }) {
   const gltf = useGLTF(url);
   useEffect(() => {
     const meshes: Array<Record<string, unknown>> = [];
@@ -329,6 +330,16 @@ function GLBModel({ url, texture, partColors }: { url: string; texture: THREE.Ca
       return !largestSize || areaEstimate > largestSize.x * largestSize.y * largestSize.z ? mesh : largest;
     }, null);
     const printMesh = namedPrintMesh ?? namedBodyMesh ?? largestMesh;
+    const normalizeMeshName = (name: string) => name.trim().toLocaleLowerCase();
+    const enabledCustomColors = Object.entries(componentColors).filter(([meshName]) => enabledMeshNames.some((enabledName) => normalizeMeshName(enabledName) === normalizeMeshName(meshName)));
+    const matchedMeshNames = new Set<string>();
+    meshes.forEach((mesh) => {
+      const match = enabledCustomColors.find(([meshName]) => normalizeMeshName(meshName) === normalizeMeshName(mesh.name));
+      if (match) matchedMeshNames.add(match[0]);
+    });
+    enabledCustomColors.forEach(([meshName]) => {
+      if (!matchedMeshNames.has(meshName)) console.warn(`[Product3DViewer] No existe una malla llamada "${meshName}" en este GLB; revisa el nombre configurado en Admin.`, { url });
+    });
     const selectionStrategy = namedPrintMesh ? 'nombre de impresión' : namedBodyMesh ? 'nombre de cuerpo' : largestMesh ? 'malla de mayor tamaño' : 'sin mallas';
     const selectionDetails = {
       estrategia: namedPrintMesh ? 'nombre de impresión' : namedBodyMesh ? 'nombre de cuerpo' : largestMesh ? 'malla de mayor tamaño' : 'sin mallas',
@@ -372,7 +383,8 @@ function GLBModel({ url, texture, partColors }: { url: string; texture: THREE.Ca
             : name.includes('body') || name.includes('cuerpo') ? 'body' : null;
       const isPrintMesh = mesh === printMesh;
       const isColorablePart = namedPart === 'ring' || namedPart === 'interior' || namedPart === 'handle' || namedPart === 'body';
-      if (!isPrintMesh && !isColorablePart) return;
+      const customColorEntry = enabledCustomColors.find(([meshName]) => normalizeMeshName(meshName) === normalizeMeshName(mesh.name));
+      if (!isPrintMesh && !isColorablePart && !customColorEntry) return;
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       const nextMaterials = materials.map((original) => {
         const material = original.clone();
@@ -390,8 +402,10 @@ function GLBModel({ url, texture, partColors }: { url: string; texture: THREE.Ca
           material.needsUpdate = true;
         }
         const part = namedPart ?? (isPrintMesh ? 'body' : null);
-        if (part && 'color' in material && material.color instanceof THREE.Color) {
-          const color = isPrintMesh
+        if ((part || customColorEntry) && 'color' in material && material.color instanceof THREE.Color) {
+          const color = customColorEntry
+            ? customColorEntry[1]
+            : isPrintMesh
             ? '#ffffff'
             : part === 'body'
               ? partColors.body
@@ -399,6 +413,7 @@ function GLBModel({ url, texture, partColors }: { url: string; texture: THREE.Ca
               ? partColors[part].color
               : ({ ring: '#e2e8f0', interior: '#f1f5f9', handle: '#f8fafc' } as const)[part];
           material.color.set(color);
+          if (customColorEntry) material.needsUpdate = true;
         }
         return material;
       });
@@ -418,7 +433,7 @@ function GLBModel({ url, texture, partColors }: { url: string; texture: THREE.Ca
       clonedScene.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
     }
     return clonedScene;
-  }, [gltf.scene, partColors, texture, url]);
+  }, [gltf.scene, partColors, texture, url, componentColors, enabledMeshNames]);
   return <primitive object={scene} />;
 }
 
@@ -432,7 +447,7 @@ class ModelLoadBoundary extends Component<{ fallback: ReactNode; children: React
   render() { return this.state.failed ? this.props.fallback : this.props.children; }
 }
 
-function ProductModel({ product, fabricCanvas, partColors }: { product: Product; fabricCanvas: FabricCanvasLike | null; partColors: ProductPartColors }) {
+function ProductModel({ product, fabricCanvas, partColors, componentColors, enabledMeshNames }: { product: Product; fabricCanvas: FabricCanvasLike | null; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[] }) {
   const phoneCase = /funda|iphone|phone|case/i.test(`${product.id} ${product.name}`);
   const fallback = <mesh>
       <cylinderGeometry args={[0.8, 0.8, 2.3, 48]} />
@@ -447,10 +462,10 @@ function ProductModel({ product, fabricCanvas, partColors }: { product: Product;
     console.error('[Product3DViewer] El producto llegó al Canvas sin model3dUrl.', { productId: product.id });
     return fallback;
   }
-  return <FabricTextureSurface key={product.id} fabricCanvas={fabricCanvas} phoneCase={phoneCase} modelUrl={modelUrl} partColors={partColors} />;
+  return <FabricTextureSurface key={product.id} fabricCanvas={fabricCanvas} phoneCase={phoneCase} modelUrl={modelUrl} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} />;
 }
 
-export default function Product3DViewer({ product }: { product: Product }) {
+export default function Product3DViewer({ product, componentColors, enabledMeshNames }: { product: Product; componentColors: ComponentColors; enabledMeshNames: string[] }) {
   const fabricCanvas = useFabricCanvas();
   const model3dUrl = product.model3dUrl?.trim();
   const defaultBodyColor = product.colors?.[0]?.hexColor ?? '#f8fafc';
@@ -488,7 +503,7 @@ export default function Product3DViewer({ product }: { product: Product }) {
       <ambientLight intensity={1.05} />
       <directionalLight castShadow position={[3, 5, 4]} intensity={2} />
       <directionalLight position={[-4, 1, 2]} intensity={0.7} color="#c4b5fd" />
-      <ProductModel product={product} fabricCanvas={fabricCanvas} partColors={partColors} />
+      <ProductModel product={product} fabricCanvas={fabricCanvas} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.55, 0]} receiveShadow>
         <planeGeometry args={[200, 200]} />
         <shadowMaterial opacity={0.12} />

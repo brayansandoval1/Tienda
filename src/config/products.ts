@@ -140,6 +140,17 @@ export interface ProductOption {
   values: ProductOptionValue[];
 }
 
+/** Submalla del GLB que el cliente puede colorear en el personalizador. */
+export interface CustomizablePart {
+  id: string;
+  label: string;
+  /** Nombre exacto del nodo Mesh dentro del archivo GLB. */
+  meshName: string;
+  defaultColor: string;
+  /** Si es false, esta pieza no se ofrece en el editor del cliente. */
+  enabled?: boolean;
+}
+
 export interface Product {
   id: string;
   /** Marca de invalidación para propagar cambios del Admin al editor. */
@@ -154,6 +165,8 @@ export interface Product {
   printHeightCm?: number;
   /** Ruta pública o URL al modelo 3D GLB/GLTF usado por el visor del editor. */
   model3dUrl?: string;
+  /** Mallas del modelo 3D expuestas como controles de color al cliente. */
+  customizableParts?: CustomizablePart[];
   /** Variantes globales reutilizables por todas las vistas del producto. */
   colors?: ColorVariant[];
   /** Configuraciones vendibles que pueden modificar el precio final. */
