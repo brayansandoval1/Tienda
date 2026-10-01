@@ -61,6 +61,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   const redoStackRef = useRef<string[]>([]);
   const isRedoingUndoRef = useRef(false);
   const isUpdatingHistory = useRef(false);
+  const addonOrderRef = useRef<{ addons: Array<{ id: string; name: string; price: number; userText?: string }>; basePrice: number; totalPrice: number }>({ addons: [], basePrice: initialProduct.price, totalPrice: initialProduct.price });
   const [isCropping, setIsCropping] = useState(false);
   const [isImageSelected, setIsImageSelected] = useState(false);
   const [is3DModalOpen, setIs3DModalOpen] = useState(false);
@@ -190,6 +191,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       handleSaveDesign: () => Promise<SavedDesignPayload | null>,
       handleOptionMockup: (e: Event) => void,
       handleOptionsChanged: (e: Event) => void,
+      handleAddonsChanged: (e: Event) => void,
       handleApplyTemplate: (e: Event) => void,
       handleExportTemplate: (e: Event) => void,
       handleClearDraft: () => void,
@@ -2391,6 +2393,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           },
           quantity: 1,
           currency: 'USD',
+          addons: addonOrderRef.current.addons,
+          basePrice: addonOrderRef.current.basePrice,
+          totalPrice: addonOrderRef.current.totalPrice,
           views,
         };
         // Punto de integración para API, carrito o base de datos.
@@ -2405,6 +2410,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const cartDetail = (event as CustomEvent<{
           productId?: string;
           price?: number;
+          basePrice?: number;
+          totalPrice?: number;
+          addons?: Array<{ id: string; name: string; price: number; userText?: string }>;
           selections?: Record<string, unknown>;
           quantity?: number;
         }>).detail ?? {};
@@ -2417,6 +2425,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           id: crypto.randomUUID(),
           productId: activeProduct.id,
           price: cartDetail.price ?? activeProduct.price,
+          basePrice: cartDetail.basePrice ?? activeProduct.price,
+          totalPrice: cartDetail.totalPrice ?? cartDetail.price ?? activeProduct.price,
+          addons: cartDetail.addons ?? addonOrderRef.current.addons,
           selections: cartDetail.selections ?? {},
           design: { ...payload, quantity: Math.max(1, Number(cartDetail.quantity) || 1) },
           addedAt: Date.now(),
@@ -2425,6 +2436,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // Punto de enlace para un POST /api/checkout o una UI de carrito.
         window.dispatchEvent(new CustomEvent('editor:cart-item-ready', { detail: cartItem }));
         handleClearDraft();
+      };
+
+      handleAddonsChanged = (event: Event) => {
+        const detail = (event as CustomEvent<{ addons?: Array<{ id: string; name: string; price: number; userText?: string }>; basePrice?: number; totalPrice?: number }>).detail;
+        addonOrderRef.current = { addons: detail?.addons ?? [], basePrice: detail?.basePrice ?? activeProduct.price, totalPrice: detail?.totalPrice ?? activeProduct.price };
       };
 
       // Alineación / centrado del objeto dentro de la Zona Segura (printArea) de la
@@ -3615,6 +3631,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       window.addEventListener('editor:save-design', handleSaveDesign);
       window.addEventListener('editor:option-mockup', handleOptionMockup);
       window.addEventListener('editor:options-changed', handleOptionsChanged);
+      window.addEventListener('editor:addons-changed', handleAddonsChanged);
       window.addEventListener('editor:apply-template', handleApplyTemplate);
       window.addEventListener('editor:replace-text', handleReplaceText);
       window.addEventListener('editor:clear-draft', handleClearDraft);
@@ -3763,6 +3780,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       if (handleOptionsChanged) {
         window.removeEventListener('editor:options-changed', handleOptionsChanged);
       }
+      window.removeEventListener('editor:addons-changed', handleAddonsChanged);
       if (fabricCanvasRef.current) {
         if ((window as any).__editorFabricCanvas === fabricCanvasRef.current) {
           delete (window as any).__editorFabricCanvas;

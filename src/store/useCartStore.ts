@@ -7,6 +7,9 @@ export type CartDesignItem = {
   id: string;
   productId: string;
   price: number;
+  basePrice?: number;
+  totalPrice?: number;
+  addons?: Array<{ id: string; name: string; price: number; userText?: string }>;
   selections: Record<string, unknown>;
   design: SavedDesignPayload;
   addedAt: number;

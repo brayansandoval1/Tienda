@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, LockKeyhole, PackageCheck, ShieldCheck, ShoppingBag } from 'lucide-react';
 import { type Product, type ProductOptionValue } from '@/src/store/useProductStore';
 import ProductSelector from '@/components/editor/ProductSelector';
 import { getEffectiveMockup } from '@/src/utils/getEffectiveMockup';
+import type { Addon } from '@/types/addon';
+import { getAddonsByProduct } from '@/services/addonsService.js';
 
 const optionGroupName = (option: { name: string }) => /(?:termo|taza|\d+\s*oz|estándar)/i.test(option.name) ? 'Modelo' : option.name || 'Opción';
 
@@ -16,6 +18,9 @@ export default function ViewSelector({ product, panel, workflowStep = 'design' }
   const [activePanel, setActivePanel] = useState<'options' | 'preview'>('options');
   const [selectedColorId, setSelectedColorId] = useState(product.colors?.[0]?.id ?? '');
   const [quantity, setQuantity] = useState(1);
+  const [availableAddons, setAvailableAddons] = useState<Addon[]>([]);
+  const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
+  const [addonTexts, setAddonTexts] = useState<Record<string, string>>({});
   const isOptionsStage = workflowStep === 'options';
   const baseView = product.views[0];
 
@@ -30,6 +35,9 @@ export default function ViewSelector({ product, panel, workflowStep = 'design' }
     setSelectedOptions(initialSelections);
     setActiveViewIndex(0);
     setQuantity(1);
+    setSelectedAddonIds([]);
+    setAddonTexts({});
+    getAddonsByProduct(product.id).then(setAvailableAddons).catch((error) => { console.error('No se pudieron cargar los extras del producto:', error); setAvailableAddons([]); });
     setSelectedColorId(product.colors?.[0]?.id ?? product.views[0]?.colorVariants?.[0]?.id ?? '');
 
     const currentViewId = product.views[0]?.id ?? 'front';
@@ -161,7 +169,12 @@ export default function ViewSelector({ product, panel, workflowStep = 'design' }
   };
 
   const selectedValues = Object.values(selectedOptions);
-  const finalPrice = product.price + selectedValues.reduce((total, value) => total + value.priceModifier, 0);
+  const selectedAddons = useMemo(() => availableAddons.filter((addon) => selectedAddonIds.includes(addon.id)).map((addon) => ({ id: addon.id, name: addon.name, price: addon.price, ...(addon.requiresInput ? { userText: addonTexts[addon.id] ?? '' } : {}) })), [availableAddons, selectedAddonIds, addonTexts]);
+  const basePrice = product.price + selectedValues.reduce((total, value) => total + value.priceModifier, 0);
+  const finalPrice = basePrice + selectedAddons.reduce((sum, addon) => sum + addon.price, 0);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('editor:addons-changed', { detail: { addons: selectedAddons, basePrice: product.price, totalPrice: finalPrice } }));
+  }, [selectedAddons, product.price, finalPrice]);
   const priceLabel = (modifier: number) => modifier === 0 ? 'Incluido' : `${modifier > 0 ? '+' : '-'}$${Math.abs(modifier).toFixed(2)}`;
   const activeBaseView = product.views[activeViewIndex] ?? product.views[0];
   const activeViewId = activeBaseView?.id ?? 'front';
@@ -224,6 +237,16 @@ export default function ViewSelector({ product, panel, workflowStep = 'design' }
             </div>
           </div>
 
+          {selectedAddons.length > 0 && <section aria-labelledby="review-addons-title" className="rounded-2xl border border-violet-200 bg-violet-50/50 p-4">
+            <h2 id="review-addons-title" className="text-sm font-semibold text-slate-900">Acabados y extras incluidos</h2>
+            <ul className="mt-3 divide-y divide-violet-100">
+              {selectedAddons.map((addon) => <li key={addon.id} className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                <div className="min-w-0"><p className="text-sm font-medium text-slate-800">{addon.name}</p>{addon.userText && <p className="mt-1 break-words text-xs text-slate-600">{addon.userText}</p>}</div>
+                <span className="shrink-0 text-sm font-semibold text-violet-800">+${addon.price.toFixed(2)}</span>
+              </li>)}
+            </ul>
+          </section>}
+
           <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
             <p className="font-semibold text-amber-950">Antes de continuar</p>
             <ul className="mt-2 space-y-2 text-sm leading-5 text-amber-900/80">
@@ -248,7 +271,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design' }
               <span className="font-semibold text-slate-900">Subtotal</span>
               <span className="text-2xl font-bold tracking-tight text-slate-950">${(finalPrice * quantity).toFixed(2)}</span>
             </div>
-            <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('editor:buy-now', { detail: { productId: product.id, price: finalPrice, selections: selectedOptions, quantity } }))} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/15 transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2">
+            <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('editor:add-to-cart', { detail: { productId: product.id, basePrice, price: finalPrice, totalPrice: finalPrice, addons: selectedAddons, selections: selectedOptions, quantity } }))} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/15 transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2">
               <ShoppingBag size={17} /> Continuar al pago
             </button>
             <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-slate-500"><LockKeyhole size={13} /> Pago seguro y protegido</p>
@@ -312,7 +335,9 @@ export default function ViewSelector({ product, panel, workflowStep = 'design' }
             })}</div>
           </div>)}
         </div>
-      </section>}
+          </section>}
+
+          {availableAddons.length > 0 && <section className="space-y-3 border-t border-slate-100 pt-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Acabados y extras</p><p className="mt-1 text-xs text-slate-500">Personaliza tu producto con opciones adicionales.</p></div><div className="space-y-2">{availableAddons.map((addon) => { const checked = selectedAddonIds.includes(addon.id); return <div key={addon.id} className={`rounded-xl border p-3 transition ${checked ? 'border-violet-400 bg-violet-50/60' : 'border-slate-200 bg-white hover:border-slate-300'}`}><label className="flex cursor-pointer items-start gap-3"><input type="checkbox" checked={checked} onChange={() => setSelectedAddonIds((current) => checked ? current.filter((id) => id !== addon.id) : [...current, addon.id])} className="mt-0.5 h-4 w-4 rounded accent-violet-600" /><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold text-slate-800">{addon.name}</span><span className="text-xs font-semibold text-violet-700">+${addon.price.toFixed(2)}</span></span>{addon.badge && <span className="mt-1 inline-flex rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">{addon.badge}</span>}{addon.description && <span className="mt-1 block text-xs leading-5 text-slate-500">{addon.description}</span>}</span></label>{checked && addon.requiresInput && <label className="mt-3 block pl-7 text-xs font-medium text-slate-700">{addon.inputConfig?.label || 'Texto personalizado'}<textarea value={addonTexts[addon.id] ?? ''} maxLength={addon.inputConfig?.maxLength ?? 300} onChange={(event) => setAddonTexts((current) => ({ ...current, [addon.id]: event.target.value }))} placeholder={addon.inputConfig?.placeholder || 'Escribe tu texto'} rows={2} className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" /><span className="mt-1 block text-right font-normal text-slate-400">{(addonTexts[addon.id] ?? '').length}/{addon.inputConfig?.maxLength ?? 300}</span></label>}</div>; })}</div></section>}
 
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-xs text-slate-500">Precio total</p>

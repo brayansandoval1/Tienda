@@ -1,0 +1,6 @@
+import Link from 'next/link';
+import { Package, Sparkles } from 'lucide-react';
+
+export default function AdminHomePage() {
+  return <main className="min-h-screen px-4 py-10 sm:px-6"><div className="mx-auto max-w-5xl"><p className="text-sm font-semibold uppercase tracking-wider text-emerald-700">Administración</p><h1 className="mt-2 text-3xl font-semibold text-slate-950">Panel de administración</h1><p className="mt-2 text-slate-600">Elige qué parte de tu tienda quieres gestionar.</p><div className="mt-8 grid gap-4 sm:grid-cols-2"><Link href="/admin/products" className="group rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-emerald-300 hover:shadow-md"><Package className="text-emerald-700" /><h2 className="mt-4 font-semibold text-slate-900">Productos</h2><p className="mt-1 text-sm text-slate-500">Gestiona catálogo, variantes y zonas de impresión.</p></Link><Link href="/admin/addons" className="group rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-emerald-300 hover:shadow-md"><Sparkles className="text-emerald-700" /><h2 className="mt-4 font-semibold text-slate-900">Acabados y Extras</h2><p className="mt-1 text-sm text-slate-500">Configura grabados, empaques y complementos.</p></Link></div></div></main>;
+}

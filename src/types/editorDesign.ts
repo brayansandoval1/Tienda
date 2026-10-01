@@ -43,6 +43,9 @@ export interface SavedDesignPayload {
   };
   quantity: number;
   currency: 'USD';
+  addons?: Array<{ id: string; name: string; price: number; userText?: string }>;
+  basePrice?: number;
+  totalPrice?: number;
   views: SavedDesignView[];
 }
 
