@@ -67,8 +67,8 @@ export default function FloatingFooter({ onReset }: FloatingFooterProps) { // Re
         <div className="flex items-center gap-0.5 border-r border-white/15 pr-1" aria-label="Control de zoom">
           <button
             type="button"
-            title="Alejar lienzo"
-            aria-label="Alejar lienzo"
+            title="Alejar lienzo y vista 3D"
+            aria-label="Alejar lienzo y vista 3D"
             onClick={() => window.dispatchEvent(new CustomEvent('editor:zoom', { detail: { delta: -0.1 } }))}
             className="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/10"
           >
@@ -77,8 +77,8 @@ export default function FloatingFooter({ onReset }: FloatingFooterProps) { // Re
           <span className="min-w-10 text-center text-[11px] tabular-nums text-slate-200">{zoom}%</span>
           <button
             type="button"
-            title="Acercar lienzo"
-            aria-label="Acercar lienzo"
+            title="Acercar lienzo y vista 3D"
+            aria-label="Acercar lienzo y vista 3D"
             onClick={() => window.dispatchEvent(new CustomEvent('editor:zoom', { detail: { delta: 0.1 } }))}
             className="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/10"
           >

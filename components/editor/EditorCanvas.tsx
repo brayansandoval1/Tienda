@@ -3899,9 +3899,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
       {/* Vistas del producto: cada tarjeta conserva una miniatura del diseño
           propio de esa cara, para que frente, espalda y vistas adicionales se
-          distingan aun cuando se use el mismo mockup base. */}
+          distingan sin cubrir el centro del diseño. */}
       {productViews.length > 1 && (
-        <div className={`absolute top-1/2 z-20 flex max-h-[calc(100%-2rem)] -translate-y-1/2 flex-col gap-3 overflow-y-auto rounded-2xl bg-white/80 p-2 shadow-lg shadow-slate-900/10 backdrop-blur-md ${workflowStep === 'options' ? 'left-3 sm:left-4' : 'right-3 sm:right-4'}`}>
+        <div className="absolute right-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] flex-row gap-2 overflow-x-auto rounded-2xl bg-white/85 p-1.5 shadow-lg shadow-slate-900/10 backdrop-blur-md sm:right-4 sm:top-4 sm:gap-2.5 sm:p-2">
           {productViews.map((view) => {
             const isActive = view.id === currentViewId;
             const thumbnailUrl = viewThumbnails[view.id]
@@ -3914,7 +3914,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
                 onClick={() => switchViewRef.current?.(view.id)}
                 aria-pressed={isActive}
                 aria-label={`Cambiar a la vista ${view.label || view.name || view.id}`}
-                className={`group w-[88px] overflow-hidden rounded-xl border-2 bg-white text-left shadow-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 sm:w-[104px] ${
+                className={`group w-[68px] shrink-0 overflow-hidden rounded-xl border-2 bg-white text-left shadow-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 sm:w-[78px] ${
                   isActive
                     ? 'border-blue-700 ring-1 ring-blue-700/20'
                     : 'border-transparent hover:border-slate-300 hover:shadow-md'

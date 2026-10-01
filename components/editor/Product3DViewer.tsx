@@ -55,6 +55,80 @@ function usePrintAreaBounds() {
   return printArea;
 }
 
+function WebGLDiagnostics() {
+  const { gl } = useThree();
+  useEffect(() => {
+    const context = gl.getContext();
+    console.info('[Product3DViewer] Canvas WebGL inicializado:', {
+      vendor: context.getParameter(context.VENDOR),
+      renderer: context.getParameter(context.RENDERER),
+    });
+    const handleContextLost = (event: Event) => {
+      console.error('[Product3DViewer] Se perdió el contexto WebGL mientras el visor estaba activo.', event);
+    };
+    const handleContextRestored = () => console.info('[Product3DViewer] Contexto WebGL restaurado.');
+    gl.domElement.addEventListener('webglcontextlost', handleContextLost);
+    gl.domElement.addEventListener('webglcontextrestored', handleContextRestored);
+    return () => {
+      // El renderer se desmonta al ir a Opciones/Revisar; no dejamos listeners
+      // colgados que interpreten el cierre normal del canvas como un fallo.
+      gl.domElement.removeEventListener('webglcontextlost', handleContextLost);
+      gl.domElement.removeEventListener('webglcontextrestored', handleContextRestored);
+    };
+  }, [gl]);
+  return null;
+}
+
+function ZoomableOrbitControls() {
+  const { camera } = useThree();
+  const controlsRef = useRef<any>(null);
+  const zoomRef = useRef(1);
+  const baseDistance = 5;
+  const minZoom = 0.5;
+  const maxZoom = 2;
+
+  useEffect(() => {
+    const handleZoom = (event: Event) => {
+      const detail = (event as CustomEvent<{ delta?: number; zoom?: number }>).detail;
+      const requestedZoom = typeof detail?.zoom === 'number'
+        ? detail.zoom
+        : zoomRef.current + (detail?.delta ?? 0);
+      const nextZoom = Math.min(maxZoom, Math.max(minZoom, requestedZoom));
+      const controls = controlsRef.current;
+      if (!controls) return;
+      const direction = camera.position.clone().sub(controls.target);
+      if (direction.lengthSq() === 0) direction.set(0, 0, 1);
+      direction.setLength(baseDistance / nextZoom);
+      camera.position.copy(controls.target).add(direction);
+      camera.updateProjectionMatrix();
+      controls.update();
+      zoomRef.current = nextZoom;
+    };
+    window.addEventListener('editor:zoom', handleZoom);
+    return () => window.removeEventListener('editor:zoom', handleZoom);
+  }, [camera]);
+
+  const syncZoomFromOrbit = () => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    const distance = camera.position.distanceTo(controls.target);
+    if (distance > 0) zoomRef.current = Math.min(maxZoom, Math.max(minZoom, baseDistance / distance));
+  };
+
+  return <OrbitControls
+    ref={controlsRef}
+    target={[0, 0, 0]}
+    enablePan={false}
+    enableDamping
+    dampingFactor={0.08}
+    minDistance={baseDistance / maxZoom}
+    maxDistance={baseDistance / minZoom}
+    minPolarAngle={Math.PI / 3.2}
+    maxPolarAngle={Math.PI / 1.7}
+    onChange={syncZoomFromOrbit}
+  />;
+}
+
 function renderPrintArea(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds | null, target: HTMLCanvasElement, baseColor: string) {
   const bounds = area ?? { left: 0, top: 0, width: 800, height: 800 };
   // El tamaño del canvas origen de CanvasTexture debe ser estable mientras
@@ -408,11 +482,8 @@ export default function Product3DViewer({ product }: { product: Product }) {
   return <section key={product.id} className="relative flex h-full min-h-[250px] w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-[#eef2f7] shadow-inner" aria-label={`Visor 3D de ${product.name}`}>
     <div className="pointer-events-none absolute left-4 top-4 z-10 rounded-xl border border-white/80 bg-white/75 px-3 py-2 shadow-sm backdrop-blur"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Vista 3D · 360°</p><p className="mt-0.5 text-sm font-semibold text-slate-800">{product.name}</p></div>
     {!fabricCanvas && <p className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/80 px-3 py-1.5 text-xs text-slate-500 shadow-sm">Conectando con el lienzo…</p>}
-    <Canvas key={`${product.id}:${model3dUrl}`} shadows={{ type: THREE.PCFShadowMap }} dpr={[1, 1.5]} camera={{ position: [0, 0, 5], fov: 35 }} gl={{ antialias: true, alpha: true }} onCreated={({ gl }) => {
-      console.info('[Product3DViewer] Canvas WebGL inicializado:', { vendor: gl.getContext().getParameter(gl.getContext().VENDOR), renderer: gl.getContext().getParameter(gl.getContext().RENDERER) });
-      gl.domElement.addEventListener('webglcontextlost', (event) => console.error('[Product3DViewer] Se perdió el contexto WebGL.', event));
-      gl.domElement.addEventListener('webglcontextrestored', () => console.info('[Product3DViewer] Contexto WebGL restaurado.'));
-    }}>
+    <Canvas key={`${product.id}:${model3dUrl}`} shadows={{ type: THREE.PCFShadowMap }} dpr={[1, 1.5]} camera={{ position: [0, 0, 5], fov: 35 }} gl={{ antialias: true, alpha: true }}>
+      <WebGLDiagnostics />
       <color attach="background" args={['#eef2f7']} />
       <ambientLight intensity={1.05} />
       <directionalLight castShadow position={[3, 5, 4]} intensity={2} />
@@ -423,7 +494,7 @@ export default function Product3DViewer({ product }: { product: Product }) {
         <shadowMaterial opacity={0.12} />
       </mesh>
       <Grid position={[0, -1.54, 0]} rotation={[0, 0, 0]} infiniteGrid cellSize={0.35} sectionSize={1.4} fadeDistance={12} fadeStrength={1.2} cellColor="#cbd5e1" sectionColor="#94a3b8" />
-      <OrbitControls target={[0, 0, 0]} enablePan={false} enableDamping dampingFactor={0.08} minDistance={2} maxDistance={5} minPolarAngle={Math.PI / 3.2} maxPolarAngle={Math.PI / 1.7} />
+      <ZoomableOrbitControls />
     </Canvas>
     <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/80 bg-white/75 px-3 py-1.5 text-[10px] font-medium text-slate-500 shadow-sm backdrop-blur">Arrastra para girar · rueda para acercar</div>
   </section>;
