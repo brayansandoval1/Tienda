@@ -7,8 +7,6 @@ import {
   Undo2,
   Redo2,
   Box,
-  AlignCenterHorizontal,
-  AlignCenterVertical,
   Copy,
   Minus,
   Plus,
@@ -54,26 +52,6 @@ export default function FloatingFooter({ onReset }: FloatingFooterProps) { // Re
   return (
     <div className="absolute bottom-2 left-1/2 z-30 flex max-w-[calc(100%-1rem)] -translate-x-1/2 items-center gap-1 rounded-full bg-slate-900/90 px-2 py-1.5 text-xs font-medium text-white shadow-2xl backdrop-blur-md">
         <div className="flex items-center border-r border-white/15 pr-1">
-          <button
-            onClick={() => window.dispatchEvent(new CustomEvent('editor:align', { detail: { alignment: 'center-h' } }))}
-            className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/10 ${!isObjectSelected ? 'pointer-events-none opacity-50' : ''}`}
-            type="button"
-            title="Centrar horizontalmente"
-            aria-label="Centrar horizontalmente"
-            disabled={!isObjectSelected}
-          >
-            <AlignCenterHorizontal size={16} />
-          </button>
-          <button
-            onClick={() => window.dispatchEvent(new CustomEvent('editor:align', { detail: { alignment: 'center-v' } }))}
-            className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/10 ${!isObjectSelected ? 'pointer-events-none opacity-50' : ''}`}
-            type="button"
-            title="Centrar verticalmente"
-            aria-label="Centrar verticalmente"
-            disabled={!isObjectSelected}
-          >
-            <AlignCenterVertical size={16} />
-          </button>
           <button
             onClick={() => window.dispatchEvent(new CustomEvent('editor:duplicate-active'))}
             className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/10 ${!isObjectSelected ? 'pointer-events-none opacity-50' : ''}`}
