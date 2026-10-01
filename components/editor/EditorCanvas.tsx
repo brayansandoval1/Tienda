@@ -166,6 +166,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       handleDesignBackground: (e: Event) => void,
       handleFontChange: (e: Event) => void,
       handleFontSizeChange: (e: Event) => void,
+      handleTextFormat: (e: Event) => void,
       handleAddImage: (e: Event) => void,
       handleDelete: () => void,
       handleDuplicate: () => void,
@@ -2656,6 +2657,35 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         }
       };
 
+      handleTextFormat = (e: Event) => {
+        const canvas = fabricCanvasRef.current;
+        const detail = (e as CustomEvent<{ property?: string; value?: unknown }>).detail || {};
+        const activeObject: any = canvas?.getActiveObject();
+        if (!canvas || !activeObject || (activeObject.type !== 'i-text' && activeObject.type !== 'text')) return;
+
+        const reset: Record<string, unknown> = {
+          fontFamily: 'Arial', fontWeight: 'normal', fontStyle: 'normal',
+          underline: false, linethrough: false, textBackgroundColor: '',
+        };
+        if (detail.property === 'clear') {
+          if (activeObject.isEditing && typeof activeObject.setSelectionStyles === 'function') {
+            activeObject.setSelectionStyles(reset);
+          } else {
+            activeObject.set(reset);
+          }
+        } else if (detail.property) {
+          const formatting = { [detail.property]: detail.value };
+          if (activeObject.isEditing && typeof activeObject.setSelectionStyles === 'function') {
+            activeObject.setSelectionStyles(formatting);
+          } else {
+            activeObject.set(formatting);
+          }
+        }
+        activeObject.setCoords?.();
+        canvas.requestRenderAll();
+        saveState();
+      };
+
       // Listener para agregar texto vía CustomEvent
       handleAddText = (e: Event) => {
         if (!fabricCanvasRef.current) return;
@@ -3678,6 +3708,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       window.addEventListener('editor:design-background', handleDesignBackground);
       window.addEventListener('editor:change-font', handleFontChange);
       window.addEventListener('editor:change-fontSize', handleFontSizeChange);
+      window.addEventListener('editor:text-format', handleTextFormat);
       window.addEventListener('editor:add-image', handleAddImage);
       window.addEventListener('editor:delete-active', handleDelete);
       window.addEventListener('editor:clear-canvas', handleClear);
@@ -3768,6 +3799,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       if (handleFontSizeChange) {
         window.removeEventListener('editor:change-fontSize', handleFontSizeChange);
       }
+      if (handleTextFormat) window.removeEventListener('editor:text-format', handleTextFormat);
       if (handleAddImage) {
         window.removeEventListener('editor:add-image', handleAddImage);
       }

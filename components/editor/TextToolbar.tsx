@@ -39,6 +39,14 @@ import {
   AlignRight,
   AlignStartVertical,
   AlignEndVertical,
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  AArrowUp,
+  AArrowDown,
+  Highlighter,
+  RemoveFormatting,
   Check,
   Eraser,
   Scissors,
@@ -51,6 +59,10 @@ interface ObjectStyle {
   fontSize?: number;
   isText: boolean;
   isImage: boolean;
+  fontWeight?: string | number;
+  fontStyle?: string;
+  underline?: boolean;
+  linethrough?: boolean;
 }
 
 export default function TextToolbar() {
@@ -105,6 +117,10 @@ export default function TextToolbar() {
         fill: selectedObject.fill ?? '#000000',
         fontFamily: selectedObject.fontFamily ?? 'Arial',
         fontSize: selectedObject.fontSize ?? 24,
+        fontWeight: selectedObject.fontWeight ?? 'normal',
+        fontStyle: selectedObject.fontStyle ?? 'normal',
+        underline: Boolean(selectedObject.underline),
+        linethrough: Boolean(selectedObject.linethrough),
         isText: isText,
         isImage: isImage,
       });
@@ -147,6 +163,24 @@ export default function TextToolbar() {
     window.dispatchEvent(new CustomEvent('editor:change-fontSize', { detail: { fontSize: newSize } }));
   };
 
+  const changeTextFormat = (property: string, value: unknown) => {
+    window.dispatchEvent(new CustomEvent('editor:text-format', { detail: { property, value } }));
+    setStyle((prev) => ({ ...prev, [property]: value }));
+  };
+
+  const adjustFontSize = (delta: number) => {
+    const fontSize = Math.min(200, Math.max(8, (style.fontSize || 24) + delta));
+    setStyle((prev) => ({ ...prev, fontSize }));
+    window.dispatchEvent(new CustomEvent('editor:change-fontSize', { detail: { fontSize } }));
+  };
+
+  const clearTextFormatting = () => {
+    window.dispatchEvent(new CustomEvent('editor:text-format', {
+      detail: { property: 'clear', value: null },
+    }));
+    setStyle((prev) => ({ ...prev, fontFamily: 'Arial', fontWeight: 'normal', fontStyle: 'normal', underline: false, linethrough: false }));
+  };
+
   const changeBackground = (color: string) => {
     setBackgroundColor(color);
     window.dispatchEvent(new CustomEvent('editor:design-background', { detail: { color } }));
@@ -162,8 +196,31 @@ export default function TextToolbar() {
     // es una franja horizontal blanca independiente que libera por completo el
     // área visual sobre el producto. Siempre presente (aunque deshabilitada por
     // defecto en los controles internos si no hay selección activa).
-    <div className="w-full bg-white border-b border-slate-200 h-12 px-6 flex items-center gap-4">
-      <div className="flex items-center gap-2 text-slate-700">
+    <div className="w-full min-w-0 overflow-x-auto bg-white border-b border-slate-200 h-12 px-4 flex items-center gap-3">
+      {isTextObject ? (
+        <>
+          <div className="flex shrink-0 items-center gap-1 border-r border-slate-200 pr-3">
+            <button type="button" title="Negrita" aria-label="Negrita" aria-pressed={style.fontWeight === 'bold' || Number(style.fontWeight) >= 600} onClick={() => changeTextFormat('fontWeight', style.fontWeight === 'bold' || Number(style.fontWeight) >= 600 ? 'normal' : 'bold')} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 ${style.fontWeight === 'bold' || Number(style.fontWeight) >= 600 ? 'bg-slate-200' : ''}`}><Bold size={17} /></button>
+            <button type="button" title="Cursiva" aria-label="Cursiva" aria-pressed={style.fontStyle === 'italic'} onClick={() => changeTextFormat('fontStyle', style.fontStyle === 'italic' ? 'normal' : 'italic')} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 ${style.fontStyle === 'italic' ? 'bg-slate-200' : ''}`}><Italic size={17} /></button>
+            <button type="button" title="Subrayado" aria-label="Subrayado" aria-pressed={style.underline} onClick={() => changeTextFormat('underline', !style.underline)} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 ${style.underline ? 'bg-slate-200' : ''}`}><Underline size={17} /></button>
+            <button type="button" title="Tachado" aria-label="Tachado" aria-pressed={style.linethrough} onClick={() => changeTextFormat('linethrough', !style.linethrough)} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 ${style.linethrough ? 'bg-slate-200' : ''}`}><Strikethrough size={17} /></button>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <button type="button" title="Aumentar tamaño" aria-label="Aumentar tamaño" onClick={() => adjustFontSize(2)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100"><AArrowUp size={18} /></button>
+            <input type="number" aria-label="Tamaño de fuente" value={style.fontSize || 24} min={8} max={200} onChange={handleFontSizeChange} className="w-[4.25rem] rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-blue-500" />
+            <button type="button" title="Reducir tamaño" aria-label="Reducir tamaño" onClick={() => adjustFontSize(-2)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100"><AArrowDown size={18} /></button>
+          </div>
+          <select aria-label="Fuente" value={style.fontFamily || 'Arial'} onChange={handleFontChange} className="max-w-40 shrink-0 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-blue-500">
+            {!FONT_LIBRARY.some((font) => font.family === style.fontFamily) && <option value={style.fontFamily}>{style.fontFamily}</option>}
+            {FONT_GROUPS.map((group) => <optgroup key={group.style} label={FONT_STYLE_LABELS[group.style]}>{group.fonts.map((font) => <option key={font.family} value={font.family}>{font.family}</option>)}</optgroup>)}
+          </select>
+          <div className="flex shrink-0 items-center gap-1 border-l border-slate-200 pl-3">
+            <label title="Color del texto" className="relative inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg hover:bg-slate-100"><span className="text-sm font-bold text-slate-700">A</span><span className="absolute bottom-1 h-1 w-5 rounded" style={{ backgroundColor: style.fill }} /><input type="color" aria-label="Color del texto" value={/^#[0-9a-f]{6}$/i.test(style.fill) ? style.fill : '#000000'} onChange={handleColorChange} className="absolute inset-0 cursor-pointer opacity-0" /></label>
+            <label title="Resaltado" className="relative inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg hover:bg-slate-100"><Highlighter size={17} className="text-slate-700" /><input type="color" aria-label="Color de resaltado" defaultValue="#fff176" onChange={(event) => changeTextFormat('textBackgroundColor', event.target.value)} className="absolute inset-0 cursor-pointer opacity-0" /></label>
+            <button type="button" title="Quitar formato" aria-label="Quitar formato" onClick={clearTextFormatting} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100"><RemoveFormatting size={17} /></button>
+          </div>
+        </>
+      ) : <div className="flex items-center gap-2 text-slate-700">
         <label className="text-sm font-semibold text-slate-600">Color</label>
         <input
           type="color"
@@ -174,7 +231,7 @@ export default function TextToolbar() {
           onMouseDown={(e) => e.stopPropagation()}
           className="h-10 w-14 cursor-pointer rounded-xl border border-slate-200 bg-white"
         />
-      </div>
+      </div>}
 
       <div className="flex items-center gap-1 rounded-2xl border border-slate-200 bg-slate-50 p-1">
         <span className="px-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Alinear</span>
@@ -249,33 +306,6 @@ export default function TextToolbar() {
         </div>
       )}
 
-      {isTextObject && (
-        <>
-          <div className="flex items-center gap-2 text-slate-700">
-            <label className="text-sm font-semibold text-slate-600">Tamaño</label>
-            <input
-              type="number"
-              value={style.fontSize || 24}
-              min={12}
-              max={96}
-              onChange={handleFontSizeChange}
-              className="w-20 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none"
-            />
-          </div>
-          <div className="flex items-center gap-2 text-slate-700">
-            <label className="text-sm font-semibold text-slate-600">Fuente</label>
-            <select value={style.fontFamily || 'Arial'} onChange={handleFontChange} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none">
-              {FONT_GROUPS.map((group) => (
-                <optgroup key={group.style} label={FONT_STYLE_LABELS[group.style]}>
-                  {group.fonts.map((font) => (
-                    <option key={font.family} value={font.family}>{font.family}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </div>
-        </>
-      )}
     </div>
   );
 }
