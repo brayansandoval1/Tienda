@@ -9,6 +9,9 @@ import Product3DModal from '@/components/editor/Product3DModal';
 import { saveTemplateToStorage, updateTemplateInStorage, listSavedTemplates, getCategoryIcon } from '@/src/utils/templateStorage';
 import { clearDraft, getDraft, saveDraft, type DesignDraft } from '@/src/utils/designDraftStorage';
 import { useCartStore } from '@/src/store/useCartStore';
+import { loadGoogleFonts } from '@/lib/googleFonts';
+import { libraryFontWeights } from '@/lib/googleFontLibrary';
+import { TYPOGRAPHY_PRESETS, presetFontRequests } from '@/components/editor/typographyPresets';
 import {
   decodeDesignBackground,
   designBackgroundToCss,
@@ -155,6 +158,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
     // conserva el fit antiguo y el mockup desborda/queda cortado hacia abajo.
     let containerObserver: ResizeObserver | null = null;
     let handleAddText: (e: Event) => void,
+      handleAddTextPreset: (e: Event) => void,
+      handleApplyLibraryFont: (e: Event) => void,
       handleColorChange: (e: Event) => void,
       handleProductColor: (e: Event) => void,
       handleDesignBackground: (e: Event) => void,
@@ -2497,17 +2502,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         saveState();
       };
 
-      // Helper para cargar Google Fonts dinámicamente
-      const loadGoogleFont = (fontFamily: string) => {
-        const id = `google-font-${fontFamily.replace(/\s+/g, '-').toLowerCase()}`;
-        if (!document.getElementById(id)) {
-          const link = document.createElement('link');
-          link.id = id;
-          link.href = `https://fonts.googleapis.com/css2?family=${fontFamily.replace(/\s+/g, '+')}:wght@400;700&display=swap`;
-          link.rel = 'stylesheet';
-          document.head.appendChild(link);
-        }
-      };
+      // Helper eliminado a propósito: la carga por familia vive en
+      // lib/googleFonts.ts (loadGoogleFonts), que pide a css2 SÓLO los pesos
+      // que cada familia sirve (el antiguo inline pedía wght@400;700 siempre
+      // y devolvía 400 en monopeso como Anton o Bungee).
 
       // --- Listeners para emitir eventos de selección ---
       const emitSelection = () => {
@@ -2603,12 +2601,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const activeObject = fabricCanvasRef.current.getActiveObject();
         if (!activeObject || (activeObject.type !== 'i-text' && activeObject.type !== 'text')) return;
 
-        // Cargar el stylesheet de Google Fonts
-        loadGoogleFont(fontFamily);
-
-        // Esperar a que el navegador cargue la fuente antes de aplicarla
+        // Esperar a que el navegador cargue la fuente (con los pesos reales
+        // declarados en la biblioteca) antes de aplicarla.
         try {
-          await document.fonts.load(`16px "${fontFamily}"`);
+          await loadGoogleFonts([{ family: fontFamily, weights: libraryFontWeights(fontFamily) }]);
           activeObject.set('fontFamily', fontFamily);
           fabricCanvasRef.current.renderAll();
           saveState();
@@ -2660,6 +2656,139 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         fabricCanvasRef.current.setActiveObject(newText);
         fabricCanvasRef.current.bringToFront(newText);
         fabricCanvasRef.current.requestRenderAll();
+      };
+
+      // ── Presets tipográficos (galería "Agregar Título / Agregar Párrafo") ──
+      // Recibe el id del preset elegido en TypographyPresetsPanel. Un preset de
+      // una sola capa se inserta como fabric.IText editable; uno de varias capas
+      // se apila verticalmente (gap px) dentro de un fabric.Group, manteniendo
+      // cada línea como IText independiente con sus propias fuentes/estilos.
+      handleAddTextPreset = (e: Event) => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
+        const detail = (e as CustomEvent).detail as { presetId?: string } | undefined;
+        const preset = TYPOGRAPHY_PRESETS.find((item) => item.id === detail?.presetId);
+        if (!preset) return;
+
+        void (async () => {
+          // Requisito de carga dinámica: inyectar el stylesheet de Google Fonts
+          // y ESPERAR la fuente antes de crear los objetos. Fabric mide los
+          // textos con el contexto del canvas: si el objeto se construye con la
+          // fallback aún activa, las métricas (ancho/altura del Group) quedan
+          // mal calculadas aunque la tipografía llegue después.
+          await loadGoogleFonts(presetFontRequests(preset));
+
+          const printArea = getRenderedPrintArea(activeView);
+          // Tope inicial: 90% del ancho imprimible, para que el preset entre
+          // completo dentro de la zona segura sin recortarse.
+          const maxTextWidth = Math.max(60, (printArea?.width ?? canvas.getWidth()) * 0.9);
+          const gap = preset.gap ?? 8;
+          const align = preset.align ?? 'center';
+
+          const texts = preset.layers.map(
+            (layer) =>
+              new fabric.IText(layer.text, {
+                left: 0,
+                top: 0,
+                originX: 'left',
+                originY: 'top',
+                fontFamily: layer.fontFamily,
+                fontSize: layer.fontSize,
+                fontWeight: layer.fontWeight ?? 400,
+                fontStyle: layer.fontStyle ?? 'normal',
+                fill: layer.fill,
+                stroke: layer.stroke,
+                strokeWidth: layer.strokeWidth ?? 0,
+                paintFirst: layer.paintFirst ?? 'fill',
+                shadow: layer.shadow,
+                charSpacing: layer.charSpacing ?? 0,
+                lineHeight: layer.lineHeight ?? 1.16,
+                textAlign: layer.textAlign ?? 'center',
+                textBackgroundColor: layer.textBackgroundColor ?? '',
+                // Inclinación/sesgo por capa (efectos de distorsión tipo "Salud"
+                // neón o sellos torcidos); dentro de un Group Fabric los conserva.
+                angle: layer.rotation ?? 0,
+                skewX: layer.skewX ?? 0,
+                editable: true,
+              }),
+          );
+
+          // Apilar capas: cada línea baja (altura + gap); centradas sobre la
+          // más ancha cuando el preset pide alineación de bloque centrada.
+          const widest = Math.max(1, ...texts.map((text) => text.width || 0));
+          let cursorY = 0;
+          texts.forEach((text) => {
+            text.set({
+              left: align === 'center' ? (widest - (text.width || 0)) / 2 : 0,
+              top: cursorY,
+            });
+            cursorY += (text.height || 0) + gap;
+          });
+
+          const designObject =
+            texts.length > 1
+              ? new fabric.Group(texts, { originX: 'center', originY: 'center' })
+              : texts[0].set({ originX: 'center', originY: 'center' });
+
+          // Encoger (nunca agrandar) para caber en el área imprimible.
+          const naturalWidth = (designObject.width || 1) * (designObject.scaleX || 1);
+          const fitScale = Math.min(1, maxTextWidth / naturalWidth);
+          if (fitScale < 1) designObject.set({ scaleX: fitScale, scaleY: fitScale });
+
+          // Nombre visible en LayersPanel y en los objetos exportados.
+          (designObject as any).set('layerName', preset.name);
+          // makeObjectInteractive reafirma interactividad y aplica el clipPath
+          // de la zona segura (el preset completo viaja a los archivos de print).
+          makeObjectInteractive(designObject);
+          canvas.add(designObject);
+          canvas.centerObject(designObject);
+          canvas.setActiveObject(designObject);
+          canvas.bringToFront(designObject);
+          canvas.requestRenderAll();
+          saveState();
+        })();
+      };
+
+      // ── Fuente suelta de la biblioteca ("Todas las fuentes" de la galería) ─
+      // Clic en una tarjeta de fuente: si hay un texto seleccionado se le
+      // aplica la familia (mismo efecto que el combo del TextToolbar); si no
+      // hay ninguno, se inserta un IText nuevo editable. En ambos casos se
+      // ESPERA la carga de la tipografía antes de tocar el objeto para que
+      // Fabric capture las métricas correctas.
+      handleApplyLibraryFont = (e: Event) => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
+        const detail = (e as CustomEvent).detail as { family?: string } | undefined;
+        const family = detail?.family?.trim();
+        if (!family) return;
+
+        void (async () => {
+          await loadGoogleFonts([{ family, weights: libraryFontWeights(family) }]);
+
+          const active = canvas.getActiveObject();
+          if (active && (active.type === 'i-text' || active.type === 'text')) {
+            active.set('fontFamily', family);
+            canvas.requestRenderAll();
+            saveState();
+            return;
+          }
+
+          const newText = makeObjectInteractive(new fabric.IText('Escribe tu texto...', {
+            originX: 'center',
+            originY: 'center',
+            fontFamily: family,
+            fontSize: 30,
+            fill: '#1e293b',
+            editable: true,
+            ...defaultObjectProps,
+          }));
+          canvas.add(newText);
+          canvas.centerObject(newText);
+          canvas.setActiveObject(newText);
+          canvas.bringToFront(newText);
+          canvas.requestRenderAll();
+          saveState();
+        })();
       };
 
       // Listener para agregar imagen vía CustomEvent
@@ -3455,6 +3584,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       };
 
       window.addEventListener('editor:add-text', handleAddText);
+      window.addEventListener('editor:add-text-preset', handleAddTextPreset);
+      window.addEventListener('editor:apply-library-font', handleApplyLibraryFont);
+
       window.addEventListener('editor:change-color', handleColorChange);
       window.addEventListener('editor:product-color', handleProductColor);
       window.addEventListener('editor:design-background', handleDesignBackground);
@@ -3527,6 +3659,12 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       isMounted = false;
       if (handleAddText) {
         window.removeEventListener('editor:add-text', handleAddText);
+      }
+      if (handleAddTextPreset) {
+        window.removeEventListener('editor:add-text-preset', handleAddTextPreset);
+      }
+      if (handleApplyLibraryFont) {
+        window.removeEventListener('editor:apply-library-font', handleApplyLibraryFont);
       }
       if (handleColorChange) {
         window.removeEventListener('editor:change-color', handleColorChange);

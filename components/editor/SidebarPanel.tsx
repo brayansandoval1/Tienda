@@ -2,12 +2,14 @@
 
 import { useState, useEffect } from 'react';
 import type { TextOptions } from '@/types/product';
-import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2, Pencil, Layers, X } from 'lucide-react';
+import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2, Pencil, Layers, X, ChevronDown } from 'lucide-react';
 import { MOCK_TEMPLATES, type MockTemplate } from '@/src/data/mockTemplates';
 import { listSavedTemplates, deleteSavedTemplate, getCategoryIcon, listTemplateCategories, saveTemplateCategories, saveTemplateIcon, DEFAULT_TEMPLATE_CATEGORIES, type SavedTemplate } from '@/src/utils/templateStorage';
 import type { Product } from '@/src/store/useProductStore';
 import LayersPanel from '@/components/editor/LayersPanel';
 import SmartInputPanel from '@/components/editor/SmartInputPanel';
+import TypographyPresetsPanel from '@/components/editor/TypographyPresetsPanel';
+import type { TypographyPresetCategory } from '@/components/editor/typographyPresets';
 
 const forms = [
   { label: 'Cuadrado', icon: Square, shape: 'rect' as const },
@@ -99,6 +101,24 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   // categoría escrita pasa a ser la seleccionada del formulario.
   const [isNewCategoryMode, setIsNewCategoryMode] = useState(false);
   const [newCategoryValue, setNewCategoryValue] = useState('');
+
+  // ── Galería de presets tipográficos (botones "Agregar Título/Párrafo") ──
+  // El popover vive en position: fixed anclado al rect del botón, porque este
+  // sidebar recorta con overflow-hidden. "Título" abre en Títulos Impactantes
+  // y "Párrafo" en Combinaciones y Párrafos.
+  const [textPresetsOpen, setTextPresetsOpen] = useState(false);
+  const [textPresetsCategory, setTextPresetsCategory] = useState<TypographyPresetCategory>('titulos');
+  const [textPresetsAnchor, setTextPresetsAnchor] = useState<DOMRect | null>(null);
+
+  const toggleTextPresets = (event: React.MouseEvent<HTMLButtonElement>, category: TypographyPresetCategory) => {
+    if (textPresetsOpen) {
+      setTextPresetsOpen(false);
+      return;
+    }
+    setTextPresetsAnchor(event.currentTarget.getBoundingClientRect());
+    setTextPresetsCategory(category);
+    setTextPresetsOpen(true);
+  };
   // Estado legado temporalmente conservado para que los atajos de texto
   // existentes sigan siendo compatibles; la interfaz la renderiza SmartInputPanel.
   const [canvasTexts, setCanvasTexts] = useState<
@@ -931,29 +951,31 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
-            onClick={() =>
-              window.dispatchEvent(
-                new CustomEvent('editor:add-text', {
-                  detail: { text: 'Título de Ejemplo', fontSize: 32, fontWeight: 'bold' },
-                }),
-              )
-            }
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:shadow-sm"
+            data-text-presets-toggle
+            aria-expanded={textPresetsOpen}
+            onClick={(event) => toggleTextPresets(event, 'titulos')}
+            className="flex items-center justify-between gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:shadow-sm"
           >
             Agregar Título
+            <ChevronDown size={14} className={`shrink-0 text-slate-400 transition-transform ${textPresetsOpen && textPresetsCategory === 'titulos' ? 'rotate-180' : ''}`} />
           </button>
           <button
             type="button"
-            onClick={() =>
-              window.dispatchEvent(
-                new CustomEvent('editor:add-text', { detail: { text: 'Escribe tu párrafo aquí...', fontSize: 16 } }),
-              )
-            }
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:shadow-sm"
+            data-text-presets-toggle
+            aria-expanded={textPresetsOpen}
+            onClick={(event) => toggleTextPresets(event, 'combinaciones')}
+            className="flex items-center justify-between gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:shadow-sm"
           >
             Agregar Párrafo
+            <ChevronDown size={14} className={`shrink-0 text-slate-400 transition-transform ${textPresetsOpen && textPresetsCategory === 'combinaciones' ? 'rotate-180' : ''}`} />
           </button>
         </div>
+        <TypographyPresetsPanel
+          open={textPresetsOpen}
+          anchorRect={textPresetsAnchor}
+          focusCategory={textPresetsCategory}
+          onClose={() => setTextPresetsOpen(false)}
+        />
       </div>
 
       <div className="order-3 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">

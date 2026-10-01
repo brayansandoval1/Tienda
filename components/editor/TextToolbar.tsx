@@ -1,7 +1,30 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { GOOGLE_FONTS } from '../../lib/fonts';
+// Dropdown "Fuente" del toolbar: se pinta desde el catálogo completo
+// (lib/googleFontLibrary.ts) agrupando por estilo para que ~60 familias
+// sigan siendo navegables. Agregar una familia allí la añade aquí y en la
+// galería del sidebar automáticamente.
+import {
+  FONT_LIBRARY,
+  FONT_STYLE_LABELS,
+  type GoogleFontStyle,
+} from '@/lib/googleFontLibrary';
+
+const FONT_GROUP_ORDER: GoogleFontStyle[] = [
+  'sistema',
+  'sans',
+  'serif',
+  'display',
+  'script',
+  'retro',
+  'mono',
+];
+const FONT_GROUPS = FONT_GROUP_ORDER.map((style) => ({
+  style,
+  fonts: FONT_LIBRARY.filter((font) => font.style === style),
+})).filter((group) => group.fonts.length > 0);
+
 import {
   designBackgroundToCss,
   encodeDesignBackground,
@@ -242,8 +265,12 @@ export default function TextToolbar() {
           <div className="flex items-center gap-2 text-slate-700">
             <label className="text-sm font-semibold text-slate-600">Fuente</label>
             <select value={style.fontFamily || 'Arial'} onChange={handleFontChange} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none">
-              {GOOGLE_FONTS.map((font) => (
-                <option key={font} value={font}>{font}</option>
+              {FONT_GROUPS.map((group) => (
+                <optgroup key={group.style} label={FONT_STYLE_LABELS[group.style]}>
+                  {group.fonts.map((font) => (
+                    <option key={font.family} value={font.family}>{font.family}</option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </div>
