@@ -47,6 +47,7 @@ import {
   AArrowDown,
   Highlighter,
   RemoveFormatting,
+  Pencil,
   Check,
   Eraser,
   Scissors,
@@ -66,11 +67,15 @@ interface ObjectStyle {
 }
 
 export default function TextToolbar() {
-  const [isVisible, setIsVisible] = useState(false);
+  const [isVisible, setIsVisible] = useState(true);
   const [isTextObject, setIsTextObject] = useState(false);
   const [isImageObject, setIsImageObject] = useState(false);
   const [isCropping, setIsCropping] = useState(false);
   const [backgroundColor, setBackgroundColor] = useState('transparent');
+  const [drawingMode, setDrawingMode] = useState<'off' | 'draw' | 'erase'>('off');
+  const [drawingColor, setDrawingColor] = useState('#1e293b');
+  const [drawingWidth, setDrawingWidth] = useState(4);
+  const [eraserSize, setEraserSize] = useState<'small' | 'medium' | 'stroke'>('small');
   const [style, setStyle] = useState<ObjectStyle>({
     fill: '#000000',
     fontFamily: 'Arial',
@@ -87,7 +92,7 @@ export default function TextToolbar() {
       const selectedObject = detail.selectedObject;
 
       if (!selectedObject) {
-        setIsVisible(false);
+        setIsVisible(true);
         setIsTextObject(false);
         setIsImageObject(false);
         return;
@@ -181,6 +186,26 @@ export default function TextToolbar() {
     setStyle((prev) => ({ ...prev, fontFamily: 'Arial', fontWeight: 'normal', fontStyle: 'normal', underline: false, linethrough: false }));
   };
 
+  const setDrawingTool = (mode: 'off' | 'draw' | 'erase', size: 'small' | 'medium' | 'stroke' = eraserSize) => {
+    setDrawingMode(mode);
+    setEraserSize(size);
+    window.dispatchEvent(new CustomEvent('editor:drawing-tool', {
+      detail: { mode, color: drawingColor, width: drawingWidth, eraserSize: size },
+    }));
+  };
+
+  const updateDrawingStyle = (next: { color?: string; width?: number }) => {
+    const color = next.color ?? drawingColor;
+    const width = next.width ?? drawingWidth;
+    if (next.color) setDrawingColor(color);
+    if (next.width) setDrawingWidth(width);
+    if (drawingMode !== 'off') {
+      window.dispatchEvent(new CustomEvent('editor:drawing-style', {
+        detail: { mode: drawingMode, color, width, eraserSize },
+      }));
+    }
+  };
+
   const changeBackground = (color: string) => {
     setBackgroundColor(color);
     window.dispatchEvent(new CustomEvent('editor:design-background', { detail: { color } }));
@@ -197,6 +222,16 @@ export default function TextToolbar() {
     // área visual sobre el producto. Siempre presente (aunque deshabilitada por
     // defecto en los controles internos si no hay selección activa).
     <div className="w-full min-w-0 overflow-x-auto bg-white border-b border-slate-200 h-12 px-4 flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-1 border-r border-slate-200 pr-3">
+        <button type="button" title="Dibujar" aria-label="Activar dibujo libre" aria-pressed={drawingMode === 'draw'} onClick={() => setDrawingTool(drawingMode === 'draw' ? 'off' : 'draw')} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 ${drawingMode === 'draw' ? 'bg-blue-100 text-blue-700' : ''}`}><Pencil size={18} /></button>
+        <button type="button" title="Borrador pequeño: elimina solo una sección local del trazo" aria-label="Borrador pequeño" aria-pressed={drawingMode === 'erase' && eraserSize === 'small'} onClick={() => setDrawingTool(drawingMode === 'erase' && eraserSize === 'small' ? 'off' : 'erase', 'small')} className={`inline-flex h-9 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 ${drawingMode === 'erase' && eraserSize === 'small' ? 'bg-blue-100 text-blue-700' : ''}`}><Eraser size={14} /></button>
+        <button type="button" title="Borrador mediano: elimina una sección local más amplia" aria-label="Borrador mediano" aria-pressed={drawingMode === 'erase' && eraserSize === 'medium'} onClick={() => setDrawingTool(drawingMode === 'erase' && eraserSize === 'medium' ? 'off' : 'erase', 'medium')} className={`inline-flex h-9 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 ${drawingMode === 'erase' && eraserSize === 'medium' ? 'bg-blue-100 text-blue-700' : ''}`}><Eraser size={19} /></button>
+        <button type="button" title="Borrador de trazos: elimina el trazo completo" aria-label="Borrador de trazos" aria-pressed={drawingMode === 'erase' && eraserSize === 'stroke'} onClick={() => setDrawingTool(drawingMode === 'erase' && eraserSize === 'stroke' ? 'off' : 'erase', 'stroke')} className={`inline-flex h-9 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 ${drawingMode === 'erase' && eraserSize === 'stroke' ? 'bg-blue-100 text-blue-700' : ''}`}><Eraser size={17} /></button>
+        {drawingMode === 'draw' && <>
+          <label title="Color del trazo" className="relative ml-1 inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-slate-200" style={{ backgroundColor: drawingColor }}><input type="color" aria-label="Color del trazo" value={drawingColor} onChange={(event) => updateDrawingStyle({ color: event.target.value })} className="absolute inset-0 cursor-pointer opacity-0" /></label>
+          <select aria-label="Grosor del trazo" value={drawingWidth} onChange={(event) => updateDrawingStyle({ width: Number(event.target.value) })} className="h-8 w-16 rounded-md border border-slate-200 bg-white px-1 text-xs">{[2, 4, 6, 10, 16].map((width) => <option key={width} value={width}>{width}px</option>)}</select>
+        </>}
+      </div>
       {isTextObject ? (
         <>
           <div className="flex shrink-0 items-center gap-1 border-r border-slate-200 pr-3">

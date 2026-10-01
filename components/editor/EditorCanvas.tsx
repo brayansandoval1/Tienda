@@ -158,6 +158,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
     // altura disponible SIN que ocurra un resize de ventana. Sin esto el canvas
     // conserva el fit antiguo y el mockup desborda/queda cortado hacia abajo.
     let containerObserver: ResizeObserver | null = null;
+    let drawingEraseHandler: ((event: any) => void) | null = null;
+    let drawingEraseMoveHandler: ((event: any) => void) | null = null;
+    let drawingEraseUpHandler: (() => void) | null = null;
     let handleAddText: (e: Event) => void,
       handleAddTextPreset: (e: Event) => void,
       handleApplyLibraryFont: (e: Event) => void,
@@ -167,6 +170,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       handleFontChange: (e: Event) => void,
       handleFontSizeChange: (e: Event) => void,
       handleTextFormat: (e: Event) => void,
+      handleDrawingTool: (e: Event) => void,
+      handleDrawingStyle: (e: Event) => void,
       handleAddImage: (e: Event) => void,
       handleDelete: () => void,
       handleDuplicate: () => void,
@@ -2686,6 +2691,270 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         saveState();
       };
 
+      handleDrawingTool = (e: Event) => {
+        const canvas = fabricCanvasRef.current;
+        const detail = (e as CustomEvent<{ mode?: 'off' | 'draw' | 'erase'; color?: string; width?: number; eraserSize?: 'small' | 'medium' | 'stroke' }>).detail || {};
+        if (!canvas) return;
+        if (drawingEraseHandler) {
+          canvas.off('mouse:down', drawingEraseHandler);
+          drawingEraseHandler = null;
+        }
+        if (drawingEraseMoveHandler) canvas.off('mouse:move', drawingEraseMoveHandler);
+        if (drawingEraseUpHandler) canvas.off('mouse:up', drawingEraseUpHandler);
+        if (drawingEraseUpHandler) window.removeEventListener('mouseup', drawingEraseUpHandler);
+        drawingEraseMoveHandler = null;
+        drawingEraseUpHandler = null;
+
+        const mode = detail.mode ?? 'off';
+        canvas.isDrawingMode = mode === 'draw';
+        canvas.selection = mode === 'off';
+        canvas.skipTargetFind = mode === 'draw';
+        if (mode === 'draw') {
+          if (!canvas.freeDrawingBrush) canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+          canvas.freeDrawingBrush.color = detail.color || '#1e293b';
+          canvas.freeDrawingBrush.width = Math.max(1, Number(detail.width) || 4);
+          const brush = canvas.freeDrawingBrush;
+          if (!(brush as any).__safeZoneGuardInstalled) {
+            const originalMouseDown = brush.onMouseDown.bind(brush);
+            const originalMouseMove = brush.onMouseMove.bind(brush);
+            const originalMouseUp = brush.onMouseUp.bind(brush);
+            const originalRender = brush._render.bind(brush);
+            const isInsideSafeBounds = (pointer: any) => {
+              const safeZone = safeZoneRef.current;
+              if (!safeZone) return true;
+              const bounds = safeZone.getBoundingRect(true, true);
+              return pointer.x >= bounds.left && pointer.x <= bounds.left + bounds.width &&
+                pointer.y >= bounds.top && pointer.y <= bounds.top + bounds.height;
+            };
+            brush.onMouseDown = (pointer: any, options: any) => {
+              if (!isInsideSafeBounds(pointer)) {
+                brush._points = [];
+                (brush as any).__pausedAtSafeZoneEdge = true;
+                canvas.clearContext(canvas.contextTop);
+                return;
+              }
+              (brush as any).__pausedAtSafeZoneEdge = false;
+              originalMouseDown(pointer, options);
+            };
+            brush.onMouseUp = (options: any) => {
+              // PencilBrush v5 assumes points[0] exists during finalization.
+              // A gesture rejected outside the print area intentionally has
+              // no points, so finish it without creating a path.
+              if (!Array.isArray(brush._points) || brush._points.length < 2) {
+                brush._points = [];
+                brush.oldEnd = undefined;
+                (brush as any).__pausedAtSafeZoneEdge = false;
+                canvas.clearContext(canvas.contextTop);
+                return false;
+              }
+              return originalMouseUp(options);
+            };
+            brush.onMouseMove = (pointer: any, options: any) => {
+              if (isInsideSafeBounds(pointer)) {
+                if ((brush as any).__pausedAtSafeZoneEdge) {
+                  brush._prepareForDrawing(pointer);
+                  brush._captureDrawingPath(pointer);
+                  brush._render();
+                  (brush as any).__pausedAtSafeZoneEdge = false;
+                  return;
+                }
+                originalMouseMove(pointer, options);
+                return;
+              }
+
+              // Finish the in-bounds piece at the edge and start a separate
+              // piece if the pointer later re-enters the printable area.
+              if (!(brush as any).__pausedAtSafeZoneEdge && brush._points.length > 1) {
+                brush._finalizeAndAddPath();
+                brush._points = [];
+                brush.oldEnd = undefined;
+                canvas.clearContext(canvas.contextTop);
+              }
+              (brush as any).__pausedAtSafeZoneEdge = true;
+            };
+            brush._render = (context: CanvasRenderingContext2D) => {
+              const safeZone = safeZoneRef.current;
+              const ctx = context || canvas.contextTop;
+              const baseTransform = ctx.getTransform?.();
+              if (!safeZone || !baseTransform) {
+                originalRender(ctx);
+                return;
+              }
+
+              ctx.save();
+              const viewport = canvas.viewportTransform || [1, 0, 0, 1, 0, 0];
+              ctx.transform(viewport[0], viewport[1], viewport[2], viewport[3], viewport[4], viewport[5]);
+              const bounds = safeZone.getBoundingRect(true, true);
+              ctx.beginPath();
+              ctx.rect(bounds.left, bounds.top, bounds.width, bounds.height);
+              ctx.clip();
+              // Restore the retina transform while keeping the clip in device
+              // space for the brush's live preview.
+              ctx.setTransform(baseTransform.a, baseTransform.b, baseTransform.c, baseTransform.d, baseTransform.e, baseTransform.f);
+              originalRender(ctx);
+              ctx.restore();
+            };
+            // Use a complete redraw per pointer update so the safe-area clip is
+            // applied to the live preview, not only to the path after mouseup.
+            brush.needsFullRender = () => true;
+            (brush as any).__safeZoneGuardInstalled = true;
+          }
+        } else if (mode === 'erase') {
+          // Eraser gestures must never enter Fabric's object transform path.
+          // We hit-test the freehand paths ourselves below.
+          canvas.skipTargetFind = true;
+          let changedDuringGesture = false;
+          let isErasePointerDown = false;
+          const eraseAtPointer = (event: any) => {
+            const nativeEvent = event?.e;
+            if (!isErasePointerDown || !nativeEvent) return;
+            const pointer = canvas.getPointer(nativeEvent);
+            const safeZone = safeZoneRef.current;
+            if (safeZone) {
+              const safeBounds = safeZone.getBoundingRect(true, true);
+              if (pointer.x < safeBounds.left || pointer.x > safeBounds.left + safeBounds.width ||
+                pointer.y < safeBounds.top || pointer.y > safeBounds.top + safeBounds.height) return;
+            }
+            const zoom = Math.max(canvas.getZoom?.() || 1, 0.1);
+            const radius = (detail.eraserSize === 'medium' ? 24 : 12) / zoom;
+            const target = [...canvas.getObjects()].reverse().find((object: any) => {
+              if (object.type !== 'path' || object.isCropOverlay || object.isMockup || object.isGuide || !Array.isArray(object.path)) return false;
+              const bounds = object.getBoundingRect(true, true);
+              return pointer.x >= bounds.left - radius && pointer.x <= bounds.left + bounds.width + radius &&
+                pointer.y >= bounds.top - radius && pointer.y <= bounds.top + bounds.height + radius;
+            });
+            if (!target) return;
+            // Replacements are new Fabric objects, so a stale pointer event can
+            // never recreate a path that has already been erased.
+            if (!canvas.getObjects().includes(target)) return;
+            const transform = target.calcTransformMatrix();
+            const path = (fabric.util as any).transformPath(target.path, transform, target.pathOffset);
+            const commands = path.filter((command: any[]) => command[0] !== 'M');
+            if (!commands.length || commands.some((command: any[]) => !['Q', 'L'].includes(command[0]))) return;
+
+            if (detail.eraserSize === 'stroke') {
+              isUpdatingHistory.current = true;
+              try {
+                canvas.remove(target);
+              } finally {
+                isUpdatingHistory.current = false;
+              }
+              canvas.requestRenderAll();
+              changedDuringGesture = true;
+              return;
+            }
+            const localSegments: any[][][] = [];
+            let current = { x: path[0][1], y: path[0][2] };
+            let currentRun: any[][] = [];
+            const flushRun = () => {
+              if (currentRun.length) localSegments.push(currentRun);
+              currentRun = [];
+            };
+            const distanceToSegment = (start: { x: number; y: number }, end: { x: number; y: number }) => {
+              const dx = end.x - start.x;
+              const dy = end.y - start.y;
+              const lengthSquared = dx * dx + dy * dy;
+              const projection = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, ((pointer.x - start.x) * dx + (pointer.y - start.y) * dy) / lengthSquared));
+              return Math.hypot(pointer.x - (start.x + projection * dx), pointer.y - (start.y + projection * dy));
+            };
+            const distanceToCommand = (command: any[], start: { x: number; y: number }, end: { x: number; y: number }) => {
+              if (command[0] !== 'Q') return distanceToSegment(start, end);
+              const control = { x: command[1], y: command[2] };
+              let previous = start;
+              let nearestDistance = Infinity;
+              // Sample the quadratic curve so the brush catches its actual arc,
+              // including short end caps, instead of testing only its chord.
+              for (let step = 1; step <= 12; step += 1) {
+                const t = step / 12;
+                const inverse = 1 - t;
+                const point = {
+                  x: inverse * inverse * start.x + 2 * inverse * t * control.x + t * t * end.x,
+                  y: inverse * inverse * start.y + 2 * inverse * t * control.y + t * t * end.y,
+                };
+                nearestDistance = Math.min(nearestDistance, distanceToSegment(previous, point));
+                previous = point;
+              }
+              return nearestDistance;
+            };
+
+            for (const command of commands) {
+              const endpoint = command[0] === 'Q'
+                ? { x: command[3], y: command[4] }
+                : { x: command[1], y: command[2] };
+              const nearEraser = distanceToCommand(command, current, endpoint) <= radius + (target.strokeWidth || 1) / (2 * zoom);
+              if (nearEraser) {
+                flushRun();
+              } else {
+                if (!currentRun.length) {
+                  const start = command[0] === 'Q' ? { x: command[1], y: command[2] } : current;
+                  currentRun.push(['M', start.x, start.y]);
+                }
+                currentRun.push(command.slice());
+              }
+              current = endpoint;
+            }
+            flushRun();
+            if (localSegments.length === 1 && localSegments[0].length === commands.length) return;
+            if (localSegments.reduce((count, run) => count + run.length - 1, 0) === commands.length) return;
+
+            const replacements = localSegments
+              .filter((run) => run.length > 1)
+              .map((run) => new (fabric.Path as any)(run, {
+                fill: null,
+                stroke: target.stroke,
+                strokeWidth: target.strokeWidth,
+                strokeLineCap: target.strokeLineCap,
+                strokeLineJoin: target.strokeLineJoin,
+                strokeMiterLimit: target.strokeMiterLimit,
+                strokeDashArray: target.strokeDashArray,
+                strokeUniform: target.strokeUniform,
+                opacity: target.opacity,
+                selectable: true,
+                evented: true,
+              }));
+            isUpdatingHistory.current = true;
+            try {
+              canvas.remove(target);
+              replacements.forEach((segment) => canvas.add(segment));
+            } finally {
+              isUpdatingHistory.current = false;
+            }
+            canvas.requestRenderAll();
+            changedDuringGesture = true;
+          };
+          drawingEraseHandler = (event: any) => {
+            isErasePointerDown = true;
+            changedDuringGesture = false;
+            eraseAtPointer(event);
+          };
+          drawingEraseMoveHandler = (event: any) => {
+            if (isErasePointerDown) eraseAtPointer(event);
+          };
+          drawingEraseUpHandler = () => {
+            if (changedDuringGesture) saveState();
+            changedDuringGesture = false;
+            isErasePointerDown = false;
+          };
+          canvas.on('mouse:down', drawingEraseHandler);
+          canvas.on('mouse:move', drawingEraseMoveHandler);
+          canvas.on('mouse:up', drawingEraseUpHandler);
+          window.addEventListener('mouseup', drawingEraseUpHandler);
+        } else {
+          canvas.skipTargetFind = false;
+        }
+        canvas.discardActiveObject();
+        canvas.requestRenderAll();
+      };
+
+      handleDrawingStyle = (e: Event) => {
+        const canvas = fabricCanvasRef.current;
+        const detail = (e as CustomEvent<{ color?: string; width?: number }>).detail || {};
+        const brush = canvas?.freeDrawingBrush;
+        if (!brush) return;
+        if (detail.color) brush.color = detail.color;
+        if (Number.isFinite(detail.width) && Number(detail.width) > 0) brush.width = Number(detail.width);
+      };
+
       // Listener para agregar texto vía CustomEvent
       handleAddText = (e: Event) => {
         if (!fabricCanvasRef.current) return;
@@ -3709,6 +3978,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       window.addEventListener('editor:change-font', handleFontChange);
       window.addEventListener('editor:change-fontSize', handleFontSizeChange);
       window.addEventListener('editor:text-format', handleTextFormat);
+      window.addEventListener('editor:drawing-tool', handleDrawingTool);
+      window.addEventListener('editor:drawing-style', handleDrawingStyle);
       window.addEventListener('editor:add-image', handleAddImage);
       window.addEventListener('editor:delete-active', handleDelete);
       window.addEventListener('editor:clear-canvas', handleClear);
@@ -3751,6 +4022,16 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       canvas.on('object:modified', scheduleDraftSave);
       canvas.on('object:removed', scheduleDraftSave);
       canvas.on('path:created', scheduleDraftSave);
+      // El trazo libre se recorta con el mismo contorno imprimible que textos
+      // e imágenes. El lápiz ya bloquea inicios fuera de la zona segura; este
+      // clip también contiene los movimientos que cruzan su borde.
+      const clipFreehandToPrintArea = (event: any) => {
+        if (!event?.path || !safeZoneRef.current) return;
+        applyPrintAreaClip(event.path);
+        event.path.setCoords?.();
+        canvas.requestRenderAll();
+      };
+      canvas.on('path:created', clipFreehandToPrintArea);
       // Panel de textos: refrescar la lista de la sidebar al añadir/eliminar
       // objetos o al escribir directamente sobre un texto en el lienzo.
       canvas.on('object:added', emitSmartInputs);
@@ -3800,6 +4081,18 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         window.removeEventListener('editor:change-fontSize', handleFontSizeChange);
       }
       if (handleTextFormat) window.removeEventListener('editor:text-format', handleTextFormat);
+      if (handleDrawingTool) window.removeEventListener('editor:drawing-tool', handleDrawingTool);
+      if (handleDrawingStyle) window.removeEventListener('editor:drawing-style', handleDrawingStyle);
+      if (drawingEraseHandler && fabricCanvasRef.current) {
+        fabricCanvasRef.current.off('mouse:down', drawingEraseHandler);
+      }
+      if (drawingEraseMoveHandler && fabricCanvasRef.current) {
+        fabricCanvasRef.current.off('mouse:move', drawingEraseMoveHandler);
+      }
+      if (drawingEraseUpHandler && fabricCanvasRef.current) {
+        fabricCanvasRef.current.off('mouse:up', drawingEraseUpHandler);
+      }
+      if (drawingEraseUpHandler) window.removeEventListener('mouseup', drawingEraseUpHandler);
       if (handleAddImage) {
         window.removeEventListener('editor:add-image', handleAddImage);
       }
