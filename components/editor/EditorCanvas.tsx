@@ -3274,15 +3274,37 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (!url || !canvas) return;
 
         try {
-          // Usar fetch + loadSVGFromString para evitar bloqueos de CORS o métodos obsoletos
-          const res = await fetch(url);
-          const svgText = await res.text();
+          // Los recursos Iconify usan el proxy same-origin de Next.js, que ya
+          // realiza el reintento entre los hosts upstream disponibles.
+          const iconifyHosts = url.startsWith('/api/iconify/')
+            ? [window.location.origin]
+            : ['api.iconify.design', 'api.simplesvg.com', 'api.unisvg.com'];
+          let svgText = '';
+          let lastError: unknown;
+          for (const host of iconifyHosts) {
+            try {
+              const candidateUrl = host === window.location.origin
+                ? new URL(url, window.location.origin).toString()
+                : url.replace(/^https:\/\/[^/]+/, `https://${host}`);
+              const response = await fetch(candidateUrl);
+              if (!response.ok) throw new Error(`Iconify respondió ${response.status}`);
+              const text = await response.text();
+              if (!text.includes('<svg')) throw new Error('El recurso no contiene un SVG válido.');
+              svgText = text;
+              break;
+            } catch (error) {
+              lastError = error;
+            }
+          }
+          if (!svgText) throw lastError instanceof Error ? lastError : new Error('No se pudo cargar el recurso gráfico.');
 
           const targetCanvas = fabricCanvasRef.current;
           if (!targetCanvas) return;
 
           fabric.loadSVGFromString(svgText, (objects: any, options: any) => {
+            try {
             if (!fabricCanvasRef.current) return;
+            if (!Array.isArray(objects) || objects.length === 0) throw new Error('El SVG no contiene elementos compatibles con Fabric.');
             const svgGroup = fabric.util.groupSVGElements(objects, options);
 
             // El SVG de Iconify ya trae su tamaño natural (p. ej. height=200).
@@ -3291,10 +3313,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             // conservan: aquí nunca se sobrescribe `fill`.
             const naturalSize = Math.max(Number(svgGroup.width) || 0, Number(svgGroup.height) || 0);
             const scale = requestedSize && naturalSize > 0 ? requestedSize / naturalSize : 1.5;
+            const safeCenter = safeZoneRef.current?.getCenterPoint?.();
 
             svgGroup.set({
-              left: targetCanvas.width / 2,
-              top: targetCanvas.height / 2,
+              left: safeCenter?.x ?? targetCanvas.width / 2,
+              top: safeCenter?.y ?? targetCanvas.height / 2,
               originX: 'center',
               originY: 'center',
               scaleX: scale,
@@ -3311,6 +3334,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             targetCanvas.bringToFront(svgGroup);
             targetCanvas.requestRenderAll();
             if (typeof saveState === 'function') saveState();
+            } catch (error) {
+              console.error('No se pudo insertar el SVG en el lienzo:', error);
+            }
           });
         } catch (err) {
           console.error('Error cargando el SVG:', err);

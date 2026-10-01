@@ -19,27 +19,62 @@ const forms = [
   { label: 'Corazón', icon: Heart, shape: 'heart' as const }
 ];
 
-// ── Galería de ilustraciones a color ────────────────────────────────────────
-// Se alimenta de la API pública de Iconify (gratuita y sin API key), pero
-// restringida a los sets que ya vienen ilustrados a color: si no, devolvería
-// iconos monocromos que no encajan con el mockup del producto.
+// ── Galería local de ilustraciones y vectores ────────────────────────────────
+// Búsqueda y SVG servidos desde colecciones empaquetadas en la aplicación,
+// sin depender de una conexión a APIs externas.
 // El parámetro `?height=` obliga al SVG a traer ancho/alto numéricos, de modo
 // que Fabric lo inserte justo en el tamaño pedido (ver 'editor:add-svg' en
 // EditorCanvas: escala = size / tamaño natural del SVG).
 const ILLUSTRATION_ICON_SETS = 'openmoji,twemoji,noto,fluent-emoji-flat';
+const GENERAL_ICON_SETS = 'mdi,fa6-,tabler-,ph-,lucide,logos,material-symbols,fluent';
+
+/** Same-origin server proxy avoids browser network/CORS failures with Iconify. */
+async function searchIconify(query: string, signal: AbortSignal, prefixes?: string): Promise<string[]> {
+  // El buscador de Iconify puede tratar frases como una coincidencia conjunta
+  // y devolver cero. Consultamos cada término y unimos los resultados.
+  const terms = Array.from(new Set(query.toLocaleLowerCase().split(/\s+/).map((term) => term.trim()).filter(Boolean)));
+  let receivedResponse = false;
+  const responses = await Promise.all(terms.map(async (term) => {
+    const params = new URLSearchParams({ query: term, limit: '48' });
+    if (prefixes) params.set('prefixes', prefixes);
+    try {
+      const response = await fetch(`/api/iconify/search?${params.toString()}`, { signal });
+      if (!response.ok) throw new Error(`Búsqueda fallida (${response.status})`);
+      receivedResponse = true;
+      const data = await response.json();
+      return Array.isArray(data?.icons) ? data.icons.filter((icon: unknown): icon is string => typeof icon === 'string') : [];
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return [];
+    }
+  }));
+  const icons = Array.from(new Set(responses.flat()));
+  if (!icons.length && !receivedResponse && !signal.aborted) throw new Error('No se pudo conectar con el catálogo de recursos.');
+  return icons;
+}
 
 /** Consultas curadas: todas devuelven resultados con los sets de arriba. */
 const ILLUSTRATION_CATEGORIES = [
+  { label: 'Redes', query: 'instagram tiktok facebook youtube' },
   { label: 'Fiesta', query: 'party' },
   { label: 'Cumpleaños', query: 'birthday cake' },
-  { label: 'Amor', query: 'heart' },
+  { label: 'Amor', query: 'love heart' },
   { label: 'Bodas', query: 'wedding' },
   { label: 'Regalos', query: 'gift' },
-  { label: 'Trabajo', query: 'business' },
-  { label: 'Mascotas', query: 'dog' },
-  { label: 'Comida', query: 'food' },
-  { label: 'Naturaleza', query: 'flower' },
-  { label: 'Viajes', query: 'car' },
+  { label: 'Trabajo', query: 'business office' },
+  { label: 'Mascotas', query: 'dog cat' },
+  { label: 'Comida', query: 'food dessert' },
+  { label: 'Naturaleza', query: 'flower plant' },
+  { label: 'Viajes', query: 'travel vacation' },
+  { label: 'Deportes', query: 'sports' },
+  { label: 'Música', query: 'music' },
+  { label: 'Tecnología', query: 'technology' },
+  { label: 'Moda', query: 'fashion' },
+  { label: 'Escuela', query: 'school education' },
+  { label: 'Bebés', query: 'baby' },
+  { label: 'Halloween', query: 'halloween' },
+  { label: 'Navidad', query: 'christmas' },
+  { label: 'Verano', query: 'summer beach' },
 ];
 
 /** Lado mayor (px) con el que se inserta una ilustración en el lienzo. */
@@ -47,7 +82,11 @@ const ILLUSTRATION_INSERT_SIZE = 160;
 
 /** URL del SVG de Iconify con un alto concreto (vista previa y lienzo). */
 const iconifyIllustrationUrl = (iconName: string, height: number) =>
-  `https://api.iconify.design/${iconName.replace(':', '/')}.svg?height=${height}`;
+  `/api/iconify/${iconName.replace(':', '/')}.svg?height=${height}`;
+const retryIconifyImage = (event: React.SyntheticEvent<HTMLImageElement>) => {
+  const image = event.currentTarget;
+  image.classList.add('invisible');
+};
 
 const dispatchReplaceText = (id: string, text: string) => {
   window.dispatchEvent(new CustomEvent('editor:replace-text', { detail: { id, text } }));
@@ -79,6 +118,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   const [illustrationError, setIllustrationError] = useState<string | null>(null);
   // Categoría curada activa (se ignora mientras haya una búsqueda manual).
   const [illustrationCategory, setIllustrationCategory] = useState(ILLUSTRATION_CATEGORIES[0].label);
+  const [illustrationRefresh, setIllustrationRefresh] = useState(0);
   // Texto escrito por el usuario: con más de 2 caracteres manda sobre la categoría.
   const illustrationSearch = illustrationQuery.trim();
   const [activeTab, setActiveTab] = useState<'recursos' | 'plantillas' | 'layers'>('recursos');
@@ -278,7 +318,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
     );
   };
 
-  // ✅ Búsqueda de recursos con debounce (300ms) en la API gratuita de Iconify
+  // Búsqueda local de recursos con debounce (300 ms).
   useEffect(() => {
     const trimmed = iconQuery.trim();
     if (trimmed.length <= 2) {
@@ -294,17 +334,10 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
     const controller = new AbortController();
     const timeout = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `https://api.iconify.design/search?query=${encodeURIComponent(trimmed)}&limit=24`,
-          { signal: controller.signal },
-        );
-        if (!res.ok) throw new Error('Error al buscar recursos');
-        const data = await res.json();
-        // Iconify devuelve { icons: ["mdi:home", "mdi:account"] }
-        setIconResults(data && Array.isArray(data.icons) ? data.icons : []);
+        setIconResults(await searchIconify(trimmed, controller.signal));
       } catch (err: any) {
         if (err?.name !== 'AbortError') {
-          setIconError('Error al buscar recursos');
+          setIconError('No se encontraron recursos. Comprueba tu conexión e inténtalo de nuevo.');
           setIconResults([]);
         }
       } finally {
@@ -318,9 +351,9 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
     };
   }, [iconQuery]);
 
-  // ✅ Galería de ilustraciones: misma API gratuita de Iconify, pero forzando
-  // los sets a color. Se recarga al pulsar una categoría curada o al escribir
-  // una búsqueda propia (>2 caracteres, con debounce de 350ms).
+  // Galería local de ilustraciones a color y vectores. Se recarga al pulsar
+  // una categoría curada o al escribir
+  // una búsqueda propia (>2 caracteres, con debounce de 300ms).
   useEffect(() => {
     const term =
       illustrationSearch.length > 2
@@ -340,29 +373,28 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
     const controller = new AbortController();
     const timeout = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `https://api.iconify.design/search?query=${encodeURIComponent(term)}&prefixes=${ILLUSTRATION_ICON_SETS}&limit=24`,
-          { signal: controller.signal },
-        );
-        if (!res.ok) throw new Error('Error al buscar ilustraciones');
-        const data = await res.json();
-        // Iconify devuelve { icons: ["openmoji:red-heart", ...] }
-        setIllustrationResults(data && Array.isArray(data.icons) ? data.icons : []);
+        // Combina ilustraciones a color con iconos y logos vectoriales: las
+        // bibliotecas emoji no incluyen marcas sociales ni todos los temas.
+        const colorIcons = await searchIconify(term, controller.signal, ILLUSTRATION_ICON_SETS);
+        let vectorIcons: string[] = [];
+        try { vectorIcons = await searchIconify(term, controller.signal, GENERAL_ICON_SETS); }
+        catch (error) { if (!colorIcons.length) throw error; }
+        setIllustrationResults(Array.from(new Set([...colorIcons, ...vectorIcons])).slice(0, 96));
       } catch (err: any) {
         if (err?.name !== 'AbortError') {
-          setIllustrationError('No se pudieron cargar las ilustraciones');
+          setIllustrationError('No se encontraron recursos. Comprueba tu conexión e inténtalo de nuevo.');
           setIllustrationResults([]);
         }
       } finally {
         if (!controller.signal.aborted) setIllustrationLoading(false);
       }
-    }, illustrationSearch.length > 2 ? 350 : 0);
+    }, illustrationSearch.length > 2 ? 300 : 0);
 
     return () => {
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [illustrationSearch, illustrationCategory]);
+  }, [illustrationSearch, illustrationCategory, illustrationRefresh]);
 
   // ✅ SOLO se agrega al estado cuando el usuario SUBE un archivo NUEVO
   // El evento 'editor:add-image' solo se usa para AGREGAR AL CANVAS, NO para actualizar la lista
@@ -802,7 +834,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
           />
         </div>
 
-        <div className="flex flex-wrap gap-1">
+        <div className="grid max-h-28 grid-cols-3 gap-1 overflow-y-auto pr-0.5">
           {ILLUSTRATION_CATEGORIES.map((category) => {
             const isActive = illustrationSearch.length <= 2 && illustrationCategory === category.label;
             return (
@@ -812,8 +844,9 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
                 onClick={() => {
                   setIllustrationQuery('');
                   setIllustrationCategory(category.label);
+                  setIllustrationRefresh((value) => value + 1);
                 }}
-                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
+                className={`truncate rounded-lg border px-1.5 py-1 text-[10px] font-semibold transition ${
                   isActive
                     ? 'border-slate-900 bg-slate-900 text-white'
                     : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
@@ -853,7 +886,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
                   }
                   className="flex h-16 items-center justify-center rounded-xl border border-slate-200 bg-white p-1.5 transition hover:border-slate-300 hover:bg-slate-50"
                 >
-                  <img src={previewUrl} alt={iconName} width={48} height={48} className="h-12 w-12" />
+                  <img src={previewUrl} alt={iconName} width={48} height={48} crossOrigin="anonymous" onError={retryIconifyImage} className="h-12 w-12" />
                 </button>
               );
             })}
@@ -861,7 +894,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
         )}
 
         <p className="text-[10px] italic text-slate-400">
-          OpenMoji / Twemoji / Noto / Fluent · se agregan con su color original.
+          OpenMoji (CC BY-SA) / Fluent Emoji · Material Design Icons / Logos. Recursos integrados.
         </p>
       </div>
 
@@ -910,7 +943,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
               {iconResults.map((iconName, index) => {
                 // iconName es una string tipo "mdi:home"; clave única explícita combinando índice/valor
                 const keyId = typeof iconName === 'string' ? iconName : `icon-${index}`;
-                const iconUrl = `https://api.iconify.design/${
+                const iconUrl = `/api/iconify/${
                   typeof iconName === 'string' ? iconName.replace(':', '/') : `icon-${index}`
                 }.svg`;
 
@@ -932,6 +965,8 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
                       width={32}
                       height={32}
                       className="h-8 w-8"
+                      crossOrigin="anonymous"
+                      onError={retryIconifyImage}
                     />
                   </button>
                 );
