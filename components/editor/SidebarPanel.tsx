@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import type { TextOptions } from '@/types/product';
-import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2, Pencil, Layers, X, ChevronDown } from 'lucide-react';
+import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2, Pencil, Layers, X, ChevronDown, ChevronUp, RectangleHorizontal, Diamond, Pentagon, Hexagon, Octagon, ArrowRight, Minus, MessageCircle, Cloud, Zap, Moon } from 'lucide-react';
 import { MOCK_TEMPLATES, type MockTemplate } from '@/src/data/mockTemplates';
 import { listSavedTemplates, deleteSavedTemplate, getCategoryIcon, listTemplateCategories, saveTemplateCategories, saveTemplateIcon, DEFAULT_TEMPLATE_CATEGORIES, type SavedTemplate } from '@/src/utils/templateStorage';
 import type { Product } from '@/src/store/useProductStore';
@@ -12,11 +12,23 @@ import TypographyPresetsPanel from '@/components/editor/TypographyPresetsPanel';
 import type { TypographyPresetCategory } from '@/components/editor/typographyPresets';
 
 const forms = [
-  { label: 'Cuadrado', icon: Square, shape: 'rect' as const },
-  { label: 'Círculo', icon: Circle, shape: 'circle' as const },
-  { label: 'Triángulo', icon: Triangle, shape: 'triangle' as const },
-  { label: 'Estrella', icon: Star, shape: 'star' as const },
-  { label: 'Corazón', icon: Heart, shape: 'heart' as const }
+  { label: 'Cuadrado', icon: Square, shape: 'rect' },
+  { label: 'Rectángulo redondeado', icon: RectangleHorizontal, shape: 'roundedRect' },
+  { label: 'Círculo', icon: Circle, shape: 'circle' },
+  { label: 'Óvalo', icon: Circle, shape: 'ellipse' },
+  { label: 'Triángulo', icon: Triangle, shape: 'triangle' },
+  { label: 'Estrella', icon: Star, shape: 'star' },
+  { label: 'Corazón', icon: Heart, shape: 'heart' },
+  { label: 'Rombo', icon: Diamond, shape: 'diamond' },
+  { label: 'Pentágono', icon: Pentagon, shape: 'pentagon' },
+  { label: 'Hexágono', icon: Hexagon, shape: 'hexagon' },
+  { label: 'Octágono', icon: Octagon, shape: 'octagon' },
+  { label: 'Flecha', icon: ArrowRight, shape: 'arrow' },
+  { label: 'Línea', icon: Minus, shape: 'line' },
+  { label: 'Globo', icon: MessageCircle, shape: 'speech' },
+  { label: 'Nube', icon: Cloud, shape: 'cloud' },
+  { label: 'Rayo', icon: Zap, shape: 'lightning' },
+  { label: 'Luna', icon: Moon, shape: 'moon' },
 ];
 
 // ── Galería local de ilustraciones y vectores ────────────────────────────────
@@ -122,6 +134,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   // Texto escrito por el usuario: con más de 2 caracteres manda sobre la categoría.
   const illustrationSearch = illustrationQuery.trim();
   const [activeTab, setActiveTab] = useState<'recursos' | 'plantillas' | 'layers'>('recursos');
+  const [showAllShapes, setShowAllShapes] = useState(false);
   const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
   const [templateName, setTemplateName] = useState('');
   const [templateCategory, setTemplateCategory] = useState('Cumpleaños');
@@ -1058,9 +1071,12 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
       </div>
 
       <div className="order-4 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
-        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Formas</p>
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Formas</p>
+          <span className="text-[10px] font-medium text-slate-400">{forms.length} elementos</span>
+        </div>
         <div className="grid grid-cols-2 gap-2">
-          {forms.map((item) => {
+          {(showAllShapes ? forms : forms.slice(0, 6)).map((item) => {
             const Icon = item.icon;
             return (
               <button
@@ -1072,16 +1088,19 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
                     detail: { type: item.shape } 
                   }));
                 }}
-                className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
+                className="flex min-h-12 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 text-left text-xs font-medium text-slate-700 transition hover:border-violet-300 hover:bg-white hover:shadow-sm"
               >
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white text-slate-700 shadow-sm">
-                  <Icon size={18} />
+                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-700 shadow-sm">
+                  <Icon size={16} />
                 </span>
                 {item.label}
               </button>
             );
           })}
         </div>
+        <button type="button" aria-expanded={showAllShapes} onClick={() => setShowAllShapes((shown) => !shown)} className="flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-white hover:text-slate-800">
+          {showAllShapes ? <>Mostrar menos <ChevronUp size={14} /></> : <>Ver todas las formas <ChevronDown size={14} /></>}
+        </button>
       </div>
         </div>
       )}

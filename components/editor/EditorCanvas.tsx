@@ -3212,10 +3212,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         import('fabric').then((fabricModule) => {
           const fabric = fabricModule.fabric || fabricModule;
           let shape: any = null;
+          const safeCenter = safeZoneRef.current?.getCenterPoint?.();
+          const centerX = safeCenter?.x ?? canvas.width / 2;
+          const centerY = safeCenter?.y ?? canvas.height / 2;
 
           const defaultProps = {
-            left: canvas.width / 2,
-            top: canvas.height / 2,
+            left: centerX,
+            top: centerY,
             originX: 'center' as const,
             originY: 'center' as const,
             fill: '#1E293B',
@@ -3227,10 +3230,31 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
           if (type === 'rect') {
             shape = new fabric.Rect({ ...defaultProps, width: 100, height: 100 });
+          } else if (type === 'roundedRect') {
+            shape = new fabric.Rect({ ...defaultProps, width: 130, height: 82, rx: 18, ry: 18 });
           } else if (type === 'circle') {
             shape = new fabric.Circle({ ...defaultProps, radius: 50 });
+          } else if (type === 'ellipse') {
+            shape = new fabric.Ellipse({ ...defaultProps, rx: 64, ry: 40 });
           } else if (type === 'triangle') {
             shape = new fabric.Triangle({ ...defaultProps, width: 100, height: 100 });
+          } else if (['diamond', 'pentagon', 'hexagon', 'octagon'].includes(type)) {
+            const sides = type === 'diamond' ? 4 : type === 'pentagon' ? 5 : type === 'hexagon' ? 6 : 8;
+            const points = Array.from({ length: sides }, (_, index) => {
+              const angle = (Math.PI * 2 * index) / sides - Math.PI / 2;
+              return { x: 60 + Math.cos(angle) * 58, y: 60 + Math.sin(angle) * 58 };
+            });
+            shape = new fabric.Polygon(points, defaultProps);
+          } else if (type === 'arrow') {
+            shape = new fabric.Polygon([
+              { x: 0, y: 28 }, { x: 74, y: 28 }, { x: 74, y: 4 },
+              { x: 124, y: 52 }, { x: 74, y: 100 }, { x: 74, y: 76 }, { x: 0, y: 76 },
+            ], defaultProps);
+          } else if (type === 'line') {
+            shape = new fabric.Line([centerX - 70, centerY, centerX + 70, centerY], {
+              ...defaultObjectProps, fill: 'transparent',
+              stroke: '#1E293B', strokeWidth: 8, strokeLineCap: 'round',
+            });
           } else if (type === 'star') {
             // Polígono de 5 puntas para la estrella
             const points = [
@@ -3242,6 +3266,17 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           } else if (type === 'heart') {
             const pathData = "M 272.7 51.2 C 226.4 13.7 153.2 27 118 77 C 82.7 27 9.5 13.7 -36.7 51.2 C -96.7 100 -80 180 118 320 C 316 180 332.7 100 272.7 51.2 Z";
             shape = new fabric.Path(pathData, { ...defaultProps, scaleX: 0.3, scaleY: 0.3 });
+          } else if (type === 'speech') {
+            shape = new fabric.Path('M 14 12 Q 14 0 28 0 L 112 0 Q 126 0 126 14 L 126 58 Q 126 72 112 72 L 54 72 L 28 94 L 34 72 Q 14 70 14 56 Z', defaultProps);
+          } else if (type === 'cloud') {
+            shape = new fabric.Path('M 29 88 C 9 88 0 74 0 58 C 0 42 13 30 31 30 C 37 10 54 0 75 0 C 101 0 117 17 120 39 C 138 42 150 54 150 69 C 150 83 138 92 122 92 L 29 92 Z', defaultProps);
+          } else if (type === 'lightning') {
+            shape = new fabric.Polygon([
+              { x: 70, y: 0 }, { x: 18, y: 70 }, { x: 54, y: 70 },
+              { x: 37, y: 130 }, { x: 105, y: 48 }, { x: 68, y: 48 },
+            ], defaultProps);
+          } else if (type === 'moon') {
+            shape = new fabric.Path('M 98 8 C 53 10 22 43 22 82 C 22 121 53 151 92 151 C 112 151 131 143 145 129 C 112 129 87 102 87 69 C 87 43 101 20 122 10 C 114 8 106 7 98 8 Z', defaultProps);
           }
 
           if (shape) {
