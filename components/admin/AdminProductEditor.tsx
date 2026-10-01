@@ -10,7 +10,7 @@ import MockupAreaPicker, { normalizePrintArea, type PrintArea } from '@/componen
 import type { SafeAreaPoint, SafeAreaShape } from '@/src/config/products';
 
 type ProductViewForm = { id: string; name: string; mockupUrl: string; x: string; y: string; width: string; height: string; shape: SafeAreaShape; radius: string; /** Nodos del contorno libre serializados ('' = forma paramétrica). */ polygon: string };
-type ProductForm = { name: string; price: string; category: string; printWidthCm: string; printHeightCm: string; options: ProductOption[]; views: ProductViewForm[] };
+type ProductForm = { name: string; price: string; category: string; printWidthCm: string; printHeightCm: string; model3dUrl: string; options: ProductOption[]; views: ProductViewForm[] };
 
 const REFERENCE_WIDTH = 800;
 const REFERENCE_HEIGHT = 800;
@@ -29,7 +29,7 @@ const parsePolygonForm = (raw: string): SafeAreaPoint[] | undefined => {
   }
 };
 const createViewForm = (index: number): ProductViewForm => ({ id: index === 0 ? 'front' : `view-${crypto.randomUUID()}`, name: index === 0 ? 'Frente' : 'Espalda', mockupUrl: '', x: '25', y: '25', width: '50', height: '50', shape: 'rect', radius: '25', polygon: '' });
-const emptyForm = (): ProductForm => ({ name: '', price: '', category: '', printWidthCm: '', printHeightCm: '', options: [], views: [createViewForm(0)] });
+const emptyForm = (): ProductForm => ({ name: '', price: '', category: '', printWidthCm: '', printHeightCm: '', model3dUrl: '', options: [], views: [createViewForm(0)] });
 
 const normalizeViewIds = (views: ProductViewForm[]): ProductViewForm[] => {
   const usedIds = new Set<string>();
@@ -48,6 +48,7 @@ const toForm = (product: Product): ProductForm => ({
   category: product.category,
   printWidthCm: product.printWidthCm ? String(product.printWidthCm) : '',
   printHeightCm: product.printHeightCm ? String(product.printHeightCm) : '',
+  model3dUrl: product.model3dUrl ?? '',
   options: product.options?.map((option) => ({ ...option, displayType: option.displayType ?? option.type, values: option.values.map((value) => ({ ...value })) })) ?? [],
   views: normalizeViewIds(product.views.map((view, index) => {
     const percent = view.printAreaUnit === 'percent';
@@ -109,7 +110,7 @@ export default function AdminProductEditor() {
     event.preventDefault();
     if (form.views.some((view) => !view.mockupUrl.trim())) { alert('Agrega un mockup para cada vista.'); return; }
     const options = form.options.map((option) => ({ ...option, name: option.name.trim() || 'Opción', displayType: option.displayType ?? option.type, values: option.values.map((value, valueIndex) => ({ ...value, label: value.label.trim() || 'Variante', thumbnailUrl: value.thumbnailUrl?.trim() || undefined, mockupUrl: undefined, printArea: null, views: form.views.map((baseView) => { const configured = value.views?.find((view) => view.viewId === baseView.id); const baseArea = normalizePrintArea({ x: Number(baseView.x), y: Number(baseView.y), width: Number(baseView.width), height: Number(baseView.height), shape: baseView.shape, radius: Number(baseView.radius), polygon: parsePolygonForm(baseView.polygon) }); return { viewId: baseView.id, name: baseView.name.trim() || 'Vista', mockupUrl: configured?.mockupUrl?.trim() || null, printArea: configured?.printArea ? normalizePrintArea(configured.printArea) : valueIndex === 0 ? baseArea : null }; }) })) }));
-    const product: Product = { id: selectedId ?? crypto.randomUUID(), name: form.name.trim(), price: Number(form.price), category: form.category.trim(), canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT, printWidthCm: printWidth || undefined, printHeightCm: printHeight || undefined, options, views: form.views.map((view) => { const name = view.name.trim() || 'Vista'; const polygon = parsePolygonForm(view.polygon); return { id: view.id, name, label: name, mockupUrl: view.mockupUrl.trim(), printArea: { x: cleanPercentage(Number(view.x) || 0), y: cleanPercentage(Number(view.y) || 0), width: cleanPercentage(Number(view.width) || 0), height: cleanPercentage(Number(view.height) || 0), ...(view.shape !== 'rect' ? { shape: view.shape } : {}), ...(view.shape === 'rounded' ? { radius: cleanRadius(Number(view.radius)) } : {}), ...(polygon ? { polygon } : {}) }, printAreaUnit: 'percent' as const }; }) };
+    const product: Product = { id: selectedId ?? crypto.randomUUID(), name: form.name.trim(), price: Number(form.price), category: form.category.trim(), canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT, printWidthCm: printWidth || undefined, printHeightCm: printHeight || undefined, model3dUrl: form.model3dUrl.trim() || undefined, options, views: form.views.map((view) => { const name = view.name.trim() || 'Vista'; const polygon = parsePolygonForm(view.polygon); return { id: view.id, name, label: name, mockupUrl: view.mockupUrl.trim(), printArea: { x: cleanPercentage(Number(view.x) || 0), y: cleanPercentage(Number(view.y) || 0), width: cleanPercentage(Number(view.width) || 0), height: cleanPercentage(Number(view.height) || 0), ...(view.shape !== 'rect' ? { shape: view.shape } : {}), ...(view.shape === 'rounded' ? { radius: cleanRadius(Number(view.radius)) } : {}), ...(polygon ? { polygon } : {}) }, printAreaUnit: 'percent' as const }; }) };
     selectedId ? updateProduct(product) : addProduct(product);
     resetForm();
   };
@@ -134,7 +135,7 @@ export default function AdminProductEditor() {
       <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-8 lg:grid-cols-12">
         <div className="space-y-6 lg:col-span-7">
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Datos básicos</h2><p className="mt-1 text-sm text-slate-500">Información que verán tus clientes al elegir el producto.</p></div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><Field className="sm:col-span-2" label="Nombre del producto" value={form.name} onChange={(value) => setField('name', value)} required /><Field label="Precio" type="number" min="0" step="0.01" value={form.price} onChange={(value) => setField('price', value)} required /><Field label="Categoría" value={form.category} onChange={(value) => setField('category', value)} required /><Field label="Ancho físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printWidthCm} onChange={(value) => setField('printWidthCm', value)} placeholder="20" /><Field label="Alto físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printHeightCm} onChange={(value) => setField('printHeightCm', value)} placeholder="9" /></div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><Field className="sm:col-span-2" label="Nombre del producto" value={form.name} onChange={(value) => setField('name', value)} required /><Field label="Precio" type="number" min="0" step="0.01" value={form.price} onChange={(value) => setField('price', value)} required /><Field label="Categoría" value={form.category} onChange={(value) => setField('category', value)} required /><Field label="Ancho físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printWidthCm} onChange={(value) => setField('printWidthCm', value)} placeholder="20" /><Field label="Alto físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printHeightCm} onChange={(value) => setField('printHeightCm', value)} placeholder="9" /><Field className="sm:col-span-2" label="Modelo 3D (Archivo .GLB / URL)" value={form.model3dUrl} onChange={(value) => setField('model3dUrl', value)} placeholder="/models/termo.glb" /></div>
             <div className="mt-4 flex gap-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2.5 text-xs text-sky-800"><Info className="mt-0.5 shrink-0" size={15} /><span>Salida estimada a 300 DPI: <strong>{printWidth && printHeight ? `${pixelsWidth.toLocaleString()} × ${pixelsHeight.toLocaleString()} px` : 'indica ancho y alto'}</strong>.</span></div>
           </section>
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Vistas del producto</h2><p className="mt-1 text-sm text-slate-500">Carga un mockup y define una zona segura para cada cara.</p></div>

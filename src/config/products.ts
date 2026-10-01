@@ -152,6 +152,8 @@ export interface Product {
   /** Tamaño físico del arte final; permite calcular la salida a 300 DPI. */
   printWidthCm?: number;
   printHeightCm?: number;
+  /** Ruta pública o URL al modelo 3D GLB/GLTF usado por el visor del editor. */
+  model3dUrl?: string;
   /** Variantes globales reutilizables por todas las vistas del producto. */
   colors?: ColorVariant[];
   /** Configuraciones vendibles que pueden modificar el precio final. */

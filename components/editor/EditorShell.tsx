@@ -14,6 +14,7 @@ import CartDrawer from '@/components/editor/CartDrawer';
 
 
 const EditorCanvas = dynamic(() => import('@/components/editor/EditorCanvas'), { ssr: false });
+const Product3DViewer = dynamic(() => import('@/components/editor/Product3DViewer'), { ssr: false });
 
 export default function EditorShell({ producto, initialProduct }: { producto: Producto; initialProduct?: Product }) {
   const products = useProductStore((state) => state.products);
@@ -63,7 +64,9 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
         </div>
 
         {/* Canvas Central (Lienzo) */}
-        <main className="flex-1 h-full bg-slate-100/50 relative flex items-center justify-center p-0 overflow-hidden">
+        <main className={`relative h-full min-w-0 flex-1 overflow-hidden bg-slate-100/50 p-2 ${activeStep === 'design' ? 'grid grid-cols-1 gap-2 lg:grid-cols-2' : 'flex items-center justify-center'}`}>
+          {activeStep === 'design' && <div key={currentProduct.id} className="hidden min-h-0 min-w-0 lg:block"><Product3DViewer key={currentProduct.id} product={currentProduct} /></div>}
+          <section className={`relative min-h-0 min-w-0 overflow-hidden ${activeStep === 'design' ? '' : 'h-full w-full'}`}>
           <EditorCanvas
             key={`${currentProduct.id}-${currentProduct.updatedAt ?? 0}`}
             product={currentProduct}
@@ -77,6 +80,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
               <ReviewStage product={currentProduct} />
             </div>
           )}
+          </section>
         </main>
 
         {/* Panel Derecho: producto / compra */}

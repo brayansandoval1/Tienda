@@ -1306,6 +1306,15 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             y: activeMockupBounds.top + (Number(point.y) / 100) * activeMockupBounds.height,
           })),
         };
+        (window as any).__editorPrintArea = {
+          left: renderedArea.x,
+          top: renderedArea.y,
+          width: renderedArea.width,
+          height: renderedArea.height,
+        };
+        window.dispatchEvent(new CustomEvent('editor:print-area-changed', {
+          detail: (window as any).__editorPrintArea,
+        }));
         // La guía se dibuja con la MISMA figura que el clipPath (rectángulo,
         // esquinas redondeadas u óvalo), para que lo que el cliente ve recortado
         // coincida exactamente con la línea punteada verde.
@@ -3845,6 +3854,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       if (fabricCanvasRef.current) {
         if ((window as any).__editorFabricCanvas === fabricCanvasRef.current) {
           delete (window as any).__editorFabricCanvas;
+          delete (window as any).__editorPrintArea;
         }
         fabricCanvasRef.current.dispose();
         fabricCanvasRef.current = null;

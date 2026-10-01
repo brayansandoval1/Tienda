@@ -11,18 +11,32 @@ import { getAddonsByProduct } from '@/services/addonsService.js';
 const optionGroupName = (option: { name: string }) => /(?:termo|taza|\d+\s*oz|estándar)/i.test(option.name) ? 'Modelo' : option.name || 'Opción';
 
 const getDefaultSelections = (): Record<string, ProductOptionValue> => ({});
+type CustomPart = 'ring' | 'interior' | 'handle';
+type PartColorSettings = Record<CustomPart, { enabled: boolean; color: string }>;
+const defaultPartColors: PartColorSettings = {
+  ring: { enabled: false, color: '#cbd5e1' },
+  interior: { enabled: false, color: '#e2e8f0' },
+  handle: { enabled: false, color: '#f8fafc' },
+};
 
 export default function ViewSelector({ product, panel, workflowStep = 'design' }: { product: Product; panel?: 'options' | 'preview'; workflowStep?: 'design' | 'options' | 'review' }) {
   const [selectedOptions, setSelectedOptions] = useState<Record<string, ProductOptionValue>>({});
   const [activeViewIndex, setActiveViewIndex] = useState(0);
   const [activePanel, setActivePanel] = useState<'options' | 'preview'>('options');
   const [selectedColorId, setSelectedColorId] = useState(product.colors?.[0]?.id ?? '');
+  const [partColors, setPartColors] = useState<PartColorSettings>(defaultPartColors);
   const [quantity, setQuantity] = useState(1);
   const [availableAddons, setAvailableAddons] = useState<Addon[]>([]);
   const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
   const [addonTexts, setAddonTexts] = useState<Record<string, string>>({});
   const isOptionsStage = workflowStep === 'options';
   const baseView = product.views[0];
+
+  useEffect(() => {
+    (Object.keys(partColors) as CustomPart[]).forEach((part) => {
+      window.dispatchEvent(new CustomEvent('editor:3d-part-color', { detail: { part, ...partColors[part] } }));
+    });
+  }, [partColors]);
 
   // Las opciones sólo muestran la configuración persistida por Admin. El
   // producto base se representa exclusivamente con el control Estándar.
@@ -39,6 +53,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design' }
     setAddonTexts({});
     getAddonsByProduct(product.id).then(setAvailableAddons).catch((error) => { console.error('No se pudieron cargar los extras del producto:', error); setAvailableAddons([]); });
     setSelectedColorId(product.colors?.[0]?.id ?? product.views[0]?.colorVariants?.[0]?.id ?? '');
+    setPartColors(defaultPartColors);
 
     const currentViewId = product.views[0]?.id ?? 'front';
     const resolvedMockup = getEffectiveMockup(
@@ -307,7 +322,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design' }
           </div>
 
           {colorVariants.length > 0 && <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Color de la funda</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Color del producto</p>
             <div className="flex flex-wrap gap-2">
               {colorVariants.map((variant) => {
                 const selected = selectedColorId === variant.id;
@@ -315,6 +330,16 @@ export default function ViewSelector({ product, panel, workflowStep = 'design' }
               })}
             </div>
           </div>}
+          {!/funda|iphone|phone|case/i.test(`${product.id} ${product.name}`) && <section className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+            <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Colores de componentes 3D</p><p className="mt-1 text-[10px] text-slate-400">Activa una pieza para personalizar su material.</p></div>
+            {([
+              ['ring', 'Color del anillo'], ['interior', 'Color interior'], ['handle', 'Color del asa'],
+            ] as Array<[CustomPart, string]>).map(([part, label]) => <div key={part} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2">
+              <input type="checkbox" checked={partColors[part].enabled} onChange={(event) => setPartColors((current) => ({ ...current, [part]: { ...current[part], enabled: event.target.checked } }))} aria-label={`Activar ${label.toLowerCase()}`} className="h-4 w-4 accent-violet-600" />
+              <span className="min-w-0 flex-1 text-xs font-medium text-slate-700">{label}</span>
+              <input type="color" value={partColors[part].color} disabled={!partColors[part].enabled} onChange={(event) => setPartColors((current) => ({ ...current, [part]: { ...current[part], color: event.target.value } }))} aria-label={label} className="h-7 w-9 cursor-pointer rounded border border-slate-200 disabled:cursor-not-allowed disabled:opacity-40" />
+            </div>)}
+          </section>}
           {showStyleSection && <section className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Modelo / Estilo</p>
             <div className="space-y-2">
