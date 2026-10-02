@@ -1,4 +1,5 @@
 import type { ProductView } from '@/src/store/useProductStore';
+import type { PriceCalculation } from '@/src/types/pricing';
 
 /** Archivos finales de una vista, listos para carrito, checkout o taller. */
 export interface ExportedDesignFiles {
@@ -43,9 +44,14 @@ export interface SavedDesignPayload {
   };
   quantity: number;
   currency: 'USD';
-  addons?: Array<{ id: string; name: string; price: number; userText?: string }>;
+  addons?: Array<{ id: string; name: string; price: number; perSide?: boolean; userText?: string }>;
   basePrice?: number;
+  sideExtra?: number;
+  printingRule?: 'single-sided' | 'double-sided' | 'full-wrap';
+  coveragePercentage?: number;
+  isDoubleSidedUsed?: boolean;
   totalPrice?: number;
+  pricingBreakdown?: PriceCalculation;
   views: SavedDesignView[];
 }
 

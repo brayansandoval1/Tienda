@@ -25,6 +25,23 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   const [componentColors, setComponentColors] = useState<Record<string, string>>({});
   const [enabledComponentMeshes, setEnabledComponentMeshes] = useState<string[]>([]);
   const [activeStep, setActiveStep] = useState<EditorStep>('design');
+  const minimumQuantity = Math.max(1, currentProduct.pricingSchema?.minimumQuantity ?? 1);
+  const [quantityValid, setQuantityValid] = useState(minimumQuantity <= 1);
+
+  useEffect(() => {
+    setQuantityValid(minimumQuantity <= 1);
+    const handleQuantityValidity = (event: Event) => {
+      const detail = (event as CustomEvent<{ productId?: string; valid?: boolean }>).detail;
+      if (detail?.productId === currentProduct.id) setQuantityValid(Boolean(detail.valid));
+    };
+    window.addEventListener('editor:quantity-validity', handleQuantityValidity);
+    return () => window.removeEventListener('editor:quantity-validity', handleQuantityValidity);
+  }, [currentProduct.id, minimumQuantity]);
+
+  const handleStepChange = (step: EditorStep) => {
+    if (step === 'review' && !quantityValid) return;
+    setActiveStep(step);
+  };
 
   useEffect(() => {
     setComponentColors(Object.fromEntries((currentProduct.customizableParts ?? []).map((part) => [part.meshName, part.defaultColor || '#cbd5e1'])));
@@ -56,7 +73,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
     <div className="flex h-screen w-screen min-h-0 flex-col overflow-hidden bg-slate-50 text-slate-900">
       <CartDrawer />
       <header className="z-40 h-14 shrink-0 px-5 lg:px-7">
-        <Header activeStep={activeStep} onStepChange={setActiveStep} />
+        <Header activeStep={activeStep} onStepChange={handleStepChange} canContinue={quantityValid} />
       </header>
 
       {/* Franja de herramientas contextual: barra blanca de ancho completo y fija,

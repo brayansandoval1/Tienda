@@ -2,6 +2,15 @@
 
 import { create } from 'zustand';
 import type { SavedDesignPayload } from '@/src/types/editorDesign';
+import type { PriceCalculation } from '@/src/types/pricing';
+import { calculateTotalPrice } from '@/services/addonsService.js';
+
+type CartPricingContext = {
+  product: Pick<import('@/src/config/products').Product, 'price' | 'basePrice' | 'pricingSchema' | 'pricingRules'>;
+  selectedVariant: { id?: string; variantId?: string; variantIds?: string[]; priceDelta?: number; priceModifier?: number } | null;
+  canvasState: { usedViewIds?: string[]; designedSideCount?: number; isDoubleSidedUsed?: boolean; hasDesign?: boolean; coveragePercentage?: number; backgroundCoversArea?: boolean };
+  addons: Array<{ price: number; perSide?: boolean }>;
+};
 
 export type CartDesignItem = {
   id: string;
@@ -9,7 +18,10 @@ export type CartDesignItem = {
   price: number;
   basePrice?: number;
   totalPrice?: number;
-  addons?: Array<{ id: string; name: string; price: number; userText?: string }>;
+  minimumQuantity?: number;
+  pricingContext?: CartPricingContext;
+  pricingBreakdown?: PriceCalculation;
+  addons?: Array<{ id: string; name: string; price: number; perSide?: boolean; userText?: string }>;
   selections: Record<string, unknown>;
   design: SavedDesignPayload;
   addedAt: number;
@@ -32,9 +44,25 @@ export const useCartStore = create<CartState>((set) => ({
   items: [],
   addDesignItem: (item) => set((state) => ({ items: [...state.items, item] })),
   updateQuantity: (itemId, quantity) => set((state) => ({
-    items: state.items.map((item) =>
-      item.id === itemId ? { ...item, design: { ...item.design, quantity: Math.max(1, quantity) } } : item,
-    ),
+    items: state.items.map((item) => {
+      if (item.id !== itemId) return item;
+      const nextQuantity = Math.max(item.minimumQuantity ?? 1, Math.floor(Number(quantity) || 1));
+      if (!item.pricingContext) return { ...item, totalPrice: item.price * nextQuantity, design: { ...item.design, quantity: nextQuantity, totalPrice: item.price * nextQuantity } };
+      const breakdown = calculateTotalPrice(
+        item.pricingContext.product,
+        item.pricingContext.selectedVariant,
+        item.pricingContext.canvasState,
+        item.pricingContext.addons,
+        nextQuantity,
+      );
+      return {
+        ...item,
+        price: breakdown.discountedUnitPrice,
+        totalPrice: breakdown.grandTotal,
+        pricingBreakdown: breakdown,
+        design: { ...item.design, quantity: nextQuantity, totalPrice: breakdown.grandTotal, pricingBreakdown: breakdown },
+      };
+    }),
   })),
   removeItem: (itemId) => set((state) => ({ items: state.items.filter((item) => item.id !== itemId) })),
   clear: () => set({ items: [] }),

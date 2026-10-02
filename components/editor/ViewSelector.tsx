@@ -8,6 +8,7 @@ import ComponentColorsPanel from '@/components/editor/ComponentColorsPanel';
 import { getEffectiveMockup } from '@/src/utils/getEffectiveMockup';
 import type { Addon } from '@/types/addon';
 import { getAddonsByProduct } from '@/services/addonsService.js';
+import { usePriceCalculator } from '@/components/editor/usePriceCalculator';
 
 const optionGroupName = (option: { name: string }) => /(?:termo|taza|\d+\s*oz|estándar)/i.test(option.name) ? 'Modelo' : option.name || 'Opción';
 
@@ -21,6 +22,9 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
   const [availableAddons, setAvailableAddons] = useState<Addon[]>([]);
   const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
   const [addonTexts, setAddonTexts] = useState<Record<string, string>>({});
+  const [usedViewIds, setUsedViewIds] = useState<string[]>([]);
+  const [coveragePercentage, setCoveragePercentage] = useState(0);
+  const [backgroundCoversArea, setBackgroundCoversArea] = useState(false);
   const isOptionsStage = workflowStep === 'options';
   const baseView = product.views[0];
 
@@ -34,10 +38,10 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
     const initialSelections = getDefaultSelections();
     setSelectedOptions(initialSelections);
     setActiveViewIndex(0);
-    setQuantity(1);
+    setQuantity(Math.max(1, product.pricingSchema?.minimumQuantity ?? 1));
     setSelectedAddonIds([]);
     setAddonTexts({});
-    getAddonsByProduct(product.id).then(setAvailableAddons).catch((error) => { console.error('No se pudieron cargar los extras del producto:', error); setAvailableAddons([]); });
+    getAddonsByProduct(product.id, product.availableAddonIds).then(setAvailableAddons).catch((error) => { console.error('No se pudieron cargar los extras del producto:', error); setAvailableAddons([]); });
     setSelectedColorId(product.colors?.[0]?.id ?? product.views[0]?.colorVariants?.[0]?.id ?? '');
 
     const currentViewId = product.views[0]?.id ?? 'front';
@@ -87,6 +91,17 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
     return () => {
       window.removeEventListener('editor:view-changed', handleViewChanged);
     };
+  }, []);
+
+  useEffect(() => {
+    const handleCanvasUsage = (event: Event) => {
+      const detail = (event as CustomEvent<{ usedViewIds?: string[]; isFullWrap?: boolean; coveragePercentage?: number; backgroundCoversArea?: boolean }>).detail;
+      setUsedViewIds(Array.isArray(detail?.usedViewIds) ? detail.usedViewIds : []);
+      setCoveragePercentage(Number(detail?.coveragePercentage) || 0);
+      setBackgroundCoversArea(Boolean(detail?.backgroundCoversArea));
+    };
+    window.addEventListener('editor:canvas-usage-change', handleCanvasUsage);
+    return () => window.removeEventListener('editor:canvas-usage-change', handleCanvasUsage);
   }, []);
 
   const handleOptionSelect = (optionId: string, value: ProductOptionValue) => {
@@ -168,13 +183,38 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
     }));
   };
 
-  const selectedValues = Object.values(selectedOptions);
-  const selectedAddons = useMemo(() => availableAddons.filter((addon) => selectedAddonIds.includes(addon.id)).map((addon) => ({ id: addon.id, name: addon.name, price: addon.price, ...(addon.requiresInput ? { userText: addonTexts[addon.id] ?? '' } : {}) })), [availableAddons, selectedAddonIds, addonTexts]);
-  const basePrice = product.price + selectedValues.reduce((total, value) => total + value.priceModifier, 0);
-  const finalPrice = basePrice + selectedAddons.reduce((sum, addon) => sum + addon.price, 0);
+  const selectedValues = useMemo(() => Object.values(selectedOptions), [selectedOptions]);
+  const selectedAddons = useMemo(() => availableAddons.filter((addon) => selectedAddonIds.includes(addon.id)).map((addon) => ({ id: addon.id, name: addon.name, price: addon.price, perSide: addon.perSide, ...(addon.requiresInput ? { userText: addonTexts[addon.id] ?? '' } : {}) })), [availableAddons, selectedAddonIds, addonTexts]);
+  const usedExtraViews = usedViewIds.filter((viewId) => viewId !== product.views[0]?.id);
+  const isDoubleSidedUsed = usedExtraViews.length > 0 && usedViewIds.length > 1;
+  const selectedVariant = useMemo(() => selectedValues.length > 0 ? {
+    id: selectedValues[selectedValues.length - 1].id,
+    variantIds: selectedValues.map((value) => value.id),
+    priceDelta: selectedValues.reduce((sum, value) => sum + (Number(value.priceModifier) || 0), 0),
+  } : null, [selectedValues]);
+  const pricingCanvasState = useMemo(() => ({ usedViewIds, designedSideCount: usedViewIds.length, coveragePercentage, backgroundCoversArea, isDoubleSidedUsed }), [usedViewIds, coveragePercentage, backgroundCoversArea, isDoubleSidedUsed]);
+  const calculation = usePriceCalculator({
+    product,
+    selectedVariant,
+    canvasState: pricingCanvasState,
+    addons: selectedAddons,
+    quantity,
+  });
+  const { printingRule, sidesCost: sideExtra, addonsCost, unitBasePrice, unitSubtotal, discountPercentage, discountPerUnit, discountedUnitPrice: finalPrice, setupFee, grandTotal } = calculation;
+  const basePrice = unitBasePrice;
+  const productBasePrice = product.basePrice ?? product.price;
+  const optionPrice = unitBasePrice - productBasePrice;
+  const minimumQuantity = Math.max(1, product.pricingSchema?.minimumQuantity ?? 1);
+  const meetsMinimumQuantity = quantity >= minimumQuantity;
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent('editor:addons-changed', { detail: { addons: selectedAddons, basePrice: product.price, totalPrice: finalPrice } }));
-  }, [selectedAddons, product.price, finalPrice]);
+    window.dispatchEvent(new CustomEvent('editor:quantity-validity', { detail: { productId: product.id, quantity, minimumQuantity, valid: meetsMinimumQuantity } }));
+  }, [product.id, quantity, minimumQuantity, meetsMinimumQuantity]);
+  const printingChargeLabel = printingRule === 'full-wrap'
+    ? 'Impresión Cobertura 360° (Full Wrap)'
+    : printingRule === 'double-sided' ? 'Impresión 2 Caras' : 'Impresión 1 Cara';
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('editor:addons-changed', { detail: { addons: selectedAddons, basePrice, sideExtra, isDoubleSidedUsed, printingRule, coveragePercentage, quantity, calculation, totalPrice: grandTotal } }));
+  }, [selectedAddons, basePrice, sideExtra, isDoubleSidedUsed, printingRule, coveragePercentage, quantity, calculation, grandTotal]);
   const priceLabel = (modifier: number) => modifier === 0 ? 'Incluido' : `${modifier > 0 ? '+' : '-'}$${Math.abs(modifier).toFixed(2)}`;
   const activeBaseView = product.views[activeViewIndex] ?? product.views[0];
   const activeViewId = activeBaseView?.id ?? 'front';
@@ -242,7 +282,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
             <ul className="mt-3 divide-y divide-violet-100">
               {selectedAddons.map((addon) => <li key={addon.id} className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
                 <div className="min-w-0"><p className="text-sm font-medium text-slate-800">{addon.name}</p>{addon.userText && <p className="mt-1 break-words text-xs text-slate-600">{addon.userText}</p>}</div>
-                <span className="shrink-0 text-sm font-semibold text-violet-800">+${addon.price.toFixed(2)}</span>
+                <span className="shrink-0 text-sm font-semibold text-violet-800">+${(addon.price * (addon.perSide ? calculation.designedSideCount : 1)).toFixed(2)}</span>
               </li>)}
             </ul>
           </section>}
@@ -261,17 +301,29 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
               <span className="text-sm font-medium text-slate-600">Precio por pieza</span>
               <span className="text-lg font-bold tracking-tight text-slate-900">${finalPrice.toFixed(2)}</span>
             </div>
+            <details className="group border-b border-slate-100 py-3 text-sm">
+              <summary className="cursor-pointer list-none font-medium text-slate-600 marker:hidden">Ver desglose <span className="float-right text-slate-400 transition group-open:rotate-180">⌄</span></summary>
+              <div className="mt-3 space-y-2 text-xs">
+                <div className="flex justify-between gap-3 text-slate-600"><span>Precio unitario base</span><span>${productBasePrice.toFixed(2)}</span></div>
+                {optionPrice !== 0 && <div className="flex justify-between gap-3 text-slate-600"><span>Opciones seleccionadas</span><span>{optionPrice > 0 ? '+' : '−'}${Math.abs(optionPrice).toFixed(2)}</span></div>}
+                {printingRule !== 'single-sided' && <div className="flex justify-between gap-3 text-slate-600"><span>{printingChargeLabel}</span><span>{sideExtra > 0 ? `+$${sideExtra.toFixed(2)}` : 'Incluida'}</span></div>}
+                {selectedAddons.map((addon) => { const addonCost = addon.price * (addon.perSide ? calculation.designedSideCount : 1); return <div key={addon.id} className="flex justify-between gap-3 text-slate-600"><span className="min-w-0">Acabado {addon.name}{addon.perSide ? ` · ${calculation.designedSideCount} caras` : ''}</span><span className="shrink-0">+${addonCost.toFixed(2)}</span></div>; })}
+                <div className="flex justify-between gap-3 border-t border-slate-100 pt-2 text-slate-600"><span>Subtotal unitario</span><span>${unitSubtotal.toFixed(2)}</span></div>
+                {discountPercentage > 0 && <div className="flex justify-between gap-3 text-emerald-700"><span>Descuento por volumen (−{discountPercentage}%)</span><span>−${(discountPerUnit * quantity).toFixed(2)}</span></div>}
+                {setupFee > 0 && <div className="flex justify-between gap-3 text-slate-600"><span>Cargo fijo de preparación</span><span>+${setupFee.toFixed(2)}</span></div>}
+                <div className="flex justify-between gap-3 border-t border-slate-100 pt-2 font-semibold text-slate-900"><span>Total del pedido ({quantity} pzs.)</span><span>${grandTotal.toFixed(2)}</span></div>
+              </div>
+            </details>
             <div className="flex items-center justify-between py-4">
               <label htmlFor="review-quantity" className="text-sm font-medium text-slate-700">Cantidad</label>
-              <select id="review-quantity" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => <option key={value} value={value}>{value}</option>)}
-              </select>
+              <input id="review-quantity" type="number" min={minimumQuantity} step="1" value={quantity} onChange={(event) => setQuantity(Math.max(0, Math.floor(Number(event.target.value) || 0)))} className="w-24 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200" />
             </div>
+            {!meetsMinimumQuantity && <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">Este producto requiere un pedido mínimo de {minimumQuantity} unidades.</p>}
             <div className="flex items-baseline justify-between border-t border-slate-100 pt-4">
-              <span className="font-semibold text-slate-900">Subtotal</span>
-              <span className="text-2xl font-bold tracking-tight text-slate-950">${(finalPrice * quantity).toFixed(2)}</span>
+              <span className="font-semibold text-slate-900">Total del pedido</span>
+              <span className="text-2xl font-bold tracking-tight text-slate-950">${grandTotal.toFixed(2)}</span>
             </div>
-            <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('editor:add-to-cart', { detail: { productId: product.id, basePrice, price: finalPrice, totalPrice: finalPrice, addons: selectedAddons, selections: selectedOptions, quantity } }))} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/15 transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2">
+            <button type="button" disabled={!meetsMinimumQuantity} onClick={() => window.dispatchEvent(new CustomEvent('editor:add-to-cart', { detail: { productId: product.id, basePrice, price: finalPrice, totalPrice: grandTotal, sideExtra, printingRule, coveragePercentage, isDoubleSidedUsed, addons: selectedAddons, selections: selectedOptions, quantity, minimumQuantity, calculation, pricingContext: { product: { price: product.price, basePrice: productBasePrice, pricingSchema: product.pricingSchema, pricingRules: product.pricingRules }, selectedVariant, canvasState: pricingCanvasState, addons: selectedAddons } } }))} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/15 transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50">
               <ShoppingBag size={17} /> Continuar al pago
             </button>
             <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-slate-500"><LockKeyhole size={13} /> Pago seguro y protegido</p>
@@ -344,11 +396,25 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
         </div>
           </section>}
 
-          {availableAddons.length > 0 && <section className="space-y-3 border-t border-slate-100 pt-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Acabados y extras</p><p className="mt-1 text-xs text-slate-500">Personaliza tu producto con opciones adicionales.</p></div><div className="space-y-2">{availableAddons.map((addon) => { const checked = selectedAddonIds.includes(addon.id); return <div key={addon.id} className={`rounded-xl border p-3 transition ${checked ? 'border-violet-400 bg-violet-50/60' : 'border-slate-200 bg-white hover:border-slate-300'}`}><label className="flex cursor-pointer items-start gap-3"><input type="checkbox" checked={checked} onChange={() => setSelectedAddonIds((current) => checked ? current.filter((id) => id !== addon.id) : [...current, addon.id])} className="mt-0.5 h-4 w-4 rounded accent-violet-600" /><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold text-slate-800">{addon.name}</span><span className="text-xs font-semibold text-violet-700">+${addon.price.toFixed(2)}</span></span>{addon.badge && <span className="mt-1 inline-flex rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">{addon.badge}</span>}{addon.description && <span className="mt-1 block text-xs leading-5 text-slate-500">{addon.description}</span>}</span></label>{checked && addon.requiresInput && <label className="mt-3 block pl-7 text-xs font-medium text-slate-700">{addon.inputConfig?.label || 'Texto personalizado'}<textarea value={addonTexts[addon.id] ?? ''} maxLength={addon.inputConfig?.maxLength ?? 300} onChange={(event) => setAddonTexts((current) => ({ ...current, [addon.id]: event.target.value }))} placeholder={addon.inputConfig?.placeholder || 'Escribe tu texto'} rows={2} className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" /><span className="mt-1 block text-right font-normal text-slate-400">{(addonTexts[addon.id] ?? '').length}/{addon.inputConfig?.maxLength ?? 300}</span></label>}</div>; })}</div></section>}
+          {availableAddons.length > 0 && <section className="space-y-3 border-t border-slate-100 pt-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Acabados y extras</p><p className="mt-1 text-xs text-slate-500">Personaliza tu producto con opciones adicionales.</p></div><div className="space-y-2">{availableAddons.map((addon) => { const checked = selectedAddonIds.includes(addon.id); return <div key={addon.id} className={`rounded-xl border p-3 transition ${checked ? 'border-violet-400 bg-violet-50/60' : 'border-slate-200 bg-white hover:border-slate-300'}`}><label className="flex cursor-pointer items-start gap-3"><input type="checkbox" checked={checked} onChange={() => setSelectedAddonIds((current) => checked ? current.filter((id) => id !== addon.id) : [...current, addon.id])} className="mt-0.5 h-4 w-4 rounded accent-violet-600" /><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold text-slate-800">{addon.name}</span><span className="text-xs font-semibold text-violet-700">+${addon.price.toFixed(2)}{addon.perSide ? ' / cara' : ''}</span></span>{addon.badge && <span className="mt-1 inline-flex rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">{addon.badge}</span>}{addon.description && <span className="mt-1 block text-xs leading-5 text-slate-500">{addon.description}</span>}</span></label>{checked && addon.requiresInput && <label className="mt-3 block pl-7 text-xs font-medium text-slate-700">{addon.inputConfig?.label || 'Texto personalizado'}<textarea value={addonTexts[addon.id] ?? ''} maxLength={addon.inputConfig?.maxLength ?? 300} onChange={(event) => setAddonTexts((current) => ({ ...current, [addon.id]: event.target.value }))} placeholder={addon.inputConfig?.placeholder || 'Escribe tu texto'} rows={2} className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" /><span className="mt-1 block text-right font-normal text-slate-400">{(addonTexts[addon.id] ?? '').length}/{addon.inputConfig?.maxLength ?? 300}</span></label>}</div>; })}</div></section>}
 
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-xs text-slate-500">Precio total</p>
-            <p className="text-2xl font-bold text-slate-900">${finalPrice.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-slate-900">${grandTotal.toFixed(2)}</p>
+            {workflowStep === 'options' && <div className="mt-3"><label htmlFor="options-quantity" className="block text-xs font-medium text-slate-600">Cantidad</label><input id="options-quantity" type="number" min={minimumQuantity} step="1" value={quantity} onChange={(event) => setQuantity(Math.max(0, Math.floor(Number(event.target.value) || 0)))} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800" />{!meetsMinimumQuantity && <p role="alert" className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">Este producto requiere un pedido mínimo de {minimumQuantity} unidades.</p>}</div>}
+            <details className="group mt-2 border-t border-slate-200 pt-2 text-xs">
+              <summary className="cursor-pointer list-none font-medium text-slate-600">Ver desglose <span className="float-right text-slate-400 transition group-open:rotate-180">⌄</span></summary>
+              <div className="mt-3 space-y-2">
+                <div className="flex justify-between gap-3 text-slate-600"><span>Precio unitario base</span><span>${productBasePrice.toFixed(2)}</span></div>
+                {optionPrice !== 0 && <div className="flex justify-between gap-3 text-slate-600"><span>Opciones seleccionadas</span><span>{optionPrice > 0 ? '+' : '−'}${Math.abs(optionPrice).toFixed(2)}</span></div>}
+                {printingRule !== 'single-sided' && <div className="flex justify-between gap-3 text-slate-600"><span>{printingChargeLabel}</span><span>{sideExtra > 0 ? `+$${sideExtra.toFixed(2)}` : 'Incluida'}</span></div>}
+                {selectedAddons.map((addon) => { const addonCost = addon.price * (addon.perSide ? calculation.designedSideCount : 1); return <div key={addon.id} className="flex justify-between gap-3 text-slate-600"><span>Acabado {addon.name}{addon.perSide ? ` · ${calculation.designedSideCount} caras` : ''}</span><span>+${addonCost.toFixed(2)}</span></div>; })}
+                <div className="flex justify-between gap-3 border-t border-slate-200 pt-2 text-slate-600"><span>Subtotal unitario</span><span>${unitSubtotal.toFixed(2)}</span></div>
+                {discountPercentage > 0 && <div className="flex justify-between gap-3 text-emerald-700"><span>Descuento por volumen (−{discountPercentage}%)</span><span>−${(discountPerUnit * quantity).toFixed(2)}</span></div>}
+                {setupFee > 0 && <div className="flex justify-between gap-3 text-slate-600"><span>Cargo fijo de preparación</span><span>+${setupFee.toFixed(2)}</span></div>}
+                <div className="flex justify-between gap-3 border-t border-slate-200 pt-2 font-semibold text-slate-900"><span>Total del pedido</span><span>${grandTotal.toFixed(2)}</span></div>
+              </div>
+            </details>
           </div>
         </div>
       ) : (
@@ -358,8 +424,8 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
             <img src={previewImageUrl} alt={product.name} crossOrigin="anonymous" className="h-full w-full object-cover" />
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center">
-            <p className="text-xs text-slate-500">Total</p>
-            <p className="text-2xl font-bold text-slate-900">${finalPrice.toFixed(2)}</p>
+            <p className="text-xs text-slate-500">Total estimado del pedido</p>
+            <p className="text-2xl font-bold text-slate-900">${grandTotal.toFixed(2)}</p>
           </div>
         </div>
       )}

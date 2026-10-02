@@ -158,6 +158,27 @@ export interface Product {
   name: string;
   category: string;
   price: number;
+  /** Precio base explícito para reglas y pedidos; price se conserva por compatibilidad. */
+  basePrice?: number;
+  pricingRules?: {
+    hasMultipleSides: boolean;
+    extraSidePrice: number;
+    fullWrapPrice: number;
+  };
+  /** Reglas avanzadas de precio y mayoreo; prevalece sobre los campos legacy. */
+  pricingSchema?: {
+    variantModifiers?: Array<{ variantId: string; priceDelta: number }>;
+    setupFee?: number;
+    minimumQuantity?: number;
+    volumeDiscounts?: Array<{ minQty: number; discountPercentage: number }>;
+    sidesPricing?: {
+      mode: 'per_side' | 'wrap';
+      pricePerAdditionalSide: number;
+      wrapPrice: number;
+    };
+  };
+  /** Extras habilitados para este producto desde Administración. */
+  availableAddonIds?: string[];
   canvasWidth: number;
   canvasHeight: number;
   /** Tamaño físico del arte final; permite calcular la salida a 300 DPI. */

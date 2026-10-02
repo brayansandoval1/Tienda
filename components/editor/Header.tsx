@@ -6,7 +6,7 @@ import type { SaveDesignResult } from '@/src/types/editorDesign';
 
 export type EditorStep = 'design' | 'options' | 'review';
 
-export default function Header({ activeStep, onStepChange }: { activeStep: EditorStep; onStepChange: (step: EditorStep) => void }) {
+export default function Header({ activeStep, onStepChange, canContinue = true }: { activeStep: EditorStep; onStepChange: (step: EditorStep) => void; canContinue?: boolean }) {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveMessage, setSaveMessage] = useState('');
 
@@ -59,7 +59,7 @@ export default function Header({ activeStep, onStepChange }: { activeStep: Edito
             ['options', 'Opciones'],
             ['review', 'Revisar'],
           ] as Array<[EditorStep, string]>).map(([step, label]) => (
-            <button key={step} type="button" onClick={() => onStepChange(step)} aria-current={activeStep === step ? 'step' : undefined} className={`rounded-xl px-4 py-2 text-sm transition ${activeStep === step ? 'bg-slate-900 font-semibold text-white shadow-sm' : 'bg-slate-100 font-medium text-slate-600 hover:bg-slate-200'}`}>
+            <button key={step} type="button" disabled={step === 'review' && !canContinue} onClick={() => onStepChange(step)} aria-current={activeStep === step ? 'step' : undefined} title={step === 'review' && !canContinue ? 'Completa la cantidad mínima para continuar' : undefined} className={`rounded-xl px-4 py-2 text-sm transition ${activeStep === step ? 'bg-slate-900 font-semibold text-white shadow-sm' : 'bg-slate-100 font-medium text-slate-600 hover:bg-slate-200'} disabled:cursor-not-allowed disabled:opacity-40`}>
               {label}
             </button>
           ))}
@@ -74,7 +74,7 @@ export default function Header({ activeStep, onStepChange }: { activeStep: Edito
             <Download size={16} />
             📥 Descargar para Imprenta (HD)
           </button>
-          <button type="button" onClick={() => onStepChange(nextStep)} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800">
+          <button type="button" disabled={nextStep === 'review' && !canContinue} onClick={() => onStepChange(nextStep)} title={nextStep === 'review' && !canContinue ? 'Completa la cantidad mínima para continuar' : undefined} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40">
             Siguiente: {stepLabel}
             <ChevronRight size={16} />
           </button>

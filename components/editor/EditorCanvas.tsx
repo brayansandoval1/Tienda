@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, X, Trash2, Loader2 } from 'lucide-react';
 import type { TextOptions } from '../../types/product';
 import type { ColorVariant, Product, ProductOptionValue, ProductView } from '@/src/store/useProductStore';
 import type { ExportedDesignFiles, SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
+import type { PriceCalculation } from '@/src/types/pricing';
 import Product3DModal from '@/components/editor/Product3DModal';
+import { useCanvasUsage } from '@/components/editor/useCanvasUsage';
 import { saveTemplateToStorage, updateTemplateInStorage, listSavedTemplates, getCategoryIcon } from '@/src/utils/templateStorage';
 import { clearDraft, getDraft, saveDraft, type DesignDraft } from '@/src/utils/designDraftStorage';
 import { useCartStore } from '@/src/store/useCartStore';
@@ -52,6 +54,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   // "zoom to fit" de forma proporcional al área disponible del editor.
   const canvasAreaRef = useRef<HTMLDivElement>(null);
   const fabricCanvasRef = useRef<any>(null);
+  const [usageCanvas, setUsageCanvas] = useState<any>(null);
   const safeZoneRef = useRef<any>(null);
   // Vector gemelo de la guía punteada que recibe el color de la barra
   // "Fondo" (`set('fill', ...)`). Existe aparte de la guía porque ésta se
@@ -61,7 +64,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   const redoStackRef = useRef<string[]>([]);
   const isRedoingUndoRef = useRef(false);
   const isUpdatingHistory = useRef(false);
-  const addonOrderRef = useRef<{ addons: Array<{ id: string; name: string; price: number; userText?: string }>; basePrice: number; totalPrice: number }>({ addons: [], basePrice: initialProduct.price, totalPrice: initialProduct.price });
+  const addonOrderRef = useRef<{ addons: Array<{ id: string; name: string; price: number; perSide?: boolean; userText?: string }>; basePrice: number; sideExtra: number; printingRule: 'single-sided' | 'double-sided' | 'full-wrap'; coveragePercentage: number; isDoubleSidedUsed: boolean; quantity: number; calculation: PriceCalculation | null; totalPrice: number }>({ addons: [], basePrice: initialProduct.basePrice ?? initialProduct.price, sideExtra: 0, printingRule: 'single-sided', coveragePercentage: 0, isDoubleSidedUsed: false, quantity: 1, calculation: null, totalPrice: initialProduct.basePrice ?? initialProduct.price });
   const [isCropping, setIsCropping] = useState(false);
   const [isImageSelected, setIsImageSelected] = useState(false);
   const [is3DModalOpen, setIs3DModalOpen] = useState(false);
@@ -106,6 +109,64 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   const currentViewIdRef = useRef<string>(initialProduct.views[0]?.id ?? 'front');
   const currentLoadRequestId = useRef(0);
   const canvasDataRef = useRef<Record<string, string | null>>({});
+  const getCanvasUsage = useCallback((canvas: any | null) => {
+    const usageByView = productViews.map((view) => {
+      const isActiveView = view.id === currentViewIdRef.current;
+      let objects: any[] = [];
+      if (isActiveView && canvas?.getObjects) {
+        objects = canvas.getObjects();
+      } else {
+        try {
+          const snapshot = canvasDataRef.current[view.id];
+          const parsed = snapshot ? JSON.parse(snapshot) : [];
+          objects = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          objects = [];
+        }
+      }
+
+      const printAreaBounds = isActiveView && safeZoneRef.current?.getBoundingRect
+        ? safeZoneRef.current.getBoundingRect(true, true)
+        : null;
+      const areaLeft = Number(printAreaBounds?.left ?? ((view.printAreaUnit === 'percent' ? view.printArea.x * 8 : view.printArea.x) || 0));
+      const areaWidth = Math.max(1, Number(printAreaBounds?.width ?? ((view.printAreaUnit === 'percent' ? view.printArea.width * 8 : view.printArea.width) || ADMIN_BASE_SIZE)));
+      const designObjects = objects.filter((object) => object && !object.isMockup && !object.isGuide && !object.isGuideLine && !object.isCropOverlay && !object.isDesignBackground);
+      const objectBounds = designObjects.map((object) => {
+        if (isActiveView && typeof object.getBoundingRect === 'function') {
+          const rect = object.getBoundingRect(true, true);
+          return { left: Number(rect.left) || 0, right: (Number(rect.left) || 0) + (Number(rect.width) || 0) };
+        }
+        const width = Math.abs((Number(object.width) || 0) * (Number(object.scaleX) || 1));
+        const height = Math.abs((Number(object.height) || 0) * (Number(object.scaleY) || 1));
+        const angle = ((Number(object.angle) || 0) * Math.PI) / 180;
+        const rotatedWidth = Math.abs(width * Math.cos(angle)) + Math.abs(height * Math.sin(angle));
+        const left = (Number(object.left) || 0) - (object.originX === 'center' ? rotatedWidth / 2 : object.originX === 'right' ? rotatedWidth : 0);
+        return { left, right: left + rotatedWidth };
+      });
+      const backgroundValue = designBackgroundColorsRef.current[view.id] ?? (isActiveView ? designBackgroundColor : 'transparent');
+      const backgroundCoversArea = decodeDesignBackground(backgroundValue).kind !== 'transparent';
+      const hasContent = designObjects.length > 0 || backgroundCoversArea;
+      if (!hasContent) return { id: view.id, hasContent, coverage: 0, backgroundCoversArea };
+      if (backgroundCoversArea) return { id: view.id, hasContent, coverage: 100, backgroundCoversArea };
+      if (!objectBounds.length) return { id: view.id, hasContent, coverage: 0, backgroundCoversArea };
+
+      const minLeft = Math.min(...objectBounds.map((bounds) => bounds.left));
+      const maxRight = Math.max(...objectBounds.map((bounds) => bounds.right));
+      const clippedLeft = Math.max(areaLeft, minLeft);
+      const clippedRight = Math.min(areaLeft + areaWidth, maxRight);
+      const totalWidthOccupied = Math.max(0, clippedRight - clippedLeft);
+      return { id: view.id, hasContent, coverage: Math.floor(Math.min(100, (totalWidthOccupied / areaWidth) * 100)), backgroundCoversArea };
+    });
+    return {
+      usedViewIds: usageByView.filter((view) => view.hasContent).map((view) => view.id),
+      coveragePercentage: Math.max(0, ...usageByView.map((view) => view.coverage)),
+      backgroundCoversArea: usageByView.some((view) => view.backgroundCoversArea),
+    };
+  }, [productViews, designBackgroundColor]);
+  const { usedViewIds, isDoubleSidedUsed, coveragePercentage, backgroundCoversArea, isFullWrap } = useCanvasUsage(usageCanvas, getCanvasUsage);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('editor:canvas-usage-change', { detail: { usedViewIds, isDoubleSidedUsed, coveragePercentage, backgroundCoversArea, isFullWrap } }));
+  }, [usedViewIds, isDoubleSidedUsed, coveragePercentage, backgroundCoversArea, isFullWrap]);
   const viewThumbnailsRef = useRef<Record<string, string>>({});
   const thumbnailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -265,6 +326,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       canvas.calcOffset();
 
       fabricCanvasRef.current = canvas;
+      setUsageCanvas(canvas);
       // Los paneles auxiliares (por ejemplo Capas) se conectan a esta misma
       // instancia para poder escuchar los eventos nativos de Fabric.
       (window as any).__editorFabricCanvas = canvas;
@@ -1784,6 +1846,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         updateHistoryButtons();
         canvas.requestRenderAll();
         captureViewThumbnail(viewId, true);
+        window.dispatchEvent(new CustomEvent('editor:canvas-usage-refresh'));
       };
 
       const switchView = async (viewId: string) => {
@@ -1956,6 +2019,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         updateHistoryButtons();
         isHydratingDraftRef.current = false;
         setDraftStatus('saved');
+        window.dispatchEvent(new CustomEvent('editor:canvas-usage-refresh'));
       };
 
       handleClearDraft = () => {
@@ -2406,11 +2470,16 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             canvasHeight: activeProduct.canvasHeight, printWidthCm: activeProduct.printWidthCm,
             printHeightCm: activeProduct.printHeightCm,
           },
-          quantity: 1,
+          quantity: addonOrderRef.current.quantity,
           currency: 'USD',
           addons: addonOrderRef.current.addons,
           basePrice: addonOrderRef.current.basePrice,
+          sideExtra: addonOrderRef.current.sideExtra,
+          printingRule: addonOrderRef.current.printingRule,
+          coveragePercentage: addonOrderRef.current.coveragePercentage,
+          isDoubleSidedUsed: addonOrderRef.current.isDoubleSidedUsed,
           totalPrice: addonOrderRef.current.totalPrice,
+          pricingBreakdown: addonOrderRef.current.calculation ?? undefined,
           views,
         };
         // Punto de integración para API, carrito o base de datos.
@@ -2427,9 +2496,21 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           price?: number;
           basePrice?: number;
           totalPrice?: number;
-          addons?: Array<{ id: string; name: string; price: number; userText?: string }>;
+          sideExtra?: number;
+          printingRule?: 'single-sided' | 'double-sided' | 'full-wrap';
+          coveragePercentage?: number;
+          isDoubleSidedUsed?: boolean;
+          addons?: Array<{ id: string; name: string; price: number; perSide?: boolean; userText?: string }>;
           selections?: Record<string, unknown>;
           quantity?: number;
+          minimumQuantity?: number;
+          calculation?: PriceCalculation;
+          pricingContext?: {
+            product: Pick<Product, 'price' | 'basePrice' | 'pricingSchema' | 'pricingRules'>;
+            selectedVariant: { id?: string; variantId?: string; priceDelta?: number; priceModifier?: number } | null;
+            canvasState: { usedViewIds?: string[]; designedSideCount?: number; isDoubleSidedUsed?: boolean; hasDesign?: boolean; coveragePercentage?: number; backgroundCoversArea?: boolean };
+            addons: Array<{ price: number; perSide?: boolean }>;
+          };
         }>).detail ?? {};
         const payload = await handleSaveDesign();
         if (!payload) {
@@ -2442,9 +2523,16 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           price: cartDetail.price ?? activeProduct.price,
           basePrice: cartDetail.basePrice ?? activeProduct.price,
           totalPrice: cartDetail.totalPrice ?? cartDetail.price ?? activeProduct.price,
+          sideExtra: cartDetail.sideExtra ?? addonOrderRef.current.sideExtra,
+          printingRule: cartDetail.printingRule ?? addonOrderRef.current.printingRule,
+          coveragePercentage: cartDetail.coveragePercentage ?? addonOrderRef.current.coveragePercentage,
+          isDoubleSidedUsed: cartDetail.isDoubleSidedUsed ?? addonOrderRef.current.isDoubleSidedUsed,
           addons: cartDetail.addons ?? addonOrderRef.current.addons,
+          minimumQuantity: cartDetail.minimumQuantity ?? 1,
+          pricingContext: cartDetail.pricingContext,
+          pricingBreakdown: cartDetail.calculation ?? addonOrderRef.current.calculation ?? undefined,
           selections: cartDetail.selections ?? {},
-          design: { ...payload, quantity: Math.max(1, Number(cartDetail.quantity) || 1) },
+          design: { ...payload, quantity: Math.max(cartDetail.minimumQuantity ?? 1, Number(cartDetail.quantity) || 1), totalPrice: cartDetail.totalPrice ?? payload.totalPrice, pricingBreakdown: cartDetail.calculation ?? payload.pricingBreakdown },
           addedAt: Date.now(),
         };
         useCartStore.getState().addDesignItem(cartItem);
@@ -2454,8 +2542,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       };
 
       handleAddonsChanged = (event: Event) => {
-        const detail = (event as CustomEvent<{ addons?: Array<{ id: string; name: string; price: number; userText?: string }>; basePrice?: number; totalPrice?: number }>).detail;
-        addonOrderRef.current = { addons: detail?.addons ?? [], basePrice: detail?.basePrice ?? activeProduct.price, totalPrice: detail?.totalPrice ?? activeProduct.price };
+        const detail = (event as CustomEvent<{ addons?: Array<{ id: string; name: string; price: number; perSide?: boolean; userText?: string }>; basePrice?: number; sideExtra?: number; printingRule?: 'single-sided' | 'double-sided' | 'full-wrap'; coveragePercentage?: number; isDoubleSidedUsed?: boolean; quantity?: number; calculation?: PriceCalculation; totalPrice?: number }>).detail;
+        addonOrderRef.current = { addons: detail?.addons ?? [], basePrice: detail?.basePrice ?? activeProduct.basePrice ?? activeProduct.price, sideExtra: detail?.sideExtra ?? 0, printingRule: detail?.printingRule ?? 'single-sided', coveragePercentage: detail?.coveragePercentage ?? 0, isDoubleSidedUsed: detail?.isDoubleSidedUsed ?? false, quantity: detail?.quantity ?? 1, calculation: detail?.calculation ?? null, totalPrice: detail?.totalPrice ?? activeProduct.basePrice ?? activeProduct.price };
       };
 
       // Alineación / centrado del objeto dentro de la Zona Segura (printArea) de la
@@ -4183,6 +4271,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         }
         fabricCanvasRef.current.dispose();
         fabricCanvasRef.current = null;
+        setUsageCanvas(null);
       }
       delete (window as any).__openEditor3DPreview;
       setupProductRef.current = null;
