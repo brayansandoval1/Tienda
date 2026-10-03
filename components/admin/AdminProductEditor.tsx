@@ -11,11 +11,13 @@ import { getAddons, updateAddon } from '@/services/addonsService.js';
 import { compressImageFileToDataUrl } from '@/src/utils/imageCompression';
 import AdminProductOptionsForm from '@/components/admin/AdminProductOptionsForm';
 import MockupAreaPicker, { normalizePrintArea, type PrintArea } from '@/components/admin/MockupAreaPicker';
+import GLBModelPreview from '@/components/admin/GLBModelPreview';
 import type { SafeAreaPoint, SafeAreaShape } from '@/src/config/products';
 
 type ProductViewForm = { id: string; name: string; mockupUrl: string; x: string; y: string; width: string; height: string; shape: SafeAreaShape; radius: string; /** Nodos del contorno libre serializados ('' = forma paramétrica). */ polygon: string };
 type ProductForm = { name: string; price: string; category: string; printWidthCm: string; printHeightCm: string; model3dUrl: string; hasMultipleSides: boolean; extraSidePrice: string; fullWrapPrice: string; sidesPricingMode: 'per_side' | 'wrap'; setupFee: string; minimumQuantity: string; volumeDiscounts: Array<{ minQty: string; discountPercentage: string }>; availableAddonIds: string[]; customizableParts: CustomizablePart[]; options: ProductOption[]; views: ProductViewForm[] };
-type MeshInspectionState = { status: 'idle' | 'loading' | 'success' | 'error'; message: string; names: string[] };
+type MeshInspection = { name: string; vertexCount: number; triangleCount: number; dimensions: string; materialNames: string[]; uvCount: number; uvRange: string | null; uvOutsideCount: number; overlappingUvTriangles: number };
+type MeshInspectionState = { status: 'idle' | 'loading' | 'success' | 'error'; message: string; meshes: MeshInspection[] };
 
 const REFERENCE_WIDTH = 800;
 const REFERENCE_HEIGHT = 800;
@@ -33,13 +35,58 @@ const parsePolygonForm = (raw: string): SafeAreaPoint[] | undefined => {
     return undefined;
   }
 };
-const getGLBMeshNames = (scene: THREE.Object3D) => {
-  const names = new Set<string>();
+const inspectGLBMeshes = (scene: THREE.Object3D): MeshInspection[] => {
+  const reports: MeshInspection[] = [];
   scene.traverse((node) => {
     const mesh = node as THREE.Mesh;
-    if (mesh.isMesh && mesh.name.trim()) names.add(mesh.name.trim());
+    if (!mesh.isMesh) return;
+    const geometry = mesh.geometry;
+    const position = geometry.getAttribute('position');
+    const uv = geometry.getAttribute('uv');
+    geometry.computeBoundingBox();
+    const size = geometry.boundingBox?.getSize(new THREE.Vector3());
+    let uvRange: string | null = null;
+    let uvOutsideCount = 0;
+    let overlappingUvTriangles = 0;
+    if (uv?.count) {
+      let minU = Infinity, minV = Infinity, maxU = -Infinity, maxV = -Infinity;
+      for (let index = 0; index < uv.count; index += 1) {
+        const u = uv.getX(index), v = uv.getY(index);
+        minU = Math.min(minU, u); minV = Math.min(minV, v);
+        maxU = Math.max(maxU, u); maxV = Math.max(maxV, v);
+        if (u < -0.001 || u > 1.001 || v < -0.001 || v > 1.001) uvOutsideCount += 1;
+      }
+      uvRange = `U ${minU.toFixed(3)}–${maxU.toFixed(3)} · V ${minV.toFixed(3)}–${maxV.toFixed(3)}`;
+      // Detecta triángulos UV idénticos (islas apiladas/mirrored exactas).
+      // Es una señal útil para diagnosticar repetición; no pretende reemplazar
+      // el análisis completo de solapamientos de Blender.
+      const indices = geometry.index;
+      const triangleCount = indices ? Math.floor(indices.count / 3) : Math.floor(uv.count / 3);
+      const triangleKeys = new Set<string>();
+      for (let triangle = 0; triangle < triangleCount; triangle += 1) {
+        const points = [0, 1, 2].map((corner) => {
+          const vertexIndex = indices ? indices.getX(triangle * 3 + corner) : triangle * 3 + corner;
+          return `${uv.getX(vertexIndex).toFixed(5)},${uv.getY(vertexIndex).toFixed(5)}`;
+        }).sort();
+        const key = points.join('|');
+        if (triangleKeys.has(key)) overlappingUvTriangles += 1;
+        else triangleKeys.add(key);
+      }
+    }
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    reports.push({
+      name: mesh.name.trim() || '(sin nombre)',
+      vertexCount: position?.count ?? 0,
+      triangleCount: geometry.index ? Math.floor(geometry.index.count / 3) : Math.floor((position?.count ?? 0) / 3),
+      dimensions: size ? `${size.x.toFixed(3)} × ${size.y.toFixed(3)} × ${size.z.toFixed(3)}` : '—',
+      materialNames: materials.map((material) => material.name || material.type),
+      uvCount: uv?.count ?? 0,
+      uvRange,
+      uvOutsideCount,
+      overlappingUvTriangles,
+    });
   });
-  return [...names];
+  return reports;
 };
 const disposeInspectedGLB = (scene: THREE.Object3D) => {
   const geometries = new Set<THREE.BufferGeometry>();
@@ -117,7 +164,8 @@ export default function AdminProductEditor() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modelFileInputRef = useRef<HTMLInputElement>(null);
   const meshInspectRequestRef = useRef(0);
-  const [meshInspection, setMeshInspection] = useState<MeshInspectionState>({ status: 'idle', message: '', names: [] });
+  const [meshInspection, setMeshInspection] = useState<MeshInspectionState>({ status: 'idle', message: '', meshes: [] });
+  const [localGLBFile, setLocalGLBFile] = useState<File | null>(null);
   const [addonCatalog, setAddonCatalog] = useState<Addon[]>([]);
   const [addonCatalogError, setAddonCatalogError] = useState('');
   const activeView = form.views[Math.min(activeTab, form.views.length - 1)];
@@ -126,6 +174,7 @@ export default function AdminProductEditor() {
   const printHeight = Number(form.printHeightCm) || 0;
   const pixelsWidth = Math.round((printWidth / 2.54) * 300);
   const pixelsHeight = Math.round((printHeight / 2.54) * 300);
+  const detectedMeshNames = meshInspection.meshes.map((mesh) => mesh.name);
   const baseViews = useMemo(() => form.views.map((view) => ({ id: view.id, name: view.name || 'Vista', mockupUrl: view.mockupUrl, printArea: normalizePrintArea({ x: Number(view.x), y: Number(view.y), width: Number(view.width), height: Number(view.height), shape: view.shape, radius: Number(view.radius), polygon: parsePolygonForm(view.polygon) }) })), [form.views]);
   const filteredProducts = useMemo(() => products.filter((product) => `${product.name} ${product.category}`.toLowerCase().includes(productQuery.trim().toLowerCase())), [products, productQuery]);
 
@@ -150,29 +199,29 @@ export default function AdminProductEditor() {
   useEffect(() => {
     const url = form.model3dUrl.trim();
     if (!url) {
-      setMeshInspection({ status: 'idle', message: 'Sube un archivo .GLB válido para detectar las mallas disponibles.', names: [] });
+      setMeshInspection({ status: 'idle', message: 'Sube un archivo .GLB válido para inspeccionar el modelo.', meshes: [] });
       return;
     }
     const requestId = ++meshInspectRequestRef.current;
     if (!/\.glb(?:$|[?#])/i.test(url) && !/^data:model\/gltf-binary/i.test(url)) {
-      setMeshInspection({ status: 'error', message: 'Sube un archivo .GLB válido para detectar las mallas disponibles.', names: [] });
+      setMeshInspection({ status: 'error', message: 'Sube un archivo .GLB válido para inspeccionar el modelo.', meshes: [] });
       return;
     }
-    setMeshInspection({ status: 'loading', message: 'Analizando las mallas del modelo…', names: [] });
+    setMeshInspection({ status: 'loading', message: 'Analizando geometría, materiales y coordenadas UV…', meshes: [] });
     const timeout = window.setTimeout(async () => {
       let inspectedScene: THREE.Object3D | null = null;
       try {
         const gltf = await new GLTFLoader().loadAsync(url);
         inspectedScene = gltf.scene;
         if (requestId !== meshInspectRequestRef.current) return;
-        const names = getGLBMeshNames(gltf.scene);
-        setMeshInspection(names.length
-          ? { status: 'success', message: `Se detectaron ${names.length} ${names.length === 1 ? 'malla' : 'mallas'}.`, names }
-          : { status: 'error', message: 'El GLB cargó, pero no contiene mallas con nombre. Sube un archivo .GLB válido para detectar las mallas disponibles.', names: [] });
+        const meshes = inspectGLBMeshes(gltf.scene);
+        setMeshInspection(meshes.length
+          ? { status: 'success', message: `Se inspeccionaron ${meshes.length} ${meshes.length === 1 ? 'malla' : 'mallas'} del modelo.`, meshes }
+          : { status: 'error', message: 'El GLB cargó, pero no contiene mallas. Sube un archivo .GLB válido para inspeccionarlo.', meshes: [] });
       } catch (error) {
         if (requestId === meshInspectRequestRef.current) {
           console.warn('[ADMIN] No se pudo inspeccionar el GLB indicado:', error);
-          setMeshInspection({ status: 'error', message: 'No se pudo leer ese modelo. Verifica la URL y sube un archivo .GLB válido para detectar las mallas disponibles.', names: [] });
+          setMeshInspection({ status: 'error', message: 'No se pudo leer ese modelo. Verifica la URL y vuelve a cargar un archivo .GLB válido.', meshes: [] });
         }
       } finally {
         if (inspectedScene) disposeInspectedGLB(inspectedScene);
@@ -186,12 +235,13 @@ export default function AdminProductEditor() {
 
   const inspectLocalGLB = async (file?: File) => {
     if (!file) return;
+    setLocalGLBFile(file);
     const requestId = ++meshInspectRequestRef.current;
     if (!file.name.toLowerCase().endsWith('.glb')) {
-      setMeshInspection({ status: 'error', message: 'Selecciona un archivo con extensión .GLB.', names: [] });
+      setMeshInspection({ status: 'error', message: 'Selecciona un archivo con extensión .GLB.', meshes: [] });
       return;
     }
-    setMeshInspection({ status: 'loading', message: `Analizando ${file.name}…`, names: [] });
+    setMeshInspection({ status: 'loading', message: `Analizando ${file.name}…`, meshes: [] });
     let inspectedScene: THREE.Object3D | null = null;
     try {
       const buffer = await file.arrayBuffer();
@@ -200,18 +250,21 @@ export default function AdminProductEditor() {
       });
       inspectedScene = gltf.scene;
       if (requestId !== meshInspectRequestRef.current) return;
-      const names = getGLBMeshNames(gltf.scene);
-      setMeshInspection(names.length
-        ? { status: 'success', message: `${file.name}: ${names.length} ${names.length === 1 ? 'malla detectada' : 'mallas detectadas'}. El archivo solo se inspecciona localmente; configura abajo una URL persistente para usarlo en la tienda.`, names }
-        : { status: 'error', message: 'El GLB no contiene mallas con nombre. Sube un archivo .GLB válido para detectar las mallas disponibles.', names: [] });
+      const meshes = inspectGLBMeshes(gltf.scene);
+      setMeshInspection(meshes.length
+        ? { status: 'success', message: `${file.name}: ${meshes.length} ${meshes.length === 1 ? 'malla inspeccionada' : 'mallas inspeccionadas'}. El archivo se analiza localmente; configura una URL persistente para usarlo en la tienda.`, meshes }
+        : { status: 'error', message: 'El GLB no contiene mallas. Selecciona un archivo válido para inspeccionarlo.', meshes: [] });
     } catch (error) {
       console.warn('[ADMIN] No se pudo inspeccionar el archivo GLB local:', error);
-      if (requestId === meshInspectRequestRef.current) setMeshInspection({ status: 'error', message: 'No se pudo leer el archivo. Sube un archivo .GLB válido para detectar las mallas disponibles.', names: [] });
+      if (requestId === meshInspectRequestRef.current) setMeshInspection({ status: 'error', message: 'No se pudo leer el archivo. Selecciona un archivo .GLB válido para inspeccionarlo.', meshes: [] });
     } finally {
       if (inspectedScene) disposeInspectedGLB(inspectedScene);
     }
   };
-  const setField = (field: Exclude<keyof ProductForm, 'views' | 'options' | 'customizableParts' | 'availableAddonIds' | 'hasMultipleSides' | 'volumeDiscounts' | 'sidesPricingMode'>, value: string) => setForm((current) => ({ ...current, [field]: value }));
+  const setField = (field: Exclude<keyof ProductForm, 'views' | 'options' | 'customizableParts' | 'availableAddonIds' | 'hasMultipleSides' | 'volumeDiscounts' | 'sidesPricingMode'>, value: string) => {
+    if (field === 'model3dUrl') setLocalGLBFile(null);
+    setForm((current) => ({ ...current, [field]: value }));
+  };
   const updateVolumeDiscount = (index: number, key: 'minQty' | 'discountPercentage', value: string) => setForm((current) => ({ ...current, volumeDiscounts: current.volumeDiscounts.map((tier, tierIndex) => tierIndex === index ? { ...tier, [key]: value } : tier) }));
   const addVolumeDiscount = () => setForm((current) => ({ ...current, volumeDiscounts: [...current.volumeDiscounts, { minQty: '', discountPercentage: '' }] }));
   const removeVolumeDiscount = (index: number) => setForm((current) => ({ ...current, volumeDiscounts: current.volumeDiscounts.filter((_, tierIndex) => tierIndex !== index) }));
@@ -223,8 +276,8 @@ export default function AdminProductEditor() {
   const setViewPrintArea = (index: number, area: PrintArea) => setForm((current) => ({ ...current, views: current.views.map((view, viewIndex) => viewIndex === index ? { ...view, x: String(area.x), y: String(area.y), width: String(area.width), height: String(area.height), shape: area.shape ?? 'rect', radius: String(area.radius ?? 25), polygon: area.polygon && area.polygon.length >= 3 ? JSON.stringify(area.polygon) : '' } : view) }));
   const handleAddView = () => setForm((current) => { const next = [...current.views, createViewForm(current.views.length)]; setActiveTab(next.length - 1); return { ...current, views: next }; });
   const removeView = (index: number) => setForm((current) => ({ ...current, views: current.views.filter((_, viewIndex) => viewIndex !== index) }));
-  const resetForm = () => { setSelectedId(null); setForm(emptyForm()); setActiveTab(0); };
-  const handleSelect = (product: Product) => { setSelectedId(product.id); setForm(toForm(product)); setActiveTab(0); };
+  const resetForm = () => { setSelectedId(null); setForm(emptyForm()); setLocalGLBFile(null); setMeshInspection({ status: 'idle', message: '', meshes: [] }); setActiveTab(0); };
+  const handleSelect = (product: Product) => { setSelectedId(product.id); setForm(toForm(product)); setLocalGLBFile(null); setMeshInspection({ status: 'idle', message: '', meshes: [] }); setActiveTab(0); };
   const handleDeleteProduct = (productId: string) => {
     removeProduct(productId);
     if (selectedId === productId) resetForm();
@@ -252,7 +305,7 @@ export default function AdminProductEditor() {
     if (form.customizableParts.some((part) => !part.label.trim() || !part.meshName.trim())) { alert('Completa la etiqueta y el nombre exacto de malla en cada pieza 3D, o elimina las piezas incompletas.'); return; }
     const meshNames = form.customizableParts.map((part) => part.meshName.trim().toLocaleLowerCase());
     if (new Set(meshNames).size !== meshNames.length) { alert('Cada pieza personalizable debe apuntar a un nombre de malla distinto.'); return; }
-    const options = form.options.map((option) => ({ ...option, name: option.name.trim() || 'Opción', displayType: option.displayType ?? option.type, values: option.values.map((value, valueIndex) => ({ ...value, label: value.label.trim() || 'Variante', thumbnailUrl: value.thumbnailUrl?.trim() || undefined, mockupUrl: undefined, printArea: null, views: form.views.map((baseView) => { const configured = value.views?.find((view) => view.viewId === baseView.id); const baseArea = normalizePrintArea({ x: Number(baseView.x), y: Number(baseView.y), width: Number(baseView.width), height: Number(baseView.height), shape: baseView.shape, radius: Number(baseView.radius), polygon: parsePolygonForm(baseView.polygon) }); return { viewId: baseView.id, name: baseView.name.trim() || 'Vista', mockupUrl: configured?.mockupUrl?.trim() || null, printArea: configured?.printArea ? normalizePrintArea(configured.printArea) : valueIndex === 0 ? baseArea : null }; }) })) }));
+    const options = form.options.map((option) => ({ ...option, name: option.name.trim() || 'Opción', displayType: option.displayType ?? option.type, values: option.values.map((value) => ({ ...value, label: value.label.trim() || 'Variante', thumbnailUrl: value.thumbnailUrl?.trim() || undefined, mockupUrl: undefined, printArea: null, views: form.views.map((baseView) => { const configured = value.views?.find((view) => view.viewId === baseView.id); const baseArea = normalizePrintArea({ x: Number(baseView.x), y: Number(baseView.y), width: Number(baseView.width), height: Number(baseView.height), shape: baseView.shape, radius: Number(baseView.radius), polygon: parsePolygonForm(baseView.polygon) }); return { viewId: baseView.id, name: baseView.name.trim() || 'Vista', mockupUrl: configured?.mockupUrl?.trim() || null, printArea: configured?.printArea ? normalizePrintArea(configured.printArea) : baseArea }; }) })) }));
     const customizableParts = form.customizableParts.map((part) => ({ ...part, label: part.label.trim(), meshName: part.meshName.trim(), defaultColor: part.defaultColor || '#cbd5e1' }));
     const basePrice = Number(form.price);
     const productId = selectedId ?? crypto.randomUUID();
@@ -296,7 +349,29 @@ export default function AdminProductEditor() {
         <div className="space-y-6 lg:col-span-7">
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Datos básicos</h2><p className="mt-1 text-sm text-slate-500">Información que verán tus clientes al elegir el producto.</p></div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><Field className="sm:col-span-2" label="Nombre del producto" value={form.name} onChange={(value) => setField('name', value)} required /><Field label="Precio" type="number" min="0" step="0.01" value={form.price} onChange={(value) => setField('price', value)} required /><Field label="Categoría" value={form.category} onChange={(value) => setField('category', value)} required /><Field label="Ancho físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printWidthCm} onChange={(value) => setField('printWidthCm', value)} placeholder="20" /><Field label="Alto físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printHeightCm} onChange={(value) => setField('printHeightCm', value)} placeholder="9" /><Field className="sm:col-span-2" label="Modelo 3D (ruta pública o URL .GLB)" value={form.model3dUrl} onChange={(value) => setField('model3dUrl', value)} placeholder="/models/termo.glb" />
-              <div className="sm:col-span-2"><input ref={modelFileInputRef} type="file" accept=".glb,model/gltf-binary" className="sr-only" onChange={(event) => { void inspectLocalGLB(event.target.files?.[0]); event.currentTarget.value = ''; }} /><button type="button" onClick={() => modelFileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-violet-300 hover:bg-violet-50"><Upload size={16} /> Seleccionar GLB para detectar mallas</button><p className="mt-1.5 text-xs text-slate-500">El archivo local se analiza en este navegador; para que el modelo se cargue en la tienda, coloca una URL o ruta pública en el campo superior.</p><p role="status" className={`mt-2 text-xs ${meshInspection.status === 'error' ? 'text-red-600' : meshInspection.status === 'success' ? 'text-emerald-700' : meshInspection.status === 'loading' ? 'text-violet-700' : 'text-slate-500'}`}>{meshInspection.message || 'Sube un archivo .GLB válido para detectar las mallas disponibles.'}</p>{meshInspection.names.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{meshInspection.names.map((name) => <span key={name} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-1 font-mono text-[10px] text-violet-800">{name}</span>)}</div>}</div>
+              <div className="sm:col-span-2">
+                <input ref={modelFileInputRef} type="file" accept=".glb,model/gltf-binary" className="sr-only" onChange={(event) => { void inspectLocalGLB(event.target.files?.[0]); event.currentTarget.value = ''; }} />
+                <button type="button" onClick={() => modelFileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-violet-300 hover:bg-violet-50"><Upload size={16} /> Seleccionar GLB para inspeccionar</button>
+                <p className="mt-1.5 text-xs text-slate-500">El archivo se analiza localmente. Para usarlo en la tienda, también configura una URL o ruta pública arriba.</p>
+                <p role="status" className={`mt-2 text-xs ${meshInspection.status === 'error' ? 'text-red-600' : meshInspection.status === 'success' ? 'text-emerald-700' : meshInspection.status === 'loading' ? 'text-violet-700' : 'text-slate-500'}`}>{meshInspection.message || 'Sube un archivo .GLB válido para inspeccionar sus mallas y UV.'}</p>
+                {detectedMeshNames.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{detectedMeshNames.map((name) => <span key={name} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-1 font-mono text-[10px] text-violet-800">{name}</span>)}</div>}
+              </div>
+              <div className="sm:col-span-2"><GLBModelPreview url={form.model3dUrl} file={localGLBFile} /></div>
+              {meshInspection.meshes.length > 0 && <div className="sm:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-3"><h3 className="text-sm font-semibold text-slate-800">Diagnóstico de mallas y UV</h3><p className="mt-1 text-xs text-slate-500">Las UV convierten la superficie 3D en coordenadas de textura. Islas apiladas pueden repetir el diseño.</p></div>
+                <div className="space-y-2">{meshInspection.meshes.map((mesh, index) => <details key={`${mesh.name}-${index}`} className="rounded-lg border border-slate-200 bg-white p-3" open={meshInspection.meshes.length <= 2}>
+                  <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2"><span className="font-mono text-xs font-semibold text-slate-800">{mesh.name}</span><span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${mesh.uvCount ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{mesh.uvCount ? 'UV presentes' : 'Sin UV'}</span></summary>
+                  <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] sm:grid-cols-3">
+                    <div><dt className="text-slate-400">Vértices / triángulos</dt><dd className="font-medium text-slate-700">{mesh.vertexCount.toLocaleString()} / {mesh.triangleCount.toLocaleString()}</dd></div>
+                    <div><dt className="text-slate-400">Tamaño local de malla</dt><dd className="font-medium text-slate-700">{mesh.dimensions}</dd></div>
+                    <div><dt className="text-slate-400">Material</dt><dd className="truncate font-medium text-slate-700" title={mesh.materialNames.join(', ')}>{mesh.materialNames.join(', ') || '—'}</dd></div>
+                    <div><dt className="text-slate-400">UV: coordenadas / rango</dt><dd className="font-medium text-slate-700">{mesh.uvCount.toLocaleString()} · {mesh.uvRange ?? '—'}</dd></div>
+                    <div><dt className="text-slate-400">UV fuera de 0–1</dt><dd className={`font-semibold ${mesh.uvOutsideCount ? 'text-amber-700' : 'text-emerald-700'}`}>{mesh.uvOutsideCount.toLocaleString()} vértices</dd></div>
+                    <div><dt className="text-slate-400">Triángulos UV idénticos</dt><dd className={`font-semibold ${mesh.overlappingUvTriangles ? 'text-amber-700' : 'text-emerald-700'}`}>{mesh.overlappingUvTriangles.toLocaleString()} posibles solapamientos</dd></div>
+                  </dl>
+                </details>)}</div>
+                <p className="mt-3 text-[10px] leading-5 text-slate-500">El detector marca triángulos UV exactamente repetidos como señal de islas apiladas. La revisión definitiva de solapamientos, orientación frontal/trasera y zona física de impresión se realiza en el editor UV de Blender.</p>
+              </div>}
             </div>
             <div className="mt-4 flex gap-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2.5 text-xs text-sky-800"><Info className="mt-0.5 shrink-0" size={15} /><span>Salida estimada a 300 DPI: <strong>{printWidth && printHeight ? `${pixelsWidth.toLocaleString()} × ${pixelsHeight.toLocaleString()} px` : 'indica ancho y alto'}</strong>.</span></div>
           </section>
@@ -324,13 +399,13 @@ export default function AdminProductEditor() {
             </fieldset>
           </section>
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-slate-900">Configuración de mallas 3D personalizables</h2><p className="mt-1 max-w-xl text-sm text-slate-500">Agrega una opción por cada malla que el cliente podrá colorear. El nombre debe coincidir exactamente con el nodo Mesh del GLB.</p></div><button type="button" onClick={addCustomizablePart} disabled={!form.model3dUrl.trim() && meshInspection.names.length === 0} className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"><Plus size={15} /> Agregar pieza</button></div>
-            {!form.model3dUrl.trim() && meshInspection.names.length === 0 && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Agrega la ruta del GLB o selecciona un archivo local para detectar sus mallas. Para guardar, necesitarás una ruta persistente.</p>}
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-slate-900">Configuración de mallas 3D personalizables</h2><p className="mt-1 max-w-xl text-sm text-slate-500">Agrega una opción por cada malla que el cliente podrá colorear. El nombre debe coincidir exactamente con el nodo Mesh del GLB.</p></div><button type="button" onClick={addCustomizablePart} disabled={!form.model3dUrl.trim() && detectedMeshNames.length === 0} className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"><Plus size={15} /> Agregar pieza</button></div>
+            {!form.model3dUrl.trim() && detectedMeshNames.length === 0 && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Agrega la ruta del GLB o selecciona un archivo local para detectar sus mallas. Para guardar, necesitarás una ruta persistente.</p>}
             {form.customizableParts.length === 0 ? <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">Sin piezas configuradas. El panel de colores se ocultará al cliente.</p> : <div className="space-y-3">{form.customizableParts.map((part, index) => {
-              const meshIsDetected = meshInspection.names.includes(part.meshName);
+              const meshIsDetected = detectedMeshNames.includes(part.meshName);
               return <div key={part.id} className="grid grid-cols-1 items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:grid-cols-2 lg:grid-cols-[1fr_1.2fr_auto_auto_auto]">
                 <Field label="Etiqueta visible" value={part.label} onChange={(value) => updateCustomizablePart(index, { label: value })} placeholder="Color del asa" />
-                <label className="grid min-w-0 gap-1.5 text-sm font-medium text-slate-700"><span>Malla del GLB</span><select value={meshIsDetected ? part.meshName : '__manual__'} onChange={(event) => { if (event.target.value !== '__manual__') updateCustomizablePart(index, { meshName: event.target.value }); }} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"><option value="__manual__">{meshInspection.names.length ? 'Escribir nombre manualmente…' : 'Sin mallas detectadas · escribir nombre'}</option>{meshInspection.names.map((name) => <option key={name} value={name}>{name}</option>)}</select>{!meshIsDetected && <input value={part.meshName} onChange={(event) => updateCustomizablePart(index, { meshName: event.target.value })} placeholder="Nombre exacto, ej. mesh_handle" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-normal text-slate-900 outline-none focus:border-violet-500" />}</label>
+                <label className="grid min-w-0 gap-1.5 text-sm font-medium text-slate-700"><span>Malla del GLB</span><select value={meshIsDetected ? part.meshName : '__manual__'} onChange={(event) => { if (event.target.value !== '__manual__') updateCustomizablePart(index, { meshName: event.target.value }); }} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"><option value="__manual__">{detectedMeshNames.length ? 'Escribir nombre manualmente…' : 'Sin mallas detectadas · escribir nombre'}</option>{detectedMeshNames.map((name) => <option key={name} value={name}>{name}</option>)}</select>{!meshIsDetected && <input value={part.meshName} onChange={(event) => updateCustomizablePart(index, { meshName: event.target.value })} placeholder="Nombre exacto, ej. mesh_handle" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-normal text-slate-900 outline-none focus:border-violet-500" />}</label>
                 <label className="grid gap-1.5 text-sm font-medium text-slate-700"><span>Color inicial</span><input type="color" value={part.defaultColor} onChange={(event) => updateCustomizablePart(index, { defaultColor: event.target.value })} aria-label={`Color inicial para ${part.label || 'pieza'}`} className="h-10 w-full cursor-pointer rounded-lg border border-slate-300 bg-white p-1 sm:w-14" /></label>
                 <label className="flex h-10 items-center gap-2 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700"><input type="checkbox" checked={part.enabled !== false} onChange={(event) => updateCustomizablePart(index, { enabled: event.target.checked })} className="h-4 w-4 accent-violet-600" />Permitir al cliente</label>
                 <button type="button" onClick={() => setForm((current) => ({ ...current, customizableParts: current.customizableParts.filter((_, partIndex) => partIndex !== index) }))} aria-label={`Eliminar ${part.label || 'pieza'}`} title="Eliminar pieza" className="inline-flex h-10 items-center justify-center rounded-lg border border-red-200 bg-white px-3 text-red-600 hover:bg-red-50"><Trash2 size={16} /></button>

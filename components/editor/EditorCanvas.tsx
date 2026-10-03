@@ -29,6 +29,13 @@ import {
 
 type PrintArea = ProductView['printArea'];
 const ADMIN_BASE_SIZE = 800;
+const PANORAMIC_PRINT_ASPECT = 2598 / 472;
+const DEFAULT_PANORAMIC_PRINT_AREA: PrintArea = {
+  x: 0,
+  y: (100 - 100 / PANORAMIC_PRINT_ASPECT) / 2,
+  width: 100,
+  height: 100 / PANORAMIC_PRINT_ASPECT,
+};
 type ThreeDViewPreview = { id: string; label: string; textureUrl: string };
 
 const resolveImageUrl = (url: string) => {
@@ -649,14 +656,24 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       ) => {
         const baseView = productViews[currentViewIndex] || productViews[0];
         const selectedValues = Object.values(selectedOptionsMap).filter(Boolean);
-        const logResolvedView = (resolvedView: { mockupUrl: string; printArea: PrintArea; name: string }) => {
+        const logResolvedView = (resolvedView: { mockupUrl: string; printArea: PrintArea | null; name: string }) => {
+          const hasValidPrintArea = Boolean(
+            resolvedView.printArea
+            && Number(resolvedView.printArea.width) > 0
+            && Number(resolvedView.printArea.height) > 0,
+          );
+          const safeResolvedView = {
+            ...resolvedView,
+            printArea: hasValidPrintArea ? resolvedView.printArea! : DEFAULT_PANORAMIC_PRINT_AREA,
+            ...(!hasValidPrintArea ? { printAreaUnit: 'percent' as const } : {}),
+          };
           console.log('🔍 [RESOLVIENDO VISTA]:', {
             vistaIndicePedido: currentViewIndex,
             baseViewEsperada: baseView,
             opcionesSeleccionadas: selectedOptionsMap,
-            vistaResueltaFinal: resolvedView,
+            vistaResueltaFinal: safeResolvedView,
           });
-          return resolvedView;
+          return safeResolvedView;
         };
 
         // Sin interacción explícita de opciones, el producto base es la única
@@ -737,6 +754,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       };
 
       const getBasePercentPrintArea = (view: ProductView): PrintArea => {
+        if (!view.printArea || Number(view.printArea.width) <= 0 || Number(view.printArea.height) <= 0) {
+          return DEFAULT_PANORAMIC_PRINT_AREA;
+        }
         if (view.printAreaUnit === 'percent') {
           return view.printArea;
         }
@@ -1178,7 +1198,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             ...resolvedView,
             // Sólo una zona específica de la variante está en porcentajes;
             // si falta, se conserva la unidad de la vista base de esta cara.
-            printAreaUnit: dynamicView?.printArea ? 'percent' as const : baseView.printAreaUnit,
+            printAreaUnit: dynamicView?.printArea ? 'percent' as const : resolvedView.printAreaUnit ?? baseView.printAreaUnit,
           };
         });
 
@@ -1379,6 +1399,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           top: renderedArea.y,
           width: renderedArea.width,
           height: renderedArea.height,
+          viewId: activeView?.id,
+          viewName: activeView?.name,
         };
         window.dispatchEvent(new CustomEvent('editor:print-area-changed', {
           detail: (window as any).__editorPrintArea,

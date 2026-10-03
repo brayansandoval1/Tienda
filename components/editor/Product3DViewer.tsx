@@ -12,7 +12,8 @@ type FabricCanvasLike = {
   on: (eventName: string, handler: () => void) => void;
   off: (eventName: string, handler: () => void) => void;
 };
-type PrintAreaBounds = { left: number; top: number; width: number; height: number };
+type PrintAreaBounds = { left: number; top: number; width: number; height: number; viewId?: string; viewName?: string };
+const DEFAULT_PRINT_TEXTURE_SIZE = { width: 2598, height: 472 };
 type ProductPartColors = {
   body: string;
   ring: { enabled: boolean; color: string };
@@ -130,20 +131,42 @@ function ZoomableOrbitControls() {
   />;
 }
 
-function renderPrintArea(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds | null, target: HTMLCanvasElement, baseColor: string) {
-  const bounds = area ?? { left: 0, top: 0, width: 800, height: 800 };
-  // El tamaño del canvas origen de CanvasTexture debe ser estable mientras
-  // Three.js lo tiene enlazado a WebGL. El canvas se dimensiona al crearse.
-  const scaleX = target.width / Math.max(1, bounds.width);
-  const scaleY = target.height / Math.max(1, bounds.height);
+function renderPrintArea(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds | null, target: HTMLCanvasElement, baseColor: string, panoramic: boolean) {
+  // Si falta el área publicada por el editor, recorta una faja panorámica
+  // centrada en el espacio lógico cuadrado de Fabric. El buffer conserva la
+  // resolución/aspecto de la plantilla de impresión.
+  const sourceCanvas = fabricCanvas.getElement();
+  const logicalWidth = Math.max(1, sourceCanvas.width || 800);
+  const logicalHeight = Math.max(1, sourceCanvas.height || 800);
+  const fallbackHeight = panoramic
+    ? Math.min(logicalHeight, logicalWidth * DEFAULT_PRINT_TEXTURE_SIZE.height / DEFAULT_PRINT_TEXTURE_SIZE.width)
+    : logicalHeight;
+  const bounds = area ?? {
+    left: 0,
+    top: (logicalHeight - fallbackHeight) / 2,
+    width: logicalWidth,
+    height: fallbackHeight,
+  };
   const context = target.getContext('2d');
   if (!context) return;
+  // El tamaño del canvas origen de CanvasTexture se mantiene fijo mientras
+  // Three.js lo tiene enlazado a WebGL.
+  const normalizedView = `${area?.viewId ?? ''} ${area?.viewName ?? ''}`
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const isBackView = /back|rear|espalda|reverso|trasera/.test(normalizedView);
+  const sideLeft = panoramic ? (isBackView ? target.width / 2 : 0) : 0;
+  const sideWidth = panoramic ? target.width / 2 : target.width;
+  const scale = panoramic
+    ? Math.min(sideWidth / Math.max(1, bounds.width), target.height / Math.max(1, bounds.height))
+    : Math.min(target.width / Math.max(1, bounds.width), target.height / Math.max(1, bounds.height));
+  const offsetX = sideLeft + (sideWidth - bounds.width * scale) / 2 - bounds.left * scale;
+  const offsetY = (target.height - bounds.height * scale) / 2 - bounds.top * scale;
   context.setTransform(1, 0, 0, 1, 0, 0);
   context.clearRect(0, 0, target.width, target.height);
   context.fillStyle = baseColor || '#ffffff';
   context.fillRect(0, 0, target.width, target.height);
   context.save();
-  context.setTransform(scaleX, 0, 0, scaleY, -bounds.left * scaleX, -bounds.top * scaleY);
+  context.setTransform(scale, 0, 0, scale, offsetX, offsetY);
   try {
     fabricCanvas.getObjects().forEach((object) => {
       if (!object || object.visible === false || object.isMockup || object.isGuide || object.isGuideLine || object.isCropOverlay) return;
@@ -156,34 +179,47 @@ function renderPrintArea(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds |
   }
 }
 
-function FabricTextureSurface({ fabricCanvas, phoneCase, modelUrl, partColors, componentColors, enabledMeshNames }: { fabricCanvas: FabricCanvasLike; phoneCase: boolean; modelUrl: string; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[] }) {
+function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, modelUrl, partColors, componentColors, enabledMeshNames }: { fabricCanvas: FabricCanvasLike; phoneCase: boolean; panoramic: boolean; modelUrl: string; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[] }) {
   const textureRef = useRef<THREE.CanvasTexture | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUpdatingTexture = useRef(false);
   const printArea = usePrintAreaBounds();
   const printCanvas = useMemo(() => {
     const canvas = document.createElement('canvas');
-    const bounds = printArea ?? { width: 800, height: 800 };
+    const bounds = panoramic
+      ? DEFAULT_PRINT_TEXTURE_SIZE
+      : printArea ?? { left: 0, top: 0, width: 800, height: 800 };
     const scale = Math.min(3, Math.max(1, 1400 / Math.max(bounds.width, bounds.height)));
     canvas.width = Math.max(1, Math.ceil(bounds.width * scale));
     canvas.height = Math.max(1, Math.ceil(bounds.height * scale));
+    console.log('[Product3DViewer] printArea real:', {
+      left: printArea?.left ?? 0,
+      top: printArea?.top ?? 0,
+      width: bounds.width,
+      height: bounds.height,
+      aspectRatio: bounds.width / Math.max(1, bounds.height),
+    });
+    console.log('[Product3DViewer] printCanvas buffer:', {
+      width: canvas.width,
+      height: canvas.height,
+      aspectRatio: canvas.width / Math.max(1, canvas.height),
+    });
     const context = canvas.getContext('2d');
     if (context) {
       context.fillStyle = '#f8fafc';
       context.fillRect(0, 0, canvas.width, canvas.height);
     }
     return canvas;
-  }, [fabricCanvas, printArea]);
+  }, [fabricCanvas, panoramic, printArea]);
   const texture = useMemo(() => {
     const canvasTexture = new THREE.CanvasTexture(printCanvas);
     canvasTexture.colorSpace = THREE.SRGBColorSpace;
     canvasTexture.flipY = false;
-    canvasTexture.wrapS = THREE.RepeatWrapping;
-    canvasTexture.wrapT = THREE.ClampToEdgeWrapping;
+    resetTextureUvTransform(canvasTexture, panoramic);
     canvasTexture.anisotropy = 8;
     canvasTexture.needsUpdate = true;
     return canvasTexture;
-  }, [fabricCanvas, printCanvas]);
+  }, [fabricCanvas, panoramic, printCanvas]);
 
   useEffect(() => {
     textureRef.current = texture;
@@ -195,7 +231,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, modelUrl, partColors, c
         try {
           // Se renderizan solo los objetos imprimibles en el buffer auxiliar;
           // el canvas de edición nunca se redimensiona ni se vuelve a renderizar.
-          renderPrintArea(fabricCanvas, printArea, printCanvas, partColors.body);
+          renderPrintArea(fabricCanvas, printArea, printCanvas, partColors.body, panoramic);
           if (textureRef.current) textureRef.current.needsUpdate = true;
         } catch (error) {
           console.error('[Product3DViewer] No se pudo actualizar la textura de impresión:', error);
@@ -213,7 +249,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, modelUrl, partColors, c
       fabricEvents.forEach((eventName) => fabricCanvas.off(eventName, updateTexture));
       textureRef.current = null;
     };
-  }, [fabricCanvas, partColors.body, printArea, printCanvas, texture]);
+  }, [fabricCanvas, panoramic, partColors.body, printArea, printCanvas, texture]);
 
   useEffect(() => () => texture.dispose(), [texture]);
 
@@ -221,7 +257,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, modelUrl, partColors, c
     ? <PhoneCase texture={texture} bodyColor={partColors.body} />
     : <Drinkware texture={texture} partColors={partColors} />;
   if (modelUrl) return <ModelLoadBoundary key={modelUrl} fallback={fallback}>
-    <Suspense fallback={fallback}><GLBModel url={modelUrl} texture={texture} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} /></Suspense>
+    <Suspense fallback={fallback}><GLBModel url={modelUrl} texture={texture} panoramic={panoramic} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} /></Suspense>
   </ModelLoadBoundary>;
   if (phoneCase) return fallback;
   return <Drinkware texture={texture} partColors={partColors} />;
@@ -275,7 +311,38 @@ function PhoneCase({ texture, bodyColor }: { texture: THREE.CanvasTexture; bodyC
   </group>;
 }
 
-function GLBModel({ url, texture, partColors, componentColors, enabledMeshNames }: { url: string; texture: THREE.CanvasTexture; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[] }) {
+function resetTextureUvTransform(texture: THREE.CanvasTexture, panoramic: boolean) {
+  const image = texture.image as { width?: number; height?: number };
+  const canvasWidth = image.width || DEFAULT_PRINT_TEXTURE_SIZE.width;
+  const canvasHeight = image.height || DEFAULT_PRINT_TEXTURE_SIZE.height;
+  const canvasAspect = canvasWidth / (canvasHeight || 1);
+  const cylinderCircumference = 2 * Math.PI * 0.86;
+  const cylinderHeight = 2.55;
+  const cylinderAspect = cylinderCircumference / cylinderHeight;
+  // En una textura desplegada 360°, U=0..1 ya representa toda la
+  // circunferencia; cada cara ocupa media imagen. No hay que comprimirla otra vez.
+  const repeatX = panoramic ? 1 : Math.min(1, cylinderAspect / canvasAspect);
+
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.repeat.set(repeatX, 1.0);
+  texture.offset.set((1.0 - repeatX) / 2, 0);
+  texture.center.set(0, 0);
+  texture.rotation = 0;
+  texture.matrixAutoUpdate = true;
+  texture.needsUpdate = true;
+  console.log('[Product3DViewer] Transformación de textura:', {
+    canvasWidth,
+    canvasHeight,
+    canvasAspect,
+    cylinderAspect,
+    repeatX: texture.repeat.x,
+    offsetX: texture.offset.x,
+    wrapS: texture.wrapS,
+  });
+}
+
+function GLBModel({ url, texture, panoramic, partColors, componentColors, enabledMeshNames }: { url: string; texture: THREE.CanvasTexture; panoramic: boolean; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[] }) {
   const gltf = useGLTF(url);
   useEffect(() => {
     const meshes: Array<Record<string, unknown>> = [];
@@ -313,23 +380,17 @@ function GLBModel({ url, texture, partColors, componentColors, enabledMeshNames 
     const clonedScene = gltf.scene.clone(true);
     const meshes: THREE.Mesh[] = [];
     clonedScene.traverse((object) => { if ((object as THREE.Mesh).isMesh) meshes.push(object as THREE.Mesh); });
-    const namedPrintMesh = meshes.find((mesh) => {
-      const materialNames = Array.isArray(mesh.material) ? mesh.material.map((material) => material.name).join(' ') : mesh.material.name;
-      return /print|printable|design|artwork|texture|canvas/i.test(`${mesh.name} ${materialNames}`);
-    });
-    const namedBodyMesh = meshes.find((mesh) => /body|cuerpo/i.test(mesh.name));
-    const largestMesh = meshes.reduce<THREE.Mesh | null>((largest, mesh) => {
-      mesh.geometry.computeBoundingBox();
-      const box = mesh.geometry.boundingBox;
-      if (!box) return largest;
-      const size = box.getSize(new THREE.Vector3());
-      const areaEstimate = size.x * size.y * size.z;
-      if (!largest) return mesh;
-      largest.geometry.computeBoundingBox();
-      const largestSize = largest.geometry.boundingBox?.getSize(new THREE.Vector3());
-      return !largestSize || areaEstimate > largestSize.x * largestSize.y * largestSize.z ? mesh : largest;
+    const normalizedMeshName = (name: string) => name.trim().toLocaleLowerCase();
+    const findExactMesh = (name: string) => meshes.find((mesh) => normalizedMeshName(mesh.name) === name);
+    const printableMesh = findExactMesh('printable');
+    const bodyMesh = findExactMesh('body');
+    const geometryMesh = findExactMesh('geometry_0');
+    const mostDetailedMesh = meshes.reduce<THREE.Mesh | null>((best, mesh) => {
+      const vertexCount = mesh.geometry.getAttribute('position')?.count ?? 0;
+      const bestVertexCount = best?.geometry.getAttribute('position')?.count ?? -1;
+      return vertexCount > bestVertexCount ? mesh : best;
     }, null);
-    const printMesh = namedPrintMesh ?? namedBodyMesh ?? largestMesh;
+    const printMesh = printableMesh ?? bodyMesh ?? geometryMesh ?? mostDetailedMesh ?? meshes[0] ?? null;
     const normalizeMeshName = (name: string) => name.trim().toLocaleLowerCase();
     const enabledCustomColors = Object.entries(componentColors).filter(([meshName]) => enabledMeshNames.some((enabledName) => normalizeMeshName(enabledName) === normalizeMeshName(meshName)));
     const matchedMeshNames = new Set<string>();
@@ -340,15 +401,19 @@ function GLBModel({ url, texture, partColors, componentColors, enabledMeshNames 
     enabledCustomColors.forEach(([meshName]) => {
       if (!matchedMeshNames.has(meshName)) console.warn(`[Product3DViewer] No existe una malla llamada "${meshName}" en este GLB; revisa el nombre configurado en Admin.`, { url });
     });
-    const selectionStrategy = namedPrintMesh ? 'nombre de impresión' : namedBodyMesh ? 'nombre de cuerpo' : largestMesh ? 'malla de mayor tamaño' : 'sin mallas';
+    const selectionStrategy = printableMesh ? 'nombre exacto printable'
+      : bodyMesh ? 'nombre exacto body'
+        : geometryMesh ? 'nombre exacto geometry_0'
+          : mostDetailedMesh ? 'malla con más vértices' : meshes[0] ? 'primera malla disponible' : 'sin mallas';
     const selectionDetails = {
-      estrategia: namedPrintMesh ? 'nombre de impresión' : namedBodyMesh ? 'nombre de cuerpo' : largestMesh ? 'malla de mayor tamaño' : 'sin mallas',
+      estrategia: selectionStrategy,
       url,
+      vertexCount: printMesh?.geometry.getAttribute('position')?.count ?? 0,
       materiales: printMesh ? (Array.isArray(printMesh.material) ? printMesh.material : [printMesh.material]).map((material) => material.name || material.type) : [],
       grupos: printMesh?.geometry.groups.length ?? 0,
     };
-    if (selectionStrategy === 'malla de mayor tamaño') {
-      console.warn('[Product3DViewer] No se encontró una malla body/printable; la textura se aplicará al objeto más grande completo. El GLB necesita separar su superficie imprimible y tener UV preparadas para obtener una proyección precisa.', printMesh?.name, selectionDetails);
+    if (printMesh && !printableMesh && !bodyMesh && !geometryMesh) {
+      console.warn('[Product3DViewer] No se encontró una malla llamada printable, body o geometry_0; se usará la malla con más vértices.', printMesh.name, selectionDetails);
     } else {
       console.info('[Product3DViewer] Malla elegida para aplicar la textura:', printMesh?.name || '(ninguna)', selectionDetails);
     }
@@ -358,17 +423,19 @@ function GLBModel({ url, texture, partColors, componentColors, enabledMeshNames 
         let minU = Infinity, minV = Infinity, maxU = -Infinity, maxV = -Infinity;
         for (let index = 0; index < uv.count; index += 1) {
           const u = uv.getX(index), v = uv.getY(index);
-          minU = Math.min(minU, u); minV = Math.min(minV, v);
-          maxU = Math.max(maxU, u); maxV = Math.max(maxV, v);
+          minU = Math.min(minU, u);
+          minV = Math.min(minV, v);
+          maxU = Math.max(maxU, u);
+          maxV = Math.max(maxV, v);
         }
-        // Conserva el unwrap original: normalizar todas las UV a 0–1 estira
-        // la misma imagen sobre las islas de cuerpo, tapa y asa.
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.ClampToEdgeWrapping;
-        texture.repeat.set(1, 1);
-        texture.offset.set(0, 0);
-        texture.needsUpdate = true;
-        console.info('[Product3DViewer] Se conserva el mapeado UV del GLB:', { mesh: printMesh.name, uvCount: uv.count, minU, maxU, minV, maxV, repeat: texture.repeat.toArray(), offset: texture.offset.toArray() });
+        console.log('[Product3DViewer] Malla y rango UV de impresión:', {
+          printMesh: printMesh.name,
+          minU,
+          maxU,
+          minV,
+          maxV,
+        });
+        resetTextureUvTransform(texture, panoramic);
       } else {
         console.error(`[Product3DViewer] La malla "${printMesh.name}" no tiene UV; no se puede proyectar el diseño.`, { url });
       }
@@ -390,6 +457,7 @@ function GLBModel({ url, texture, partColors, componentColors, enabledMeshNames 
         const material = original.clone();
         if (isPrintMesh && 'map' in material) {
           material.map = texture;
+          texture.needsUpdate = true;
           if ('roughness' in material) material.roughness = 0.42;
           if ('metalness' in material) material.metalness = 0.02;
           // Algunos GLB de prueba exportan la única malla con opacidad cero,
@@ -409,9 +477,11 @@ function GLBModel({ url, texture, partColors, componentColors, enabledMeshNames 
             ? '#ffffff'
             : part === 'body'
               ? partColors.body
-            : partColors[part].enabled
-              ? partColors[part].color
-              : ({ ring: '#e2e8f0', interior: '#f1f5f9', handle: '#f8fafc' } as const)[part];
+              : part === 'ring' || part === 'interior' || part === 'handle'
+                ? partColors[part].enabled
+                  ? partColors[part].color
+                  : ({ ring: '#e2e8f0', interior: '#f1f5f9', handle: '#f8fafc' } as const)[part]
+                : '#ffffff';
           material.color.set(color);
           if (customColorEntry) material.needsUpdate = true;
         }
@@ -433,7 +503,7 @@ function GLBModel({ url, texture, partColors, componentColors, enabledMeshNames 
       clonedScene.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
     }
     return clonedScene;
-  }, [gltf.scene, partColors, texture, url, componentColors, enabledMeshNames]);
+  }, [gltf.scene, partColors, texture, url, componentColors, enabledMeshNames, panoramic]);
   return <primitive object={scene} />;
 }
 
@@ -449,6 +519,12 @@ class ModelLoadBoundary extends Component<{ fallback: ReactNode; children: React
 
 function ProductModel({ product, fabricCanvas, partColors, componentColors, enabledMeshNames }: { product: Product; fabricCanvas: FabricCanvasLike | null; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[] }) {
   const phoneCase = /funda|iphone|phone|case/i.test(`${product.id} ${product.name}`);
+  const printAspect = (product.printWidthCm ?? 0) / Math.max(0.01, product.printHeightCm ?? 0);
+  const panoramic = !phoneCase && (
+    /termo|taza|mug|botella|vaso|bottle|travel.?mug/i.test(`${product.id} ${product.name}`)
+    || product.pricingSchema?.sidesPricing?.mode === 'wrap'
+    || printAspect >= 2
+  );
   const fallback = <mesh>
       <cylinderGeometry args={[0.8, 0.8, 2.3, 48]} />
       <meshStandardMaterial color="#e2e8f0" />
@@ -462,7 +538,7 @@ function ProductModel({ product, fabricCanvas, partColors, componentColors, enab
     console.error('[Product3DViewer] El producto llegó al Canvas sin model3dUrl.', { productId: product.id });
     return fallback;
   }
-  return <FabricTextureSurface key={product.id} fabricCanvas={fabricCanvas} phoneCase={phoneCase} modelUrl={modelUrl} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} />;
+  return <FabricTextureSurface key={product.id} fabricCanvas={fabricCanvas} phoneCase={phoneCase} panoramic={panoramic} modelUrl={modelUrl} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} />;
 }
 
 export default function Product3DViewer({ product, componentColors, enabledMeshNames }: { product: Product; componentColors: ComponentColors; enabledMeshNames: string[] }) {
