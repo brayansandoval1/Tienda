@@ -137,13 +137,43 @@ function WebGLDiagnostics() {
   return null;
 }
 
-function ZoomableOrbitControls() {
+function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1 }: { viewIndex?: number; viewCount?: number }) {
   const { camera } = useThree();
   const controlsRef = useRef<any>(null);
   const zoomRef = useRef(1);
   const baseDistance = 5;
   const minZoom = 0.5;
   const maxZoom = 2;
+
+  useEffect(() => {
+    const handleViewChanged = (event: Event) => {
+      const index = Number((event as CustomEvent<{ viewIndex?: number }>).detail?.viewIndex);
+      if (!Number.isFinite(index)) return;
+      const controls = controlsRef.current;
+      if (!controls) return;
+      const direction = camera.position.clone().sub(controls.target);
+      const spherical = new THREE.Spherical().setFromVector3(direction);
+      const count = Math.max(1, Math.floor(viewCount));
+      spherical.theta = (Math.max(0, Math.min(count - 1, Math.floor(index))) * 2 * Math.PI / count) + Math.PI / count;
+      camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical));
+      camera.lookAt(controls.target);
+      controls.update();
+    };
+    window.addEventListener('editor:view-changed', handleViewChanged);
+    return () => window.removeEventListener('editor:view-changed', handleViewChanged);
+  }, [camera, viewCount]);
+
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    const direction = camera.position.clone().sub(controls.target);
+    const spherical = new THREE.Spherical().setFromVector3(direction);
+    const count = Math.max(1, Math.floor(viewCount));
+    spherical.theta = (Math.max(0, Math.min(count - 1, Math.floor(viewIndex))) * 2 * Math.PI / count) + Math.PI / count;
+    camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical));
+    camera.lookAt(controls.target);
+    controls.update();
+  }, [camera, viewCount, viewIndex]);
 
   useEffect(() => {
     const handleZoom = (event: Event) => {
@@ -187,7 +217,7 @@ function ZoomableOrbitControls() {
   />;
 }
 
-function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds | null, targetCanvas: HTMLCanvasElement, baseColor: string, panoramic: boolean, objectsOverride?: any[], outlineColor = '#22c55e', projectionArea?: PrintAreaBounds) {
+function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds | null, targetCanvas: HTMLCanvasElement, baseColor: string, panoramic: boolean, objectsOverride?: any[], outlineColor = '#22c55e', projectionArea?: PrintAreaBounds, totalViews = 0) {
   // Si falta el área publicada por el editor, recorta una faja panorámica
   // centrada en el espacio lógico cuadrado de Fabric. El buffer conserva la
   // resolución/aspecto de la plantilla de impresión.
@@ -208,9 +238,12 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
   if (!context) return;
   // El tamaño del canvas origen de CanvasTexture se mantiene fijo mientras
   // Three.js lo tiene enlazado a WebGL.
-  const viewCount = Math.max(1, Math.floor(Number(area?.viewCount) || 1));
+  const viewCount = Math.max(1, Math.floor(Number(totalViews) || Number(area?.viewCount) || 1));
   const viewIndex = Math.min(viewCount - 1, Math.max(0, Math.floor(Number(area?.viewIndex) || 0)));
-  const segmentIndex = (viewCount - viewIndex) % viewCount;
+  // Los segmentos siguen el orden de las vistas: Frente (0) ocupa la mitad
+  // izquierda y Espalda (1) la mitad derecha. No invertir el índice: eso
+  // desplaza el origen de una cara al límite UV de la otra.
+  const segmentIndex = panoramic ? Math.min(viewCount - 1, Math.max(0, viewIndex)) : 0;
   const sideWidth = panoramic ? target.width / viewCount : target.width;
   const sideLeft = panoramic ? sideWidth * segmentIndex : 0;
   const canvasWidth = Math.max(1, Number(area?.canvasWidth) || logicalWidth);
@@ -462,7 +495,7 @@ async function enlivenDesignObjects(serializedObjects: any[]) {
   });
 }
 
-function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectRatio, modelUrl, meshSettings, partColors, componentColors, enabledMeshNames, adminArea }: { fabricCanvas: FabricCanvasLike; phoneCase: boolean; panoramic: boolean; printAspectRatio: number; modelUrl: string; meshSettings: MeshSettings; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[]; adminArea?: PrintAreaBounds }) {
+function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectRatio, modelUrl, meshSettings, partColors, componentColors, enabledMeshNames, adminArea, totalViews }: { fabricCanvas: FabricCanvasLike; phoneCase: boolean; panoramic: boolean; printAspectRatio: number; modelUrl: string; meshSettings: MeshSettings; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[]; adminArea?: PrintAreaBounds; totalViews: number }) {
   const textureRef = useRef<THREE.CanvasTexture | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUpdatingTexture = useRef(false);
@@ -470,18 +503,12 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
   const [designViews, setDesignViews] = useState<PrintViewSnapshot[]>([]);
   const editorPrintArea = usePrintAreaBounds();
   const printArea = adminArea ?? editorPrintArea;
-  const viewCount = Math.max(1, Math.floor(Number(printArea?.viewCount) || 1));
+  const viewCount = Math.max(1, Math.floor(Number(totalViews) || Number(printArea?.viewCount) || 1));
   const [surfaceAspectRatio, setSurfaceAspectRatio] = useState(printAspectRatio);
-  const [frontTextureOffset, setFrontTextureOffset] = useState(0.5 / viewCount);
   useEffect(() => setSurfaceAspectRatio(printAspectRatio), [modelUrl, printAspectRatio]);
-  useEffect(() => setFrontTextureOffset(panoramic ? 0.5 / viewCount : 0), [modelUrl, panoramic, viewCount]);
   const handleSurfaceAspectChange = useCallback((aspectRatio: number) => {
     if (!Number.isFinite(aspectRatio) || aspectRatio <= 0) return;
     setSurfaceAspectRatio((current) => Math.abs(current - aspectRatio) > 0.001 ? aspectRatio : current);
-  }, []);
-  const handleTextureOffsetChange = useCallback((offset: number) => {
-    if (!Number.isFinite(offset)) return;
-    setFrontTextureOffset((current) => Math.abs(current - offset) > 0.001 ? offset : current);
   }, []);
   useEffect(() => {
     const initialViews = (window as Window & { __editor3DViews?: PrintViewSnapshot[] }).__editor3DViews ?? [];
@@ -527,11 +554,11 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
     const canvasTexture = new THREE.CanvasTexture(printCanvas);
     canvasTexture.colorSpace = THREE.SRGBColorSpace;
     canvasTexture.flipY = false;
-    resetTextureUvTransform(canvasTexture, panoramic, frontTextureOffset);
+    resetTextureUvTransform(canvasTexture, panoramic, viewCount);
     canvasTexture.anisotropy = 8;
     canvasTexture.needsUpdate = true;
     return canvasTexture;
-  }, [fabricCanvas, frontTextureOffset, panoramic, printCanvas]);
+  }, [fabricCanvas, panoramic, printCanvas, viewCount]);
 
   useEffect(() => {
     textureRef.current = texture;
@@ -555,7 +582,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                 radius: liveArea3D.radius,
                 polygon: liveArea3D.nodes ?? liveArea3D.polygon,
               } : undefined;
-              renderFullTexture360(fabricCanvas, printArea, printCanvas, partColors.body, panoramic, undefined, adminArea ? '#0284c7' : '#22c55e', liveProjection);
+              renderFullTexture360(fabricCanvas, printArea, printCanvas, partColors.body, panoramic, undefined, adminArea ? '#0284c7' : '#22c55e', liveProjection, totalViews);
             } else {
               const context = printCanvas.getContext('2d');
               if (!context) return;
@@ -588,7 +615,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                   radius: livePrintArea3D.radius,
                   polygon: livePrintArea3D.nodes ?? livePrintArea3D.polygon,
                 } : snapshot.projectionArea;
-                renderFullTexture360(fabricCanvas, isActiveSnapshot ? printArea : snapshot.area, printCanvas, partColors.body, panoramic, objects, adminArea ? '#0284c7' : '#22c55e', activeProjection);
+                renderFullTexture360(fabricCanvas, isActiveSnapshot ? printArea : snapshot.area, printCanvas, partColors.body, panoramic, objects, adminArea ? '#0284c7' : '#22c55e', activeProjection, totalViews);
                 if (snapshot.viewId !== printArea?.viewId) objects.forEach((object) => object.dispose?.());
               }
             }
@@ -619,7 +646,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
     ? <PhoneCase texture={texture} bodyColor={partColors.body} />
     : <Drinkware texture={texture} partColors={partColors} />;
   if (modelUrl) return <ModelLoadBoundary key={modelUrl} fallback={fallback}>
-    <Suspense fallback={fallback}><GLBModel url={modelUrl} texture={texture} panoramic={panoramic} viewCount={viewCount} frontTextureOffset={frontTextureOffset} onSurfaceAspectChange={handleSurfaceAspectChange} onTextureOffsetChange={handleTextureOffsetChange} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} /></Suspense>
+    <Suspense fallback={fallback}><GLBModel url={modelUrl} texture={texture} panoramic={panoramic} viewCount={viewCount} onSurfaceAspectChange={handleSurfaceAspectChange} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} /></Suspense>
   </ModelLoadBoundary>;
   if (phoneCase) return fallback;
   return <Drinkware texture={texture} partColors={partColors} />;
@@ -673,7 +700,7 @@ function PhoneCase({ texture, bodyColor }: { texture: THREE.CanvasTexture; bodyC
   </group>;
 }
 
-function resetTextureUvTransform(texture: THREE.CanvasTexture, panoramic: boolean, frontTextureOffset: number) {
+function resetTextureUvTransform(texture: THREE.CanvasTexture, panoramic: boolean, totalViews: number) {
   const image = texture.image as { width?: number; height?: number };
   const canvasWidth = image.width || DEFAULT_PRINT_TEXTURE_SIZE.width;
   const canvasHeight = image.height || DEFAULT_PRINT_TEXTURE_SIZE.height;
@@ -691,7 +718,12 @@ function resetTextureUvTransform(texture: THREE.CanvasTexture, panoramic: boolea
   // alrededor del centro para corregir el espejo sin invertir el eje vertical.
   texture.center.set(0.5, 0.5);
   texture.repeat.set(-Math.abs(repeatX), 1.0);
-  texture.offset.set(panoramic ? frontTextureOffset : 0, 0);
+  // Con repeat.x negativo, el centro de la cara física frontal (U=.5) cae en
+  // U=.5+offset. Lo alineamos al centro del primer segmento (U=.5/N), dejando
+  // la costura entre segmentos y no en el centro de la cámara.
+  // El panorama se dibuja de U=0 a U=1. Mantener el offset en cero evita
+  // desplazar globalmente la costura; la cámara se alinea con cada segmento.
+  texture.offset.set(0, 0);
   texture.rotation = 0;
   texture.matrixAutoUpdate = true;
   texture.needsUpdate = true;
@@ -700,6 +732,8 @@ function resetTextureUvTransform(texture: THREE.CanvasTexture, panoramic: boolea
     canvasHeight,
     canvasAspect,
     cylinderAspect,
+    totalViews: Math.max(1, totalViews),
+    frontSegmentCenterU: 0.5 / Math.max(1, totalViews),
     repeatX: texture.repeat.x,
     offsetX: texture.offset.x,
     center: texture.center.toArray(),
@@ -736,29 +770,7 @@ function normalizePanoramicUvSeam(mesh: THREE.Mesh) {
   });
 }
 
-function getPanoramicFrontTextureOffset(mesh: THREE.Mesh, viewCount: number) {
-  const positions = mesh.geometry.getAttribute('position');
-  const range = panoramicUvRange(mesh);
-  if (!positions?.count || !range || positions.count !== range.uv.count) return 0.5 / Math.max(1, viewCount);
-
-  let phaseCos = 0;
-  let phaseSin = 0;
-  for (let index = 0; index < positions.count; index += 1) {
-    const angle = Math.atan2(positions.getZ(index), positions.getX(index));
-    const originalU = range.uv.getX(index);
-    const u = range.hasOpenSeam ? (originalU - range.minU) / range.span : originalU;
-    const phase = angle - 2 * Math.PI * u;
-    phaseCos += Math.cos(phase);
-    phaseSin += Math.sin(phase);
-  }
-
-  const phaseOffset = Math.atan2(phaseSin, phaseCos);
-  const frontUv = (((Math.PI / 2 - phaseOffset) / (2 * Math.PI)) % 1 + 1) % 1;
-  const mirroredFrontUv = (1 - frontUv + 1) % 1;
-  return (0.5 / Math.max(1, viewCount) - mirroredFrontUv + 1) % 1;
-}
-
-function GLBModel({ url, texture, panoramic, viewCount, frontTextureOffset, onSurfaceAspectChange, onTextureOffsetChange, partColors, componentColors, enabledMeshNames }: { url: string; texture: THREE.CanvasTexture; panoramic: boolean; viewCount: number; frontTextureOffset: number; onSurfaceAspectChange: (aspectRatio: number) => void; onTextureOffsetChange: (offset: number) => void; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[] }) {
+function GLBModel({ url, texture, panoramic, viewCount, onSurfaceAspectChange, partColors, componentColors, enabledMeshNames }: { url: string; texture: THREE.CanvasTexture; panoramic: boolean; viewCount: number; onSurfaceAspectChange: (aspectRatio: number) => void; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[] }) {
   const gltf = useGLTF(url);
   useEffect(() => {
     const meshes: Array<Record<string, unknown>> = [];
@@ -813,15 +825,10 @@ function GLBModel({ url, texture, panoramic, viewCount, frontTextureOffset, onSu
         aspectRatio,
       });
     }
-    if (panoramic && printMesh) {
-      const textureOffset = getPanoramicFrontTextureOffset(printMesh, viewCount);
-      onTextureOffsetChange(textureOffset);
-      console.info('[Product3DViewer] Alineación UV del frente:', { textureOffset, viewCount });
-    }
     console.info(`[Product3DViewer] GLB cargado: ${url}`);
     if (meshes.length) console.table(meshes);
     else console.error(`[Product3DViewer] El GLB no contiene mallas: ${url}`);
-  }, [gltf.scene, onSurfaceAspectChange, onTextureOffsetChange, panoramic, url, viewCount]);
+  }, [gltf.scene, onSurfaceAspectChange, panoramic, url, viewCount]);
   const scene = useMemo(() => {
     const clonedScene = gltf.scene.clone(true);
     const meshes: THREE.Mesh[] = [];
@@ -882,7 +889,7 @@ function GLBModel({ url, texture, panoramic, viewCount, frontTextureOffset, onSu
           minV,
           maxV,
         });
-        resetTextureUvTransform(texture, panoramic, frontTextureOffset);
+        resetTextureUvTransform(texture, panoramic, viewCount);
       } else {
         console.error(`[Product3DViewer] La malla "${printMesh.name}" no tiene UV; no se puede proyectar el diseño.`, { url });
       }
@@ -951,7 +958,7 @@ function GLBModel({ url, texture, panoramic, viewCount, frontTextureOffset, onSu
       clonedScene.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
     }
     return clonedScene;
-  }, [gltf.scene, partColors, texture, url, componentColors, enabledMeshNames, panoramic, frontTextureOffset]);
+  }, [gltf.scene, partColors, texture, url, componentColors, enabledMeshNames, panoramic, viewCount]);
   return <primitive object={scene} />;
 }
 
@@ -992,7 +999,7 @@ function ProductModel({ product, fabricCanvas, meshSettings, partColors, compone
     console.error('[Product3DViewer] El producto llegó al Canvas sin model3dUrl.', { productId: product.id });
     return fallback;
   }
-  return <FabricTextureSurface key={product.id} fabricCanvas={fabricCanvas} phoneCase={phoneCase} panoramic={panoramic} printAspectRatio={textureAspectRatio} modelUrl={modelUrl} meshSettings={meshSettings} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} adminArea={adminArea} />;
+  return <FabricTextureSurface key={product.id} fabricCanvas={fabricCanvas} phoneCase={phoneCase} panoramic={panoramic} printAspectRatio={textureAspectRatio} modelUrl={modelUrl} meshSettings={meshSettings} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} adminArea={adminArea} totalViews={Math.max(1, product.views?.length || 1)} />;
 }
 
 export default function Product3DViewer({ product, componentColors, enabledMeshNames, showSafeAreaGuide = false, safeArea, activeViewIndex = 0, activeViewName }: { product: Product; componentColors: ComponentColors; enabledMeshNames: string[]; showSafeAreaGuide?: boolean; safeArea?: PrintAreaBounds; activeViewIndex?: number; activeViewName?: string }) {
@@ -1001,7 +1008,7 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
   const adminArea = showSafeAreaGuide ? safeArea : undefined;
   const printArea = adminArea ?? editorPrintArea;
   const model3dUrl = product.model3dUrl?.trim();
-  const viewCount = Math.max(1, Math.floor(Number(printArea?.viewCount) || 1));
+  const viewCount = Math.max(1, Math.floor(product.views?.length || Number(printArea?.viewCount) || 1));
   const viewNumber = Math.min(viewCount, Math.max(1, Math.floor(Number(printArea?.viewIndex) || 0) + 1));
   const defaultBodyColor = product.colors?.[0]?.hexColor ?? '#f8fafc';
   const adminFabricCanvas = useMemo<FabricCanvasLike>(() => {
@@ -1014,6 +1021,15 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
   const resolvedFabricCanvas = previewMode ? adminFabricCanvas : fabricCanvas;
   const previewViewCount = Math.max(1, Number(safeArea?.viewCount) || 1);
   const activeAdminViewIndex = Math.max(0, Math.min(previewViewCount - 1, activeViewIndex));
+  const [editorViewIndex, setEditorViewIndex] = useState(Math.max(0, Math.floor(Number(printArea?.viewIndex) || 0)));
+  useEffect(() => {
+    const handleViewChanged = (event: Event) => {
+      const index = Number((event as CustomEvent<{ viewIndex?: number }>).detail?.viewIndex);
+      if (Number.isFinite(index)) setEditorViewIndex(Math.max(0, Math.min(viewCount - 1, Math.floor(index))));
+    };
+    window.addEventListener('editor:view-changed', handleViewChanged);
+    return () => window.removeEventListener('editor:view-changed', handleViewChanged);
+  }, [viewCount]);
   const normalizedViewName = (activeViewName ?? safeArea?.viewName ?? '').trim().toLocaleLowerCase();
   const adminViewAngle = /espalda|back|trasera/.test(normalizedViewName)
     ? Math.PI
@@ -1070,7 +1086,7 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
         <shadowMaterial opacity={0.12} />
       </mesh>
       <Grid position={[0, -1.54, 0]} rotation={[0, 0, 0]} infiniteGrid cellSize={0.35} sectionSize={1.4} fadeDistance={12} fadeStrength={1.2} cellColor="#cbd5e1" sectionColor="#94a3b8" />
-      <ZoomableOrbitControls />
+      <ZoomableOrbitControls viewIndex={previewMode ? activeAdminViewIndex : editorViewIndex} viewCount={previewMode ? previewViewCount : viewCount} />
     </Canvas>
     <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/80 bg-white/75 px-3 py-1.5 text-[10px] font-medium text-slate-500 shadow-sm backdrop-blur">Arrastra para girar · rueda para acercar</div>
   </section>;

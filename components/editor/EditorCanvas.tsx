@@ -710,7 +710,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           if (keyedView?.printArea || keyedView?.printArea3D) {
             return logResolvedView({
               mockupUrl: baseView.mockupUrl,
-              printArea: keyedView.printArea,
+              printArea: keyedView.printArea ?? baseView.printArea,
               printArea3D: keyedView.printArea3D ?? baseView.printArea3D,
               name: baseView.name,
             });
