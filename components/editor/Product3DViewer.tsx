@@ -156,9 +156,9 @@ function renderPrintArea(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds |
   const isBackView = /back|rear|espalda|reverso|trasera/.test(normalizedView);
   const sideLeft = panoramic ? (isBackView ? target.width / 2 : 0) : 0;
   const sideWidth = panoramic ? target.width / 2 : target.width;
-  const scale = panoramic
-    ? Math.min(sideWidth / Math.max(1, bounds.width), target.height / Math.max(1, bounds.height))
-    : Math.min(target.width / Math.max(1, bounds.width), target.height / Math.max(1, bounds.height));
+  // Un solo factor para X/Y mantiene la relación de aspecto exacta del área
+  // segura. La altura de la faja es la referencia física de impresión.
+  const scale = target.height / Math.max(1, bounds.height);
   const offsetX = sideLeft + (sideWidth - bounds.width * scale) / 2 - bounds.left * scale;
   const offsetY = (target.height - bounds.height * scale) / 2 - bounds.top * scale;
   context.setTransform(1, 0, 0, 1, 0, 0);
@@ -325,9 +325,11 @@ function resetTextureUvTransform(texture: THREE.CanvasTexture, panoramic: boolea
 
   texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
-  texture.repeat.set(repeatX, 1.0);
-  texture.offset.set((1.0 - repeatX) / 2, 0);
-  texture.center.set(0, 0);
+  // El UV del GLB está orientado en sentido opuesto al lienzo. Invertimos U
+  // alrededor del centro para corregir el espejo sin invertir el eje vertical.
+  texture.center.set(0.5, 0.5);
+  texture.repeat.set(-Math.abs(repeatX), 1.0);
+  texture.offset.set(0, 0);
   texture.rotation = 0;
   texture.matrixAutoUpdate = true;
   texture.needsUpdate = true;
@@ -338,6 +340,7 @@ function resetTextureUvTransform(texture: THREE.CanvasTexture, panoramic: boolea
     cylinderAspect,
     repeatX: texture.repeat.x,
     offsetX: texture.offset.x,
+    center: texture.center.toArray(),
     wrapS: texture.wrapS,
   });
 }
