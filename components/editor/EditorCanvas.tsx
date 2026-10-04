@@ -656,7 +656,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       ) => {
         const baseView = productViews[currentViewIndex] || productViews[0];
         const selectedValues = Object.values(selectedOptionsMap).filter(Boolean);
-        const logResolvedView = (resolvedView: { mockupUrl: string; printArea: PrintArea | null; name: string }) => {
+        const logResolvedView = (resolvedView: { mockupUrl: string; printArea: PrintArea | null; printArea3D?: ProductView['printArea3D']; name: string }) => {
           const hasValidPrintArea = Boolean(
             resolvedView.printArea
             && Number(resolvedView.printArea.width) > 0
@@ -682,6 +682,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           return logResolvedView({
             mockupUrl: baseView.mockupUrl || (baseView as any).url,
             printArea: baseView.printArea,
+            printArea3D: baseView.printArea3D,
             name: baseView.name,
           });
         }
@@ -702,13 +703,15 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             return logResolvedView({
               mockupUrl: keyedView.mockupUrl,
               printArea: keyedView.printArea || baseView.printArea,
+              printArea3D: keyedView.printArea3D ?? baseView.printArea3D,
               name: baseView.name,
             });
           }
-          if (keyedView?.printArea) {
+          if (keyedView?.printArea || keyedView?.printArea3D) {
             return logResolvedView({
               mockupUrl: baseView.mockupUrl,
               printArea: keyedView.printArea,
+              printArea3D: keyedView.printArea3D ?? baseView.printArea3D,
               name: baseView.name,
             });
           }
@@ -718,6 +721,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             return logResolvedView({
               mockupUrl: perViewMockup,
               printArea: value.printArea || baseView.printArea,
+              printArea3D: baseView.printArea3D,
               name: baseView.name,
             });
           }
@@ -730,11 +734,12 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             );
             // `null`/cadena vacía significa explícitamente: no sustituir esta
             // cara. Se ignora la variante y se permite el fallback base.
-            if (!matchedView?.mockupUrl) continue;
+            if (!matchedView || (!matchedView.mockupUrl && !matchedView.printArea && !matchedView.printArea3D)) continue;
             console.log('✅ [RESOLVER VISTA] Usando vista dinámica específica:', matchedView);
             return logResolvedView({
-              mockupUrl: matchedView.mockupUrl,
+              mockupUrl: matchedView.mockupUrl || baseView.mockupUrl,
               printArea: matchedView.printArea || baseView.printArea,
+              printArea3D: matchedView.printArea3D ?? baseView.printArea3D,
               name: baseView.name,
             });
           }
@@ -749,6 +754,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         return logResolvedView({
           mockupUrl: selectedColorMockup || baseView.mockupUrl || (baseView as any).url,
           printArea: baseView.printArea,
+          printArea3D: baseView.printArea3D,
           name: baseView.name,
         });
       };
@@ -757,7 +763,17 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (!view.printArea || Number(view.printArea.width) <= 0 || Number(view.printArea.height) <= 0) {
           return DEFAULT_PANORAMIC_PRINT_AREA;
         }
-        if (view.printAreaUnit === 'percent') {
+        const areaValues = [
+          Number(view.printArea.x),
+          Number(view.printArea.y),
+          Number(view.printArea.width),
+          Number(view.printArea.height),
+        ];
+        const isValidPercentArea = view.printAreaUnit === 'percent'
+          && areaValues.every((value) => Number.isFinite(value) && value >= 0 && value <= 100)
+          && areaValues[0] + areaValues[2] <= 100
+          && areaValues[1] + areaValues[3] <= 100;
+        if (isValidPercentArea) {
           return view.printArea;
         }
         // Compatibilidad con el catálogo creado antes de usar porcentajes.
@@ -869,6 +885,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const applyPrintAreaClipping = (view = activeView) => {
         canvas.getObjects().forEach((object: any) => applyPrintAreaClip(object, view));
       };
+      const clipAddedDesignObject = (event: any) => applyPrintAreaClip(event?.target);
 
       // Una variante puede usar una imagen diferente para cada cara del
       // producto. Si no existe ese mapa, se conserva su mockup general.
@@ -1080,12 +1097,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // vuelve a deducir desde color/base después de que el resolver decide.
       const loadResolvedViewBackground = async (
         view: ProductView,
-        resolvedView: { mockupUrl: string; printArea: PrintArea; name?: string },
+        resolvedView: { mockupUrl: string; printArea: PrintArea; printArea3D?: ProductView['printArea3D']; name?: string },
       ) => {
         const resolvedCanvasView: ProductView = {
           ...view,
           mockupUrl: resolvedView.mockupUrl,
           printArea: resolvedView.printArea,
+          printArea3D: resolvedView.printArea3D ?? view.printArea3D,
           printAreaUnit: 'percent',
         };
         activeView = resolvedCanvasView;
@@ -1116,6 +1134,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           ...view,
           mockupUrl: resolvedView.mockupUrl,
           printArea: resolvedView.printArea,
+          printArea3D: resolvedView.printArea3D ?? view.printArea3D,
           printAreaUnit: 'percent',
         };
         setCurrentMockupUrl(resolvedView.mockupUrl);
@@ -1394,14 +1413,28 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             y: activeMockupBounds.top + (Number(point.y) / 100) * activeMockupBounds.height,
           })),
         };
+        const logicalSize = logicalCanvasSize();
         (window as any).__editorPrintArea = {
           left: renderedArea.x,
           top: renderedArea.y,
           width: renderedArea.width,
           height: renderedArea.height,
+          canvasWidth: logicalSize.width,
+          canvasHeight: logicalSize.height,
+          surface3D: activeView?.printSurface3DMode === 'custom' ? activeView.printSurface3D : undefined,
+          surface3DMode: activeView?.printSurface3DMode,
+          shape: renderedArea.shape,
+          radius: renderedArea.radius,
+          polygon: renderedArea.polygon,
+          viewIndex: Math.max(0, baseProductViews.findIndex((view) => view.id === activeView?.id)),
+          viewCount: Math.max(1, baseProductViews.length),
           viewId: activeView?.id,
           viewName: activeView?.name,
+          printArea3D: activeView?.printArea3D,
         };
+        const printAreasByView = (window as any).__editorPrintAreasByView ?? {};
+        printAreasByView[activeView?.id ?? ''] = (window as any).__editorPrintArea;
+        (window as any).__editorPrintAreasByView = printAreasByView;
         window.dispatchEvent(new CustomEvent('editor:print-area-changed', {
           detail: (window as any).__editorPrintArea,
         }));
@@ -1676,6 +1709,86 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         return JSON.stringify((serializedCanvas.objects || []).filter((obj: any) => !obj.isDesignBackground));
       };
 
+      const publish3DViewSnapshots = () => {
+        const currentViewId = currentViewIdRef.current;
+        const currentObjects = snapshotCurrentObjects();
+        canvasDataRef.current[currentViewId] = currentObjects;
+        const currentAreas = (window as any).__editorPrintAreasByView ?? {};
+        const viewCount = Math.max(1, baseProductViews.length);
+        const views = baseProductViews.map((view, viewIndex) => {
+          const area = currentAreas[view.id] ?? (() => {
+            const percentArea = getBasePercentPrintArea(view);
+            return {
+              left: percentArea.x * 8,
+              top: percentArea.y * 8,
+              width: percentArea.width * 8,
+              height: percentArea.height * 8,
+              canvasWidth: ADMIN_BASE_SIZE,
+              canvasHeight: ADMIN_BASE_SIZE,
+              shape: percentArea.shape,
+              radius: percentArea.radius,
+              polygon: percentArea.polygon?.map((point) => ({ x: Number(point.x) * 8, y: Number(point.y) * 8 })),
+              surface3D: view.printSurface3DMode === 'custom' ? view.printSurface3D : undefined,
+              surface3DMode: view.printSurface3DMode,
+            };
+          })();
+          let objects: any[] = [];
+          try {
+            const serialized = view.id === currentViewId ? currentObjects : canvasDataRef.current[view.id];
+            const parsed = serialized ? JSON.parse(serialized) : [];
+            objects = Array.isArray(parsed) ? parsed : [];
+          } catch {
+            objects = [];
+          }
+          const resolvedView = resolveCurrentViewData(baseProductViews, viewIndex, activeOptionSelections);
+          const configured3D = resolvedView.printArea3D ?? view.printArea3D;
+          const fallback2D = resolvedView.printArea ?? view.printArea;
+          const hasVariantArea3D = Object.values(activeOptionSelections).some((variant) =>
+            variant.views?.some((variantView) =>
+              (variantView.viewId === view.id || variantView.name.trim().toLowerCase() === view.name.trim().toLowerCase())
+              && Boolean(variantView.printArea3D),
+            ),
+          );
+          const projectionSource = configured3D ? (hasVariantArea3D ? 'variante.printArea3D' : 'producto.printArea3D') : fallback2D ? 'printArea2D (fallback)' : 'sin área';
+          const fallbackScale = view.printAreaUnit === 'percent' ? 1 : 100 / ADMIN_BASE_SIZE;
+          const configuredArea = configured3D ?? (fallback2D ? {
+            ...fallback2D,
+            x: Number(fallback2D.x) * fallbackScale,
+            y: Number(fallback2D.y) * fallbackScale,
+            left: Number(fallback2D.x ?? fallback2D.left ?? 0) * fallbackScale,
+            top: Number(fallback2D.y ?? fallback2D.top ?? 0) * fallbackScale,
+            width: Number(fallback2D.width) * fallbackScale,
+            height: Number(fallback2D.height) * fallbackScale,
+            polygon: fallback2D.polygon?.map((point) => ({ x: point.x * fallbackScale, y: point.y * fallbackScale })),
+          } : undefined);
+          const projectionArea = configuredArea ? {
+            left: Number(configuredArea.x ?? configuredArea.left ?? 0),
+            top: Number(configuredArea.y ?? configuredArea.top ?? 0),
+            width: Number(configuredArea.width ?? 100),
+            height: Number(configuredArea.height ?? 100),
+            shape: configuredArea.shape,
+            radius: configuredArea.radius,
+            polygon: configured3D ? configured3D.nodes ?? configured3D.polygon : configuredArea.polygon,
+          } : undefined;
+          console.log('[EditorCanvas] Área que se publica para textura 3D:', JSON.stringify({
+            viewId: view.id,
+            viewName: view.name,
+            viewIndex,
+            currentViewId,
+            source2D: { left: area.left, top: area.top, width: area.width, height: area.height, canvasWidth: area.canvasWidth, canvasHeight: area.canvasHeight },
+            configuredPrintArea3D: configured3D ? { x: configured3D.x, y: configured3D.y, left: configured3D.left, top: configured3D.top, width: configured3D.width, height: configured3D.height, nodes: configured3D.nodes ?? configured3D.polygon } : null,
+            projectionSource,
+            projectionArea,
+            selectedVariants: Object.values(activeOptionSelections).map((variant) => ({ id: variant.id, label: variant.label })),
+          }));
+          return { viewId: view.id, viewName: view.name, viewIndex, viewCount, area: { ...area, viewId: view.id, viewName: view.name, viewIndex, viewCount }, projectionArea, objects };
+        });
+        (window as any).__editor3DViews = views;
+        window.dispatchEvent(new CustomEvent('editor:3d-views-changed', {
+          detail: { currentViewId, views },
+        }));
+      };
+
       // Genera una miniatura del escenario completo sin alterar la exportación
       // normal. Los mockups se excluyen de los archivos de impresión, pero sí
       // deben aparecer aquí para que la tarjeta sea reconocible de un vistazo.
@@ -1868,6 +1981,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         updateHistoryButtons();
         canvas.requestRenderAll();
         captureViewThumbnail(viewId, true);
+        publish3DViewSnapshots();
         window.dispatchEvent(new CustomEvent('editor:canvas-usage-refresh'));
       };
 
@@ -1967,6 +2081,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           views,
           canvasJSON,
         };
+        publish3DViewSnapshots();
         if (saveDraft(draft)) setDraftStatus('saved');
       };
 
@@ -2011,6 +2126,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         await initialProductSetup;
         if (!draft || fabricCanvasRef.current !== canvas) {
           isHydratingDraftRef.current = false;
+          publish3DViewSnapshots();
           return;
         }
 
@@ -2036,6 +2152,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           activeOptionSelections,
         );
         await loadResolvedViewBackground(restoredView, restoredResolvedView);
+        publish3DViewSnapshots();
         historyRef.current = [snapshotCurrentObjects()];
         redoStackRef.current = [];
         updateHistoryButtons();
@@ -4124,6 +4241,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       emitSmartInputs();
       window.addEventListener('editor:save-as-template', handleExportTemplate);
 
+      canvas.on('object:added', clipAddedDesignObject);
       canvas.on('object:added', saveState);
       canvas.on('object:modified', saveState);
       canvas.on('object:removed', saveState);
@@ -4290,6 +4408,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if ((window as any).__editorFabricCanvas === fabricCanvasRef.current) {
           delete (window as any).__editorFabricCanvas;
           delete (window as any).__editorPrintArea;
+          delete (window as any).__editorPrintAreasByView;
+          delete (window as any).__editor3DViews;
         }
         fabricCanvasRef.current.dispose();
         fabricCanvasRef.current = null;

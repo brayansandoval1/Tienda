@@ -48,9 +48,28 @@ export interface SafeAreaPoint {
 export interface PrintAreaBox extends SafeAreaModifiers {
   x: number;
   y: number;
+  /** Alias geométricos para integraciones que usan left/top. */
+  left?: number;
+  top?: number;
   width: number;
   height: number;
 }
+
+/** Zona segura calibrada directamente sobre la faja UV desplegada de una vista. */
+export interface PrintArea3DBox extends PrintAreaBox {
+  /** Alias semántico de `polygon` para los nodos del editor de faja. */
+  nodes?: SafeAreaPoint[];
+}
+
+export interface MeshSettings {
+  textureWidth: number;
+  textureHeight: number;
+}
+
+export const DEFAULT_MESH_SETTINGS: MeshSettings = {
+  textureWidth: 2048,
+  textureHeight: 512,
+};
 
 /**
  * Zona de estampado expresada en porcentaje (0-100) respecto a la imagen base.
@@ -97,11 +116,17 @@ export interface ProductView {
   /** Capa opcional para composiciones de mockup más complejas. */
   overlayUrl?: string;
   printArea: PrintAreaBox;
+  /** Zona segura independiente dibujada sobre la faja UV desplegada. */
+  printArea3D?: PrintArea3DBox;
   /** Las áreas creadas desde el panel actual se guardan relativas al mockup. */
   printAreaUnit?: 'pixels' | 'percent';
+  /** Área UV editable del panel 3D; si falta, se deriva automáticamente de printArea. */
+  printSurface3D?: { x: number; y: number; width: number; height: number };
+  /** Solo los ajustes explícitos nuevos sustituyen el cálculo automático. */
+  printSurface3DMode?: 'automatic' | 'custom';
 }
 
-export interface ProductOptionValue {
+export interface ProductVariant {
   id: string;
   label: string;
   priceModifier: number;
@@ -115,11 +140,17 @@ export interface ProductOptionValue {
   thumbnailUrl?: string;
   /** Zona segura opcional que sustituye la zona base al elegir este valor. */
   printArea?: PrintAreaBox | null;
+  /** Resolución preferida para la textura 3D de esta variante. */
+  meshSettings?: MeshSettings;
 }
+
+/** Alias compatible con el nombre histórico usado por la tienda. */
+export type ProductOptionValue = ProductVariant;
 
 export interface ProductOptionViewConfig {
   mockupUrl?: string | null;
   printArea?: ProductView['printArea'] | null;
+  printArea3D?: ProductView['printArea3D'] | null;
   name?: string;
 }
 
@@ -128,6 +159,10 @@ export interface ProductOptionView {
   name: string;
   mockupUrl?: string | null;
   printArea?: PrintAreaBox | null;
+  printArea3D?: PrintArea3DBox | null;
+  /** Marco proyectado en el panel UV del modelo para esta vista/variante. */
+  printSurface3D?: { x: number; y: number; width: number; height: number };
+  printSurface3DMode?: 'automatic' | 'custom';
 }
 
 export interface ProductOption {
@@ -186,6 +221,8 @@ export interface Product {
   printHeightCm?: number;
   /** Ruta pública o URL al modelo 3D GLB/GLTF usado por el visor del editor. */
   model3dUrl?: string;
+  /** Resolución base de las texturas UV del modelo 3D. */
+  meshSettings?: MeshSettings;
   /** Mallas del modelo 3D expuestas como controles de color al cliente. */
   customizableParts?: CustomizablePart[];
   /** Variantes globales reutilizables por todas las vistas del producto. */
@@ -334,6 +371,7 @@ export const PRODUCTS: Product[] = [
     price: 29.99,
     canvasWidth: 800,
     canvasHeight: 800,
+    model3dUrl: '/models/termo0.glb',
     colors: [
       { id: 'blanco', name: 'Blanco', hexColor: '#FFFFFF', mockupUrl: 'https://picsum.photos/id/30/800/800' },
       { id: 'negro', name: 'Negro Matte', hexColor: '#18181b', mockupUrl: 'https://picsum.photos/id/31/800/800' },

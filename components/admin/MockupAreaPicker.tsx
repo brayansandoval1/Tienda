@@ -12,6 +12,9 @@ import {
 export type PrintArea = {
   x: number;
   y: number;
+  /** Alias persistido para consumidores que esperan left/top. */
+  left?: number;
+  top?: number;
   width: number;
   height: number;
   shape?: SafeAreaShape;
@@ -45,6 +48,8 @@ export const normalizePrintArea = (area: PrintArea): PrintArea => {
     const box = polygonBounds(polygon);
     return {
       ...box,
+      left: box.x,
+      top: box.y,
       ...(shape !== 'rect' ? { shape } : {}),
       ...(shape === 'rounded' ? { radius } : {}),
       polygon,
@@ -55,6 +60,8 @@ export const normalizePrintArea = (area: PrintArea): PrintArea => {
   return {
     x: Math.min(100 - width, Math.max(0, Number.isFinite(area.x) ? area.x : 25)),
     y: Math.min(100 - height, Math.max(0, Number.isFinite(area.y) ? area.y : 25)),
+    left: Math.min(100 - width, Math.max(0, Number.isFinite(area.x) ? area.x : 25)),
+    top: Math.min(100 - height, Math.max(0, Number.isFinite(area.y) ? area.y : 25)),
     width,
     height,
     ...(shape !== 'rect' ? { shape } : {}),
@@ -76,6 +83,8 @@ const SHAPE_OPTIONS: Array<{ value: SafeAreaShape; label: string; hint: string }
 
 interface MockupAreaPickerProps {
   mockupUrl?: string;
+  /** Opacidad de la imagen de referencia bajo los nodos. */
+  imageOpacity?: number;
   initialPrintArea: PrintArea;
   onChange: (newPrintArea: PrintArea) => void;
   /** Muestra la guía sin permitir arrastrarla (vista previa de la zona heredada). */
@@ -104,7 +113,7 @@ interface MockupAreaPickerProps {
  * - Arrastrar el interior mueve toda la forma.
  * - Los botones de forma generan la semilla de nodos editable (4/16/16).
  */
-export default function MockupAreaPicker({ mockupUrl, initialPrintArea, onChange, readOnly = false, fallbackLabel, aspectRatio, hideShapeControls = false }: MockupAreaPickerProps) {
+export default function MockupAreaPicker({ mockupUrl, imageOpacity = 1, initialPrintArea, onChange, readOnly = false, fallbackLabel, aspectRatio, hideShapeControls = false }: MockupAreaPickerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ mode: DragMode; startX: number; startY: number; points: SafeAreaPoint[] } | null>(null);
   const area = normalizePrintArea(initialPrintArea);
@@ -215,8 +224,8 @@ export default function MockupAreaPicker({ mockupUrl, initialPrintArea, onChange
       className="relative aspect-square w-full max-w-[800px] rounded-lg border bg-slate-100 touch-none select-none"
     >
       {mockupUrl
-        ? <img src={mockupUrl} alt="Vista previa del mockup" className="pointer-events-none absolute inset-0 h-full w-full rounded-lg object-contain" />
-        : <div className="flex h-full items-center justify-center p-8 text-center text-xs text-slate-400">{fallbackLabel ?? 'Añade una URL de mockup para ver la zona sobre la imagen.'}</div>}
+        ? <img src={mockupUrl} alt="Vista previa del mockup" style={{ opacity: imageOpacity }} className="pointer-events-none absolute inset-0 h-full w-full rounded-lg object-contain" />
+        : <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-xs text-slate-400">{fallbackLabel ?? 'Añade una URL de mockup para ver la zona sobre la imagen.'}</div>}
 
       {/* SVG 0-100 = porcentaje exacto del contenedor, igual que el plano lógico
           del editor. `preserveAspectRatio="none"` evita distorsión con aspect-ratio. */}
@@ -301,4 +310,3 @@ export default function MockupAreaPicker({ mockupUrl, initialPrintArea, onChange
     )}
   </div>;
 }
-

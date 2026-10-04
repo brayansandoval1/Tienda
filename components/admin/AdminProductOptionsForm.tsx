@@ -4,6 +4,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import type { ProductOption, ProductOptionValue, ProductOptionView } from '@/src/store/useProductStore';
 import MockupAreaPicker, { normalizePrintArea, type PrintArea } from '@/components/admin/MockupAreaPicker';
 import { compressImageFileToDataUrl } from '@/src/utils/imageCompression';
+import { DEFAULT_MESH_SETTINGS } from '@/src/config/products';
 
 interface AdminProductOptionsFormProps {
   options: ProductOption[];
@@ -11,12 +12,17 @@ interface AdminProductOptionsFormProps {
   onChange: (options: ProductOption[]) => void;
 }
 
-const newValue = (baseViews: AdminProductOptionsFormProps['baseViews']) => ({ id: crypto.randomUUID(), label: '', priceModifier: 0, thumbnailUrl: '', printArea: null, views: baseViews.map((view) => ({ viewId: view.id, name: view.name, mockupUrl: null, printArea: null })) });
+const newValue = (baseViews: AdminProductOptionsFormProps['baseViews']) => ({ id: crypto.randomUUID(), label: '', priceModifier: 0, thumbnailUrl: '', printArea: null, meshSettings: baseViews.some((view) => view.printArea) ? { ...DEFAULT_MESH_SETTINGS } : undefined, views: baseViews.map((view) => ({ viewId: view.id, name: view.name, mockupUrl: null, printArea: null })) });
 const newOption = (baseViews: AdminProductOptionsFormProps['baseViews']): ProductOption => ({ id: crypto.randomUUID(), name: '', type: 'radio', displayType: 'radio', values: [newValue(baseViews)] });
 
 export default function AdminProductOptionsForm({ options, baseViews, onChange }: AdminProductOptionsFormProps) {
   const updateOption = (index: number, update: Partial<ProductOption>) => onChange(options.map((option, optionIndex) => optionIndex === index ? { ...option, ...update } : option));
-  const updateValue = <K extends keyof ProductOptionValue>(optionIndex: number, valueIndex: number, field: K, value: ProductOptionValue[K]) => onChange(options.map((option, index) => index !== optionIndex ? option : { ...option, values: option.values.map((item, itemIndex) => itemIndex === valueIndex ? { ...item, [field]: value } : item) }));
+  const updateValue = <K extends keyof ProductOptionValue>(optionIndex: number, valueIndex: number, field: K, value: ProductOptionValue[K]) => onChange(options.map((option, index) => index !== optionIndex ? option : { ...option, values: option.values.map((item, itemIndex) => {
+    if (itemIndex !== valueIndex) return item;
+    const updated = { ...item, [field]: value } as ProductOptionValue;
+    const hasPrintArea = Boolean(updated.printArea) || Boolean(updated.views?.some((view) => view.printArea));
+    return hasPrintArea ? { ...updated, meshSettings: updated.meshSettings ?? { ...DEFAULT_MESH_SETTINGS } } : updated;
+  }) }));
   const getConfiguredViews = (value: ProductOptionValue): ProductOptionView[] => baseViews.map((baseView) => {
     const configuredView = value.views?.find((view) => view.viewId === baseView.id);
     return configuredView ?? { viewId: baseView.id, name: baseView.name, mockupUrl: null, printArea: null };

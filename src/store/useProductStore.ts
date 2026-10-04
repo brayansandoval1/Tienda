@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { type Product, PRODUCTS as initialProducts } from '@/src/config/products';
 
-export type { ColorVariant, CustomizablePart, Product, ProductOption, ProductOptionValue, ProductOptionView, ProductView } from '@/src/config/products';
+export type { ColorVariant, CustomizablePart, MeshSettings, PrintArea3DBox, Product, ProductOption, ProductOptionValue, ProductOptionView, ProductVariant, ProductView } from '@/src/config/products';
 
 export interface ProductState {
   products: Product[];

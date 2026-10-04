@@ -2,20 +2,25 @@
 
 import { FormEvent, type InputHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Camera, Eye, Info, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
+import dynamic from 'next/dynamic';
+import { Camera, Info, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
 import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { useProductStore, type CustomizablePart, type Product, type ProductOption } from '@/src/store/useProductStore';
+import { useProductStore, type CustomizablePart, type Product, type ProductOption, type ProductOptionValue } from '@/src/store/useProductStore';
 import type { Addon } from '@/types/addon';
 import { getAddons, updateAddon } from '@/services/addonsService.js';
 import { compressImageFileToDataUrl } from '@/src/utils/imageCompression';
 import AdminProductOptionsForm from '@/components/admin/AdminProductOptionsForm';
 import MockupAreaPicker, { normalizePrintArea, type PrintArea } from '@/components/admin/MockupAreaPicker';
+import PrintArea3DEditor from '@/components/admin/PrintArea3DEditor';
 import GLBModelPreview from '@/components/admin/GLBModelPreview';
-import type { SafeAreaPoint, SafeAreaShape } from '@/src/config/products';
+import { DEFAULT_MESH_SETTINGS, type MeshSettings, type SafeAreaPoint, type SafeAreaShape } from '@/src/config/products';
+import { seedSafeAreaPolygon } from '@/src/utils/safeAreaPolygon';
 
-type ProductViewForm = { id: string; name: string; mockupUrl: string; x: string; y: string; width: string; height: string; shape: SafeAreaShape; radius: string; /** Nodos del contorno libre serializados ('' = forma paramétrica). */ polygon: string };
-type ProductForm = { name: string; price: string; category: string; printWidthCm: string; printHeightCm: string; model3dUrl: string; hasMultipleSides: boolean; extraSidePrice: string; fullWrapPrice: string; sidesPricingMode: 'per_side' | 'wrap'; setupFee: string; minimumQuantity: string; volumeDiscounts: Array<{ minQty: string; discountPercentage: string }>; availableAddonIds: string[]; customizableParts: CustomizablePart[]; options: ProductOption[]; views: ProductViewForm[] };
+const Product3DViewer = dynamic(() => import('@/components/editor/Product3DViewer'), { ssr: false, loading: () => <div className="grid h-full min-h-[280px] place-items-center text-xs text-slate-500">Cargando visor 3D…</div> });
+
+type ProductViewForm = { id: string; name: string; mockupUrl: string; x: string; y: string; width: string; height: string; shape: SafeAreaShape; radius: string; /** Nodos del contorno libre serializados ('' = forma paramétrica). */ polygon: string; area3D: PrintArea; surfaceX: string; surfaceY: string; surfaceWidth: string; surfaceHeight: string; surfaceCustomized: boolean };
+type ProductForm = { name: string; price: string; category: string; printWidthCm: string; printHeightCm: string; model3dUrl: string; textureWidth: string; textureHeight: string; hasMultipleSides: boolean; extraSidePrice: string; fullWrapPrice: string; sidesPricingMode: 'per_side' | 'wrap'; setupFee: string; minimumQuantity: string; volumeDiscounts: Array<{ minQty: string; discountPercentage: string }>; availableAddonIds: string[]; customizableParts: CustomizablePart[]; options: ProductOption[]; views: ProductViewForm[] };
 type MeshInspection = { name: string; vertexCount: number; triangleCount: number; dimensions: string; materialNames: string[]; uvCount: number; uvRange: string | null; uvOutsideCount: number; overlappingUvTriangles: number };
 type MeshInspectionState = { status: 'idle' | 'loading' | 'success' | 'error'; message: string; meshes: MeshInspection[] };
 
@@ -34,6 +39,10 @@ const parsePolygonForm = (raw: string): SafeAreaPoint[] | undefined => {
   } catch {
     return undefined;
   }
+};
+const ensureVariantMeshSettings = (variant: ProductOptionValue, fallback: MeshSettings): ProductOptionValue => {
+  const hasPrintArea = Boolean(variant.printArea) || Boolean(variant.views?.some((view) => view.printArea));
+  return hasPrintArea ? { ...variant, meshSettings: variant.meshSettings ?? fallback } : variant;
 };
 const inspectGLBMeshes = (scene: THREE.Object3D): MeshInspection[] => {
   const reports: MeshInspection[] = [];
@@ -105,8 +114,27 @@ const disposeInspectedGLB = (scene: THREE.Object3D) => {
     material.dispose();
   });
 };
-const createViewForm = (index: number): ProductViewForm => ({ id: index === 0 ? 'front' : `view-${crypto.randomUUID()}`, name: index === 0 ? 'Frente' : 'Espalda', mockupUrl: '', x: '25', y: '25', width: '50', height: '50', shape: 'rect', radius: '25', polygon: '' });
-const emptyForm = (): ProductForm => ({ name: '', price: '', category: '', printWidthCm: '', printHeightCm: '', model3dUrl: '', hasMultipleSides: false, extraSidePrice: '0', fullWrapPrice: '0', sidesPricingMode: 'per_side', setupFee: '0', minimumQuantity: '1', volumeDiscounts: [], availableAddonIds: [], customizableParts: [], options: [], views: [createViewForm(0)] });
+const ensureEditableNodes = (area: PrintArea): PrintArea => {
+  const normalized = normalizePrintArea(area);
+  return {
+    ...normalized,
+    polygon: normalized.polygon ?? seedSafeAreaPolygon(normalized.shape ?? 'rect', normalized.radius ?? 25, normalized),
+  };
+};
+const createViewForm = (index: number): ProductViewForm => ({ id: index === 0 ? 'front' : `view-${crypto.randomUUID()}`, name: index === 0 ? 'Frente' : 'Espalda', mockupUrl: '', x: '25', y: '25', width: '50', height: '50', shape: 'rect', radius: '25', polygon: '', area3D: ensureEditableNodes({ x: 25, y: 25, width: 50, height: 50 }), surfaceX: '25', surfaceY: '25', surfaceWidth: '50', surfaceHeight: '50', surfaceCustomized: false });
+const serializePrintArea3D = (area: PrintArea) => {
+  const normalized = ensureEditableNodes(area);
+  const nodes = normalized.polygon!;
+  return {
+    x: normalized.x, y: normalized.y, left: normalized.x, top: normalized.y,
+    width: normalized.width, height: normalized.height,
+    ...(normalized.shape ? { shape: normalized.shape } : {}),
+    ...(normalized.radius !== undefined ? { radius: normalized.radius } : {}),
+    polygon: nodes,
+    nodes,
+  };
+};
+const emptyForm = (): ProductForm => ({ name: '', price: '', category: '', printWidthCm: '', printHeightCm: '', model3dUrl: '', textureWidth: String(DEFAULT_MESH_SETTINGS.textureWidth), textureHeight: String(DEFAULT_MESH_SETTINGS.textureHeight), hasMultipleSides: false, extraSidePrice: '0', fullWrapPrice: '0', sidesPricingMode: 'per_side', setupFee: '0', minimumQuantity: '1', volumeDiscounts: [], availableAddonIds: [], customizableParts: [], options: [], views: [createViewForm(0)] });
 
 const normalizeViewIds = (views: ProductViewForm[]): ProductViewForm[] => {
   const usedIds = new Set<string>();
@@ -126,6 +154,8 @@ const toForm = (product: Product): ProductForm => ({
   printWidthCm: product.printWidthCm ? String(product.printWidthCm) : '',
   printHeightCm: product.printHeightCm ? String(product.printHeightCm) : '',
   model3dUrl: product.model3dUrl ?? '',
+  textureWidth: String(product.meshSettings?.textureWidth ?? DEFAULT_MESH_SETTINGS.textureWidth),
+  textureHeight: String(product.meshSettings?.textureHeight ?? DEFAULT_MESH_SETTINGS.textureHeight),
   hasMultipleSides: product.pricingRules?.hasMultipleSides ?? (product.views.length > 1),
   extraSidePrice: String(product.pricingSchema?.sidesPricing?.pricePerAdditionalSide ?? product.pricingRules?.extraSidePrice ?? 0),
   fullWrapPrice: String(product.pricingSchema?.sidesPricing?.wrapPrice ?? product.pricingRules?.fullWrapPrice ?? 0),
@@ -135,19 +165,58 @@ const toForm = (product: Product): ProductForm => ({
   volumeDiscounts: (product.pricingSchema?.volumeDiscounts ?? []).map((tier) => ({ minQty: String(tier.minQty), discountPercentage: String(tier.discountPercentage) })),
   availableAddonIds: product.availableAddonIds ?? [],
   customizableParts: product.customizableParts?.map((part) => ({ ...part, defaultColor: part.defaultColor || '#cbd5e1', enabled: part.enabled !== false })) ?? [],
-  options: product.options?.map((option) => ({ ...option, displayType: option.displayType ?? option.type, values: option.values.map((value) => ({ ...value, priceModifier: product.pricingSchema?.variantModifiers?.find((modifier) => modifier.variantId === value.id)?.priceDelta ?? value.priceModifier })) })) ?? [],
+  options: product.options?.map((option) => ({
+    ...option,
+    displayType: option.displayType ?? option.type,
+    values: option.values.map((value) => ensureVariantMeshSettings({
+      ...value,
+      priceModifier: product.pricingSchema?.variantModifiers?.find((modifier) => modifier.variantId === value.id)?.priceDelta ?? value.priceModifier,
+    }, product.meshSettings ?? DEFAULT_MESH_SETTINGS)),
+  })) ?? [],
   views: normalizeViewIds(product.views.map((view, index) => {
-    const percent = view.printAreaUnit === 'percent';
+    const areaX = Number(view.printArea.x);
+    const areaY = Number(view.printArea.y);
+    const areaWidth = Number(view.printArea.width);
+    const areaHeight = Number(view.printArea.height);
+    const percent = view.printAreaUnit === 'percent'
+      && [areaX, areaY, areaWidth, areaHeight].every((value) => Number.isFinite(value) && value >= 0 && value <= 100)
+      && areaX + areaWidth <= 100
+      && areaY + areaHeight <= 100;
+    const safeArea = {
+      x: cleanPercentage(normalizePercentage(percent ? areaX : (areaX * 100) / REFERENCE_WIDTH, 25)),
+      y: cleanPercentage(normalizePercentage(percent ? areaY : (areaY * 100) / REFERENCE_HEIGHT, 25)),
+      width: cleanPercentage(normalizePercentage(percent ? areaWidth : (areaWidth * 100) / REFERENCE_WIDTH, 50)),
+      height: cleanPercentage(normalizePercentage(percent ? areaHeight : (areaHeight * 100) / REFERENCE_HEIGHT, 50)),
+    };
+    const area3D = ensureEditableNodes(view.printArea3D
+      ? normalizePrintArea({
+        x: Number(view.printArea3D.x ?? view.printArea3D.left ?? safeArea.x),
+        y: Number(view.printArea3D.y ?? view.printArea3D.top ?? safeArea.y),
+        width: Number(view.printArea3D.width ?? safeArea.width),
+        height: Number(view.printArea3D.height ?? safeArea.height),
+        shape: view.printArea3D.shape ?? view.printArea.shape,
+        radius: view.printArea3D.radius ?? view.printArea.radius,
+        polygon: view.printArea3D.nodes ?? view.printArea3D.polygon,
+      })
+      : normalizePrintArea({
+        ...safeArea,
+        shape: view.printArea.shape,
+        radius: view.printArea.radius,
+        polygon: view.printArea.polygon,
+      }));
     return {
       id: view.id, name: view.name || view.label || `Vista ${index + 1}`, mockupUrl: view.mockupUrl,
-      x: String(cleanPercentage(normalizePercentage(percent ? view.printArea.x : (view.printArea.x * 100) / REFERENCE_WIDTH, 25))),
-      y: String(cleanPercentage(normalizePercentage(percent ? view.printArea.y : (view.printArea.y * 100) / REFERENCE_HEIGHT, 25))),
-      width: String(cleanPercentage(normalizePercentage(percent ? view.printArea.width : (view.printArea.width * 100) / REFERENCE_WIDTH, 50))),
-      height: String(cleanPercentage(normalizePercentage(percent ? view.printArea.height : (view.printArea.height * 100) / REFERENCE_HEIGHT, 50))),
+      x: String(safeArea.x), y: String(safeArea.y), width: String(safeArea.width), height: String(safeArea.height),
       // Zona redondeada: 'rect' (o ausente) sigue funcionando igual que antes.
       shape: view.printArea.shape === 'rounded' || view.printArea.shape === 'ellipse' ? view.printArea.shape : 'rect',
       radius: String(view.printArea.radius ?? 25),
       polygon: Array.isArray(view.printArea.polygon) && view.printArea.polygon.length >= 3 ? JSON.stringify(view.printArea.polygon) : '',
+      area3D,
+      // La proyección 3D parte de la misma zona segura 2D; valores de
+      // calibraciones antiguas no deben desplazar el contorno al editar.
+      surfaceX: String(safeArea.x), surfaceY: String(safeArea.y),
+      surfaceWidth: String(safeArea.width), surfaceHeight: String(safeArea.height),
+      surfaceCustomized: false,
     };
   })),
 });
@@ -166,16 +235,49 @@ export default function AdminProductEditor() {
   const meshInspectRequestRef = useRef(0);
   const [meshInspection, setMeshInspection] = useState<MeshInspectionState>({ status: 'idle', message: '', meshes: [] });
   const [localGLBFile, setLocalGLBFile] = useState<File | null>(null);
+  const [localGLBPreviewUrl, setLocalGLBPreviewUrl] = useState('');
   const [addonCatalog, setAddonCatalog] = useState<Addon[]>([]);
   const [addonCatalogError, setAddonCatalogError] = useState('');
   const activeView = form.views[Math.min(activeTab, form.views.length - 1)];
   const activeIndex = Math.min(activeTab, form.views.length - 1);
+  const activeArea3D = activeView ? normalizePrintArea(activeView.area3D) : null;
   const printWidth = Number(form.printWidthCm) || 0;
   const printHeight = Number(form.printHeightCm) || 0;
   const pixelsWidth = Math.round((printWidth / 2.54) * 300);
   const pixelsHeight = Math.round((printHeight / 2.54) * 300);
   const detectedMeshNames = meshInspection.meshes.map((mesh) => mesh.name);
+  useEffect(() => {
+    if (!localGLBFile) { setLocalGLBPreviewUrl(''); return; }
+    const url = URL.createObjectURL(localGLBFile);
+    setLocalGLBPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [localGLBFile]);
   const baseViews = useMemo(() => form.views.map((view) => ({ id: view.id, name: view.name || 'Vista', mockupUrl: view.mockupUrl, printArea: normalizePrintArea({ x: Number(view.x), y: Number(view.y), width: Number(view.width), height: Number(view.height), shape: view.shape, radius: Number(view.radius), polygon: parsePolygonForm(view.polygon) }) })), [form.views]);
+  const adminPreviewProduct: Product = {
+    id: selectedId ?? 'admin-product-preview', name: form.name || 'Vista previa', category: form.category,
+    price: Number(form.price) || 0, canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT,
+    printWidthCm: printWidth || undefined, printHeightCm: printHeight || undefined,
+    model3dUrl: form.model3dUrl.trim() || localGLBPreviewUrl || undefined,
+    meshSettings: { textureWidth: Number(form.textureWidth) || DEFAULT_MESH_SETTINGS.textureWidth, textureHeight: Number(form.textureHeight) || DEFAULT_MESH_SETTINGS.textureHeight },
+    pricingSchema: { sidesPricing: { mode: form.sidesPricingMode, pricePerAdditionalSide: Number(form.extraSidePrice) || 0, wrapPrice: Number(form.fullWrapPrice) || 0 } },
+    colors: products.find((product) => product.id === selectedId)?.colors,
+    customizableParts: form.customizableParts,
+    views: form.views.map((view) => ({
+      id: view.id, name: view.name || 'Vista', mockupUrl: view.mockupUrl,
+      printArea: { x: Number(view.x), y: Number(view.y), left: Number(view.x), top: Number(view.y), width: Number(view.width), height: Number(view.height), ...(view.shape !== 'rect' ? { shape: view.shape } : {}), ...(view.shape === 'rounded' ? { radius: Number(view.radius) } : {}), ...(parsePolygonForm(view.polygon) ? { polygon: parsePolygonForm(view.polygon) } : {}) },
+      printAreaUnit: 'percent',
+    })),
+  };
+  const adminArea = activeView && activeArea3D ? {
+    left: activeArea3D.x * 8, top: activeArea3D.y * 8,
+    width: activeArea3D.width * 8, height: activeArea3D.height * 8,
+    canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT,
+    shape: activeArea3D.shape,
+    radius: activeArea3D.radius,
+    polygon: activeArea3D.polygon?.map((point) => ({ x: point.x * 8, y: point.y * 8 })),
+    viewIndex: activeIndex, viewCount: Math.max(1, form.views.length), viewId: activeView.id, viewName: activeView.name,
+  } : null;
+  const area3DAspectRatio = Number(form.textureWidth) / Math.max(1, Number(form.textureHeight) * Math.max(1, form.views.length));
   const filteredProducts = useMemo(() => products.filter((product) => `${product.name} ${product.category}`.toLowerCase().includes(productQuery.trim().toLowerCase())), [products, productQuery]);
 
   useEffect(() => { if (activeTab >= form.views.length) setActiveTab(Math.max(0, form.views.length - 1)); }, [activeTab, form.views.length]);
@@ -273,7 +375,34 @@ export default function AdminProductEditor() {
   const updateCustomizablePart = (index: number, patch: Partial<CustomizablePart>) => setForm((current) => ({ ...current, customizableParts: current.customizableParts.map((part, partIndex) => partIndex === index ? { ...part, ...patch } : part) }));
   const addCustomizablePart = () => setForm((current) => ({ ...current, customizableParts: [...current.customizableParts, { id: crypto.randomUUID(), label: '', meshName: '', defaultColor: '#cbd5e1', enabled: true }] }));
   const setViewField = (index: number, field: keyof ProductViewForm, value: string) => setForm((current) => ({ ...current, views: current.views.map((view, viewIndex) => viewIndex === index ? { ...view, [field]: value } : view) }));
-  const setViewPrintArea = (index: number, area: PrintArea) => setForm((current) => ({ ...current, views: current.views.map((view, viewIndex) => viewIndex === index ? { ...view, x: String(area.x), y: String(area.y), width: String(area.width), height: String(area.height), shape: area.shape ?? 'rect', radius: String(area.radius ?? 25), polygon: area.polygon && area.polygon.length >= 3 ? JSON.stringify(area.polygon) : '' } : view) }));
+  const setViewPrintArea = (index: number, area: PrintArea) => setForm((current) => ({ ...current, views: current.views.map((view, viewIndex) => viewIndex !== index ? view : {
+    ...view,
+    x: String(area.x), y: String(area.y), width: String(area.width), height: String(area.height),
+    shape: area.shape ?? 'rect', radius: String(area.radius ?? 25),
+    polygon: area.polygon && area.polygon.length >= 3 ? JSON.stringify(area.polygon) : '',
+    // La zona 3D sigue la 2D en tiempo real. El ajuste manual vuelve a estar
+    // disponible desde este estado después de editar el marco azul.
+    surfaceX: String(area.x), surfaceY: String(area.y), surfaceWidth: String(area.width), surfaceHeight: String(area.height),
+    surfaceCustomized: false,
+  }) }));
+  const setViewArea3D = (index: number, area: PrintArea) => setForm((current) => ({
+    ...current,
+    views: current.views.map((view, viewIndex) => viewIndex === index
+      ? { ...view, area3D: normalizePrintArea(area) }
+      : view),
+  }));
+  const resetViewArea3DFrom2D = (index: number) => setForm((current) => ({
+    ...current,
+    views: current.views.map((view, viewIndex) => viewIndex === index
+      ? {
+        ...view,
+        area3D: ensureEditableNodes({
+          x: Number(view.x), y: Number(view.y), width: Number(view.width), height: Number(view.height),
+          shape: view.shape, radius: Number(view.radius), polygon: parsePolygonForm(view.polygon),
+        }),
+      }
+      : view),
+  }));
   const handleAddView = () => setForm((current) => { const next = [...current.views, createViewForm(current.views.length)]; setActiveTab(next.length - 1); return { ...current, views: next }; });
   const removeView = (index: number) => setForm((current) => ({ ...current, views: current.views.filter((_, viewIndex) => viewIndex !== index) }));
   const resetForm = () => { setSelectedId(null); setForm(emptyForm()); setLocalGLBFile(null); setMeshInspection({ status: 'idle', message: '', meshes: [] }); setActiveTab(0); };
@@ -295,24 +424,42 @@ export default function AdminProductEditor() {
     event.preventDefault();
     const setupFee = Number(form.setupFee);
     const minimumQuantity = Number(form.minimumQuantity);
+    const textureWidth = Number(form.textureWidth);
+    const textureHeight = Number(form.textureHeight);
     const volumeDiscounts = form.volumeDiscounts.map((tier) => ({ minQty: Number(tier.minQty), discountPercentage: Number(tier.discountPercentage) }));
     if (!Number.isFinite(setupFee) || setupFee < 0) { alert('El cargo de preparación debe ser un monto igual o mayor a cero.'); return; }
     if (!Number.isInteger(minimumQuantity) || minimumQuantity < 1) { alert('La cantidad mínima debe ser un número entero igual o mayor a uno.'); return; }
+    if (!Number.isInteger(textureWidth) || textureWidth < 1 || !Number.isInteger(textureHeight) || textureHeight < 1) { alert('El ancho y alto de textura 3D deben ser enteros positivos.'); return; }
     if (volumeDiscounts.some((tier) => !Number.isInteger(tier.minQty) || tier.minQty < 1 || !Number.isFinite(tier.discountPercentage) || tier.discountPercentage < 0 || tier.discountPercentage > 100)) { alert('Revisa los descuentos por volumen: indica una cantidad entera y un descuento entre 0 y 100%.'); return; }
     if (new Set(volumeDiscounts.map((tier) => tier.minQty)).size !== volumeDiscounts.length) { alert('Cada nivel de descuento por volumen debe tener una cantidad mínima distinta.'); return; }
     if (form.views.some((view) => !view.mockupUrl.trim())) { alert('Agrega un mockup para cada vista.'); return; }
+    const invalidSurface = form.views.some((view) => {
+      if (!view.surfaceCustomized) return false;
+      const x = Number(view.surfaceX), y = Number(view.surfaceY);
+      const width = Number(view.surfaceWidth), height = Number(view.surfaceHeight);
+      return ![x, y, width, height].every(Number.isFinite) || x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > 100 || y + height > 100;
+    });
+    if (invalidSurface) { alert('El panel 3D debe quedar dentro de la superficie: ajusta el marco azul.'); return; }
     if (form.customizableParts.length > 0 && !form.model3dUrl.trim()) { alert('Configura una ruta pública o URL para el GLB antes de guardar sus mallas personalizables.'); return; }
     if (form.customizableParts.some((part) => !part.label.trim() || !part.meshName.trim())) { alert('Completa la etiqueta y el nombre exacto de malla en cada pieza 3D, o elimina las piezas incompletas.'); return; }
     const meshNames = form.customizableParts.map((part) => part.meshName.trim().toLocaleLowerCase());
     if (new Set(meshNames).size !== meshNames.length) { alert('Cada pieza personalizable debe apuntar a un nombre de malla distinto.'); return; }
-    const options = form.options.map((option) => ({ ...option, name: option.name.trim() || 'Opción', displayType: option.displayType ?? option.type, values: option.values.map((value) => ({ ...value, label: value.label.trim() || 'Variante', thumbnailUrl: value.thumbnailUrl?.trim() || undefined, mockupUrl: undefined, printArea: null, views: form.views.map((baseView) => { const configured = value.views?.find((view) => view.viewId === baseView.id); const baseArea = normalizePrintArea({ x: Number(baseView.x), y: Number(baseView.y), width: Number(baseView.width), height: Number(baseView.height), shape: baseView.shape, radius: Number(baseView.radius), polygon: parsePolygonForm(baseView.polygon) }); return { viewId: baseView.id, name: baseView.name.trim() || 'Vista', mockupUrl: configured?.mockupUrl?.trim() || null, printArea: configured?.printArea ? normalizePrintArea(configured.printArea) : baseArea }; }) })) }));
+    const options = form.options.map((option) => ({ ...option, name: option.name.trim() || 'Opción', displayType: option.displayType ?? option.type, values: option.values.map((value) => ({ ...value, label: value.label.trim() || 'Variante', thumbnailUrl: value.thumbnailUrl?.trim() || undefined, mockupUrl: undefined, printArea: null, views: form.views.map((baseView) => { const configured = value.views?.find((view) => view.viewId === baseView.id); const baseArea = normalizePrintArea({ x: Number(baseView.x), y: Number(baseView.y), width: Number(baseView.width), height: Number(baseView.height), shape: baseView.shape, radius: Number(baseView.radius), polygon: parsePolygonForm(baseView.polygon) }); const printArea = configured?.printArea ? normalizePrintArea(configured.printArea) : baseArea; const printArea3D = serializePrintArea3D(configured?.printArea3D ?? baseView.area3D); const printSurface3D = configured?.printSurface3D ?? { x: Number(baseView.surfaceX), y: Number(baseView.surfaceY), width: Number(baseView.surfaceWidth), height: Number(baseView.surfaceHeight) }; return { viewId: baseView.id, name: baseView.name.trim() || 'Vista', mockupUrl: configured?.mockupUrl?.trim() || null, printArea, printArea3D, printSurface3D, printSurface3DMode: configured?.printSurface3DMode ?? (baseView.surfaceCustomized ? 'custom' as const : 'automatic' as const) }; }) })) }));
+    const meshSettings: MeshSettings = { textureWidth, textureHeight };
+    const optionsWithMeshSettings = options.map((option) => ({
+      ...option,
+      values: option.values.map((value) => {
+        const hasPrintArea = Boolean(value.printArea) || Boolean(value.views?.some((view) => view.printArea));
+        return hasPrintArea ? { ...value, meshSettings: value.meshSettings ?? meshSettings } : value;
+      }),
+    }));
     const customizableParts = form.customizableParts.map((part) => ({ ...part, label: part.label.trim(), meshName: part.meshName.trim(), defaultColor: part.defaultColor || '#cbd5e1' }));
     const basePrice = Number(form.price);
     const productId = selectedId ?? crypto.randomUUID();
     const extraSidePrice = Math.max(0, Number(form.extraSidePrice) || 0);
     const fullWrapPrice = Math.max(0, Number(form.fullWrapPrice) || 0);
     const variantModifiers = options.flatMap((option) => option.values.map((value) => ({ variantId: value.id, priceDelta: value.priceModifier })));
-    const product: Product = { id: productId, name: form.name.trim(), price: basePrice, basePrice, category: form.category.trim(), canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT, printWidthCm: printWidth || undefined, printHeightCm: printHeight || undefined, model3dUrl: form.model3dUrl.trim() || undefined, pricingRules: { hasMultipleSides: form.hasMultipleSides, extraSidePrice, fullWrapPrice }, pricingSchema: { variantModifiers, setupFee, minimumQuantity, volumeDiscounts, sidesPricing: { mode: form.sidesPricingMode, pricePerAdditionalSide: extraSidePrice, wrapPrice: fullWrapPrice } }, availableAddonIds: form.availableAddonIds, customizableParts, options, views: form.views.map((view) => { const name = view.name.trim() || 'Vista'; const polygon = parsePolygonForm(view.polygon); return { id: view.id, name, label: name, mockupUrl: view.mockupUrl.trim(), printArea: { x: cleanPercentage(Number(view.x) || 0), y: cleanPercentage(Number(view.y) || 0), width: cleanPercentage(Number(view.width) || 0), height: cleanPercentage(Number(view.height) || 0), ...(view.shape !== 'rect' ? { shape: view.shape } : {}), ...(view.shape === 'rounded' ? { radius: cleanRadius(Number(view.radius)) } : {}), ...(polygon ? { polygon } : {}) }, printAreaUnit: 'percent' as const }; }) };
+    const product: Product = { id: productId, name: form.name.trim(), price: basePrice, basePrice, category: form.category.trim(), canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT, printWidthCm: printWidth || undefined, printHeightCm: printHeight || undefined, model3dUrl: form.model3dUrl.trim() || undefined, meshSettings, pricingRules: { hasMultipleSides: form.hasMultipleSides, extraSidePrice, fullWrapPrice }, pricingSchema: { variantModifiers, setupFee, minimumQuantity, volumeDiscounts, sidesPricing: { mode: form.sidesPricingMode, pricePerAdditionalSide: extraSidePrice, wrapPrice: fullWrapPrice } }, availableAddonIds: form.availableAddonIds, customizableParts, options: optionsWithMeshSettings, views: form.views.map((view) => { const name = view.name.trim() || 'Vista'; const polygon = parsePolygonForm(view.polygon); const area3D = serializePrintArea3D(view.area3D); const x = cleanPercentage(Number(view.x) || 0); const y = cleanPercentage(Number(view.y) || 0); return { id: view.id, name, label: name, mockupUrl: view.mockupUrl.trim(), printArea: { x, y, left: x, top: y, width: cleanPercentage(Number(view.width) || 0), height: cleanPercentage(Number(view.height) || 0), ...(view.shape !== 'rect' ? { shape: view.shape } : {}), ...(view.shape === 'rounded' ? { radius: cleanRadius(Number(view.radius)) } : {}), ...(polygon ? { polygon } : {}) }, printAreaUnit: 'percent' as const, printArea3D: area3D, printSurface3DMode: view.surfaceCustomized ? 'custom' as const : 'automatic' as const, ...(view.surfaceCustomized ? { printSurface3D: { x: cleanPercentage(Number(view.surfaceX)), y: cleanPercentage(Number(view.surfaceY)), width: cleanPercentage(Number(view.surfaceWidth)), height: cleanPercentage(Number(view.surfaceHeight)) } } : {}) }; }) };
     selectedId ? updateProduct(product) : addProduct(product);
     try {
       await Promise.all(addonCatalog.map((addon) => {
@@ -330,7 +477,7 @@ export default function AdminProductEditor() {
 
   const activeArea = activeView ? normalizePrintArea({ x: Number(activeView.x), y: Number(activeView.y), width: Number(activeView.width), height: Number(activeView.height), shape: activeView.shape, radius: Number(activeView.radius), polygon: parsePolygonForm(activeView.polygon) }) : null;
   return <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-10">
-    <div className="mx-auto max-w-7xl">
+    <div className="mx-auto max-w-screen-2xl">
       <header className="mb-7 flex flex-wrap items-end justify-between gap-4">
         <div><p className="text-sm font-semibold uppercase tracking-[0.16em] text-emerald-700">Administración de tienda</p><h1 className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">Gestión de productos</h1><p className="mt-2 text-slate-600">Organiza el catálogo, las variantes y las zonas de personalización.</p></div>
         <button type="button" onClick={() => { resetForm(); document.getElementById('product-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"><Plus size={18} /> Crear nuevo producto</button>
@@ -345,10 +492,11 @@ export default function AdminProductEditor() {
         {filteredProducts.length === 0 ? <div className="px-6 py-14 text-center"><p className="font-semibold text-slate-900">{products.length ? 'No encontramos productos' : 'Aún no hay productos'}</p><p className="mt-1 text-sm text-slate-500">{products.length ? 'Prueba otra búsqueda.' : 'Crea el primer producto para empezar tu catálogo.'}</p></div> : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left"><thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500"><tr>{['Producto', 'Categoría', 'Precio base', 'Configuración', 'Acciones'].map((heading) => <th key={heading} className="px-4 py-3 font-semibold first:pl-6 last:pr-6">{heading}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{filteredProducts.map((product) => { const variantCount = (product.options ?? []).reduce((count, option) => count + option.values.length, 0); return <tr key={product.id} className={`transition hover:bg-slate-50/70 ${selectedId === product.id ? 'bg-emerald-50/60' : ''}`}><td className="px-4 py-3 pl-6"><div className="flex items-center gap-3"><img src={product.views[0]?.mockupUrl} alt="" className="h-12 w-12 rounded-xl border border-slate-200 bg-slate-50 object-contain" /><div className="min-w-0"><p className="max-w-64 truncate font-semibold text-slate-900">{product.name}</p><p className="text-xs text-slate-500">{product.views.length} {product.views.length === 1 ? 'vista' : 'vistas'}</p></div></div></td><td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">{product.category || 'Sin categoría'}</span></td><td className="px-4 py-3 font-semibold tabular-nums text-slate-900">${product.price.toFixed(2)}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-1.5"><span className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600">{product.views.length} vistas</span><span className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600">{variantCount} variantes</span></div></td><td className="px-4 py-3 pr-6"><div className="flex items-center gap-1"><button type="button" onClick={() => { handleSelect(product); document.getElementById('product-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} aria-label={`Editar ${product.name}`} title="Editar producto" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-emerald-700"><Pencil size={16} /></button><Link href={`/admin/products/${product.id}/review-gallery`} title="Fotos de la pestaña Revisar" aria-label={`Fotos de revisar de ${product.name}`} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-indigo-600"><Camera size={16} /></Link><button type="button" onClick={() => handleDeleteProduct(product.id)} aria-label={`Eliminar ${product.name}`} title="Eliminar producto" className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"><Trash2 size={16} /></button></div></td></tr>; })}</tbody></table></div>}
       </section>
       <div id="product-form" className="scroll-mt-24"><div className="mb-4 flex items-end justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">{selectedId ? 'Edición de producto' : 'Nuevo producto'}</p><h2 className="mt-1 text-xl font-semibold text-slate-900">{selectedId ? form.name || 'Configura el producto' : 'Configura un producto'}</h2></div>{selectedId && <button type="button" onClick={resetForm} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancelar edición</button>}</div>
-      <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-8 lg:grid-cols-12">
-        <div className="space-y-6 lg:col-span-7">
+      <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-6">
+        <div className="space-y-6">
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Datos básicos</h2><p className="mt-1 text-sm text-slate-500">Información que verán tus clientes al elegir el producto.</p></div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><Field className="sm:col-span-2" label="Nombre del producto" value={form.name} onChange={(value) => setField('name', value)} required /><Field label="Precio" type="number" min="0" step="0.01" value={form.price} onChange={(value) => setField('price', value)} required /><Field label="Categoría" value={form.category} onChange={(value) => setField('category', value)} required /><Field label="Ancho físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printWidthCm} onChange={(value) => setField('printWidthCm', value)} placeholder="20" /><Field label="Alto físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printHeightCm} onChange={(value) => setField('printHeightCm', value)} placeholder="9" /><Field className="sm:col-span-2" label="Modelo 3D (ruta pública o URL .GLB)" value={form.model3dUrl} onChange={(value) => setField('model3dUrl', value)} placeholder="/models/termo.glb" />
+              <div className="sm:col-span-2 grid grid-cols-2 gap-3"><Field label="Ancho de textura 3D" type="number" min="1" step="1" value={form.textureWidth} onChange={(value) => setField('textureWidth', value)} /><Field label="Alto de textura 3D" type="number" min="1" step="1" value={form.textureHeight} onChange={(value) => setField('textureHeight', value)} /><p className="col-span-2 text-xs text-slate-500">Predeterminado: 2048 × 512 px. El viewer ajusta la altura efectiva a la proporción real de la superficie UV del GLB.</p></div>
               <div className="sm:col-span-2">
                 <input ref={modelFileInputRef} type="file" accept=".glb,model/gltf-binary" className="sr-only" onChange={(event) => { void inspectLocalGLB(event.target.files?.[0]); event.currentTarget.value = ''; }} />
                 <button type="button" onClick={() => modelFileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-violet-300 hover:bg-violet-50"><Upload size={16} /> Seleccionar GLB para inspeccionar</button>
@@ -413,21 +561,30 @@ export default function AdminProductEditor() {
             })}</div>}
             <div className="mt-3 flex gap-2 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2.5 text-xs text-violet-800"><Info className="mt-0.5 shrink-0" size={15} /><span>Ejemplo: etiqueta “Color del asa” y nombre de malla “mesh_handle”. Si una malla no coincide, el control se mostrará pero no podrá modificarla.</span></div>
           </section>
-          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Vistas del producto</h2><p className="mt-1 text-sm text-slate-500">Carga un mockup y define una zona segura para cada cara.</p></div>
+          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Vistas del producto</h2><p className="mt-1 text-sm text-slate-500">Configura el mockup 2D y calibra de forma independiente la faja UV de cada cara.</p></div>
             <div className="mb-5 flex gap-2 overflow-x-auto border-b border-slate-200"><div className="flex min-w-max gap-2">{form.views.map((view, index) => <button key={view.id} type="button" onClick={() => { setActiveTab(index); console.log('🔍 [EDITOR - VISTA ACTIVA]:', { id: view.id, name: view.name }); }} className={`border-b-2 px-4 py-2 text-sm font-medium transition-colors ${activeIndex === index ? 'border-emerald-600 font-semibold text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>{view.name || `Vista ${index + 1}`}</button>)}<button type="button" onClick={handleAddView} className="flex items-center gap-1 px-2 text-xs font-medium text-emerald-600 hover:underline"><Plus size={14} /> Agregar vista</button></div></div>
-            {activeView && <div className="space-y-5"><Field label="Nombre de la vista" value={activeView.name} onChange={(value) => setViewField(activeIndex, 'name', value)} required />
-              <div><span className="mb-1.5 block text-sm font-medium text-slate-700">Mockup de la vista</span><input ref={fileInputRef} type="file" accept="image/*" className="sr-only" onChange={(event) => { handleMockupFile(event.target.files?.[0]); event.currentTarget.value = ''; }} />
-                {activeView.mockupUrl ? <div className="group relative overflow-hidden rounded-lg border border-slate-200"><img src={activeView.mockupUrl} alt="Mockup" className="h-32 w-full bg-slate-50 object-contain" /><div className="absolute inset-0 flex items-center justify-center bg-slate-900/40 opacity-0 transition-opacity group-hover:opacity-100"><button type="button" onClick={handleReplaceMockup} className="rounded-md bg-white px-3 py-1.5 text-xs font-medium text-slate-800 shadow">Cambiar imagen</button></div></div> : <button type="button" onClick={handleReplaceMockup} className="group flex w-full items-center gap-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-left transition hover:border-emerald-400 hover:bg-emerald-50/40"><span className="flex h-16 w-16 items-center justify-center rounded-lg bg-white text-slate-400 shadow-sm"><Camera size={23} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-slate-700">Subir mockup</span><span className="mt-1 block text-xs text-slate-500">PNG, JPG o WebP · se mostrará en la vista previa</span></span><Upload size={18} className="text-emerald-600" /></button>}</div>
-              <Field label="O pega una URL o ruta del mockup" value={activeView.mockupUrl.startsWith('data:') ? '' : activeView.mockupUrl} onChange={(value) => setViewField(activeIndex, 'mockupUrl', value)} placeholder="/mockups/playera-frente.png" />
-              {form.views.length > 1 && <button type="button" onClick={() => removeView(activeIndex)} className="inline-flex items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700"><Trash2 size={16} /> Eliminar esta vista</button>}</div>}
+            {activeView && <div className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-2">
+              <div className="min-w-0 space-y-4">
+                <Field label="Nombre de la vista" value={activeView.name} onChange={(value) => setViewField(activeIndex, 'name', value)} required />
+                <div><span className="mb-1.5 block text-sm font-medium text-slate-700">Mockup de la vista</span><input ref={fileInputRef} type="file" accept="image/*" className="sr-only" onChange={(event) => { handleMockupFile(event.target.files?.[0]); event.currentTarget.value = ''; }} />
+                  {activeView.mockupUrl ? <div className="group relative overflow-hidden rounded-lg border border-slate-200"><img src={activeView.mockupUrl} alt="Mockup" className="h-32 w-full bg-slate-50 object-contain" /><div className="absolute inset-0 flex items-center justify-center bg-slate-900/40 opacity-0 transition-opacity group-hover:opacity-100"><button type="button" onClick={handleReplaceMockup} className="rounded-md bg-white px-3 py-1.5 text-xs font-medium text-slate-800 shadow">Cambiar imagen</button></div></div> : <button type="button" onClick={handleReplaceMockup} className="group flex w-full items-center gap-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-left transition hover:border-emerald-400 hover:bg-emerald-50/40"><span className="flex h-16 w-16 items-center justify-center rounded-lg bg-white text-slate-400 shadow-sm"><Camera size={23} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-slate-700">Subir mockup</span><span className="mt-1 block text-xs text-slate-500">PNG, JPG o WebP · se mostrará en la vista previa</span></span><Upload size={18} className="text-emerald-600" /></button>}</div>
+                <Field label="O pega una URL o ruta del mockup" value={activeView.mockupUrl.startsWith('data:') ? '' : activeView.mockupUrl} onChange={(value) => setViewField(activeIndex, 'mockupUrl', value)} placeholder="/mockups/playera-frente.png" />
+                <div className="rounded-xl border border-slate-200 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] p-3"><p className="mb-2 text-sm font-semibold text-slate-800">Configuración 2D · Zona segura</p>{activeArea ? <MockupAreaPicker mockupUrl={activeView.mockupUrl} initialPrintArea={activeArea} onChange={(area) => setViewPrintArea(activeIndex, area)} /> : null}</div>
+                {activeArea && <p className="text-center text-xs text-slate-500">Zona segura: <span className="font-semibold text-slate-700">{activeArea.width}% × {activeArea.height}%</span> del mockup.</p>}
+                {form.views.length > 1 && <button type="button" onClick={() => removeView(activeIndex)} className="inline-flex items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700"><Trash2 size={16} /> Eliminar esta vista</button>}
+              </div>
+              <div className="min-w-0 space-y-4">
+                {activeArea3D && <div className="space-y-3 rounded-xl border border-sky-200 bg-white p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-semibold text-slate-800">Proyección 3D · {activeView.name || `Vista ${activeIndex + 1}`}</h3><p className="mt-1 text-xs text-slate-500">Edita los nodos de la faja plana; esta calibración se guarda por vista.</p></div><button type="button" onClick={() => resetViewArea3DFrom2D(activeIndex)} className="text-xs font-semibold text-sky-700 underline underline-offset-2 hover:text-sky-900">Volver a usar zona 2D</button></div>
+                  <div><PrintArea3DEditor viewName={activeView.name || `Vista ${activeIndex + 1}`} area={activeArea3D} aspectRatio={1} mockupUrl={activeView.mockupUrl} onChange={(area) => setViewArea3D(activeIndex, area)} /></div>
+                  <div className="h-[380px] min-h-[350px] overflow-hidden rounded-xl border border-slate-200 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] p-2">{adminArea && adminPreviewProduct.model3dUrl ? <Product3DViewer product={adminPreviewProduct} componentColors={Object.fromEntries(form.customizableParts.map((part) => [part.meshName, part.defaultColor]))} enabledMeshNames={form.customizableParts.filter((part) => part.enabled !== false).map((part) => part.meshName)} showSafeAreaGuide safeArea={adminArea} activeViewIndex={activeIndex} activeViewName={activeView.name} /> : <div className="grid h-full place-items-center rounded-lg bg-slate-50 px-6 text-center text-xs text-slate-500">Agrega una ruta de modelo GLB para ver la proyección sobre la malla 3D.</div>}</div>
+                </div>}
+              </div>
+            </div>}
           </section>
           <AdminProductOptionsForm options={form.options} baseViews={baseViews} onChange={(options) => setForm((current) => ({ ...current, options }))} />
           <section className="overflow-hidden rounded-xl border border-slate-200 bg-white px-6 pt-1 shadow-sm"><div className="sticky bottom-0 z-10 -mx-6 -mb-6 mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white/80 p-4 backdrop-blur-md"><span className="text-xs text-slate-500">Última modificación realizada recientemente</span><div className="flex gap-3"><button type="button" onClick={resetForm} className="rounded-lg px-4 py-2 text-sm text-slate-600 hover:bg-slate-100">Cancelar</button><button type="submit" className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700">Guardar producto</button></div></div></section>
         </div>
-        <aside className="lg:col-span-5"><section className="sticky top-6 h-fit rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div><div className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Eye size={17} className="text-emerald-600" />Configuración visual</div><p className="mt-1 text-xs text-slate-500">{activeView?.name || 'Vista activa'}</p></div><span className="rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">300 DPI | {printWidth || '—'} × {printHeight || '—'} cm</span></div>
-          <div className="rounded-xl border border-slate-200 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] p-3">{activeView && activeArea ? <MockupAreaPicker mockupUrl={activeView.mockupUrl} initialPrintArea={activeArea} onChange={(area) => setViewPrintArea(activeIndex, area)} /> : null}</div>
-          {activeArea && <p className="mt-4 text-center text-xs text-slate-500">Zona segura: <span className="font-semibold text-slate-700">{activeArea.width}% × {activeArea.height}%</span> del mockup.</p>}
-        </section></aside>
+
       </form>
       </div>
     </div>
