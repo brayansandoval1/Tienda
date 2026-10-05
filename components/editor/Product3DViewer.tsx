@@ -6,6 +6,7 @@ import { Grid, OrbitControls, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Product } from '@/src/store/useProductStore';
 import { DEFAULT_MESH_SETTINGS, type MeshSettings, type ProductVariant } from '@/src/config/products';
+import { decodeDesignBackground } from './designBackground';
 
 type FabricCanvasLike = {
   getElement: () => HTMLCanvasElement;
@@ -23,6 +24,7 @@ export type PrintAreaBounds = {
   canvasHeight?: number;
   surface3D?: { x: number; y: number; width: number; height: number };
   surface3DMode?: 'automatic' | 'custom';
+  designBackground?: string;
   shape?: 'rect' | 'rounded' | 'ellipse';
   radius?: number;
   polygon?: Array<{ x: number; y: number }>;
@@ -63,6 +65,34 @@ const DEFAULT_PRINT_TEXTURE_SIZE = {
   height: CYLINDER_TEXTURE_HEIGHT,
 };
 const projectionDiagnosticTimes = new Map<string, number>();
+
+function paintDesignBackground(context: CanvasRenderingContext2D, raw: string | undefined, x: number, y: number, width: number, height: number) {
+  const background = decodeDesignBackground(raw);
+  if (background.kind === 'transparent' || width <= 0 || height <= 0) return;
+  context.save();
+  if (background.kind === 'solid') {
+    context.fillStyle = background.color;
+  } else if (background.kind === 'radial') {
+    const gradient = context.createRadialGradient(x + width / 2, y + height * 0.4, 0, x + width / 2, y + height * 0.4, Math.hypot(width / 2, height * 0.6));
+    background.stops.forEach((stop) => gradient.addColorStop(Math.min(1, Math.max(0, Number(stop.offset) || 0)), stop.color));
+    context.fillStyle = gradient;
+  } else {
+    const angle = (background.angle * Math.PI) / 180;
+    const dx = Math.sin(angle);
+    const dy = -Math.cos(angle);
+    const half = (Math.abs(width * dx) + Math.abs(height * dy)) / 2;
+    const gradient = context.createLinearGradient(
+      x + width / 2 - dx * half,
+      y + height / 2 - dy * half,
+      x + width / 2 + dx * half,
+      y + height / 2 + dy * half,
+    );
+    background.stops.forEach((stop) => gradient.addColorStop(Math.min(1, Math.max(0, Number(stop.offset) || 0)), stop.color));
+    context.fillStyle = gradient;
+  }
+  context.fillRect(x, y, width, height);
+  context.restore();
+}
 type ProductPartColors = {
   body: string;
   ring: { enabled: boolean; color: string };
@@ -355,6 +385,7 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     const destY = (target.height * targetTop) / 100;
     const destW = (sideWidth * targetWidth) / 100;
     const destH = (target.height * targetHeight) / 100;
+    paintDesignBackground(context, area?.designBackground, destX, destY, destW, destH);
     const visibleObjects = (objectsOverride ?? fabricCanvas.getObjects()).filter((object) =>
       object && object.visible !== false && !object.isMockup && !object.isGuide && !object.isGuideLine && !object.isCropOverlay && !object.isDesignBackground,
     );
@@ -423,11 +454,12 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     return;
   }
 
+  paintDesignBackground(context, area?.designBackground, panelLeft, panelTop, panelWidth, panelHeight);
   context.save();
   context.setTransform(scaleX, 0, 0, scaleY, offsetX, offsetY);
   try {
     (objectsOverride ?? fabricCanvas.getObjects()).forEach((object) => {
-      if (!object || object.visible === false || object.isMockup || object.isGuide || object.isGuideLine || object.isCropOverlay) return;
+      if (!object || object.visible === false || object.isMockup || object.isGuide || object.isGuideLine || object.isCropOverlay || object.isDesignBackground) return;
       // Dibuja en un canvas auxiliar: no se toca el viewport ni se solicita un
       // render del canvas interactivo. Los clipPath de Fabric siguen activos.
       object.render(context);
@@ -451,6 +483,8 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
   const textureRef = useRef<THREE.CanvasTexture | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUpdatingTexture = useRef(false);
+  const queuedTextureRefresh = useRef<(() => void) | null>(null);
+  const snapshotObjectsCache = useRef(new Map<string, { snapshot: PrintViewSnapshot; objects: Promise<any[]> }>());
   const designViewsRef = useRef<PrintViewSnapshot[]>([]);
   const [designViews, setDesignViews] = useState<PrintViewSnapshot[]>([]);
   const editorPrintArea = usePrintAreaBounds();
@@ -514,10 +548,22 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
 
   useEffect(() => {
     textureRef.current = texture;
-    const updateTexture = () => {
-      if (isUpdatingTexture.current) return;
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+    let effectActive = true;
+    // Durante el gesto actualiza como máximo cada 100 ms; el repintado
+    // completo e inmediato se solicita al recibir `object:modified`.
+    const updateTexture = (immediate = false) => {
+      if (!effectActive) return;
+      if (isUpdatingTexture.current) {
+        queuedTextureRefresh.current = () => updateTexture(immediate);
+        return;
+      }
+      if (debounceRef.current) {
+        if (!immediate) return;
+        clearTimeout(debounceRef.current);
+      }
       debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
+        if (!effectActive) return;
         isUpdatingTexture.current = true;
         const renderTexture = async () => {
           isUpdatingTexture.current = true;
@@ -549,12 +595,25 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                 if (snapshot.viewId === printArea?.viewId) {
                   objects = fabricCanvas.getObjects();
                 } else {
-                  const serializedObjects = snapshot.objects.map((object) => {
-                    const copy = { ...object };
-                    delete copy.clipPath;
-                    return copy;
-                  });
-                  objects = await enlivenDesignObjects(serializedObjects);
+                  let cached = snapshotObjectsCache.current.get(snapshot.viewId);
+                  if (!cached || cached.snapshot !== snapshot) {
+                    const serializedObjects = snapshot.objects.map((object) => {
+                      const copy = { ...object };
+                      delete copy.clipPath;
+                      return copy;
+                    });
+                    const previous = cached;
+                    cached = {
+                      snapshot,
+                      objects: enlivenDesignObjects(serializedObjects).catch((error) => {
+                        console.error('[Product3DViewer] No se pudo preparar el diseño de la vista:', snapshot.viewId, error);
+                        return [];
+                      }),
+                    };
+                    snapshotObjectsCache.current.set(snapshot.viewId, cached);
+                    previous?.objects.then((oldObjects) => oldObjects.forEach((object) => object.dispose?.()));
+                  }
+                  objects = await cached.objects;
                 }
                 const isActiveSnapshot = snapshot.viewId === printArea?.viewId;
                 const livePrintArea3D = isActiveSnapshot ? printArea?.printArea3D : undefined;
@@ -568,7 +627,6 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                   polygon: livePrintArea3D.nodes ?? livePrintArea3D.polygon,
                 } : snapshot.projectionArea;
                 renderFullTexture360(fabricCanvas, isActiveSnapshot ? printArea : snapshot.area, printCanvas, panoramic, objects, activeProjection, totalViews);
-                if (snapshot.viewId !== printArea?.viewId) objects.forEach((object) => object.dispose?.());
               }
             }
             if (textureRef.current) textureRef.current.needsUpdate = true;
@@ -577,20 +635,42 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
           } finally {
             isUpdatingTexture.current = false;
             debounceRef.current = null;
+            const refreshLatestTexture = queuedTextureRefresh.current;
+            queuedTextureRefresh.current = null;
+            refreshLatestTexture?.();
           }
         };
         void renderTexture();
-      }, 100);
+      }, immediate ? 0 : 100);
     };
-    const fabricEvents = ['object:modified', 'object:moving', 'object:scaling', 'object:rotating', 'object:added', 'object:removed', 'path:created', 'after:render'];
-    fabricEvents.forEach((eventName) => fabricCanvas.on(eventName, updateTexture));
-    updateTexture();
+    const handleDesignBackgroundChanged = (event: Event) => {
+      const changedViewId = (event as CustomEvent<{ viewId?: string }>).detail?.viewId;
+      if (!changedViewId || changedViewId === printArea?.viewId) updateTexture(true);
+    };
+    const throttledFabricEvents = ['object:moving', 'object:scaling', 'object:rotating'];
+    const immediateFabricEvents = ['object:modified', 'object:added', 'object:removed', 'path:created'];
+    const handleThrottledFabricEvent = () => updateTexture(false);
+    const handleImmediateFabricEvent = () => updateTexture(true);
+    throttledFabricEvents.forEach((eventName) => fabricCanvas.on(eventName, handleThrottledFabricEvent));
+    immediateFabricEvents.forEach((eventName) => fabricCanvas.on(eventName, handleImmediateFabricEvent));
+    window.addEventListener('editor:design-background-changed', handleDesignBackgroundChanged);
+    updateTexture(true);
     return () => {
+      effectActive = false;
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      fabricEvents.forEach((eventName) => fabricCanvas.off(eventName, updateTexture));
+      throttledFabricEvents.forEach((eventName) => fabricCanvas.off(eventName, handleThrottledFabricEvent));
+      immediateFabricEvents.forEach((eventName) => fabricCanvas.off(eventName, handleImmediateFabricEvent));
+      window.removeEventListener('editor:design-background-changed', handleDesignBackgroundChanged);
       textureRef.current = null;
     };
   }, [adminArea, designViews, fabricCanvas, panoramic, partColors.body, printArea, printCanvas, texture]);
+
+  useEffect(() => () => {
+    snapshotObjectsCache.current.forEach(({ objects }) => {
+      objects.then((resolved) => resolved.forEach((object) => object.dispose?.()));
+    });
+    snapshotObjectsCache.current.clear();
+  }, []);
 
   useEffect(() => () => texture.dispose(), [texture]);
 

@@ -107,23 +107,49 @@ export default function SmartInputPanel() {
     reader.onload = () => {
       const source = reader.result;
       if (typeof source !== 'string') return;
-      const originalTransform = {
-        left: item.object.left,
-        top: item.object.top,
-        scaleX: item.object.scaleX,
-        scaleY: item.object.scaleY,
-        angle: item.object.angle,
-        flipX: item.object.flipX,
-        flipY: item.object.flipY,
-        skewX: item.object.skewX,
-        skewY: item.object.skewY,
+      const object = item.object;
+      // Caja visible actual de la foto, para que la nueva ocupe exactamente
+      // el mismo espacio en el mockup.
+      const boxWidth = Math.abs((object.width || 0) * (object.scaleX || 1));
+      const boxHeight = Math.abs((object.height || 0) * (object.scaleY || 1));
+      const centerBefore = typeof object.getCenterPoint === 'function' ? object.getCenterPoint() : null;
+      const keptTransform = {
+        angle: object.angle,
+        flipX: object.flipX,
+        flipY: object.flipY,
+        skewX: object.skewX,
+        skewY: object.skewY,
       };
-      item.object.setSrc(source, () => {
-        item.object.set(originalTransform);
-        item.object.setCoords?.();
-        canvas.setActiveObject(item.object);
+
+      object.setSrc(source, () => {
+        // `setSrc` recalcula `width`/`height` con el tamaño natural de la nueva
+        // foto, pero conserva `cropX`/`cropY`: si no se limpian, se mostraría
+        // una región cualquiera de la imagen nueva (y deformada).
+        object.set({ cropX: 0, cropY: 0, ...keptTransform });
+
+        // Reencajar la nueva foto DENTRO de la caja anterior respetando su
+        // propia proporción. Reutilizar el `scaleX`/`scaleY` antiguos es lo que
+        // estiraba la imagen al cambiar de foto.
+        const naturalWidth = object.width || 0;
+        const naturalHeight = object.height || 0;
+        if (naturalWidth > 0 && naturalHeight > 0 && boxWidth > 0 && boxHeight > 0) {
+          const fit = Math.min(boxWidth / naturalWidth, boxHeight / naturalHeight);
+          object.set({ scaleX: fit, scaleY: fit });
+        }
+
+        object.setCoords?.();
+        // Se conserva el centro visual para que la foto no salte de sitio.
+        if (centerBefore) {
+          const centerAfter = object.getCenterPoint();
+          object.set({
+            left: (object.left || 0) + (centerBefore.x - centerAfter.x),
+            top: (object.top || 0) + (centerBefore.y - centerAfter.y),
+          });
+          object.setCoords?.();
+        }
+        canvas.setActiveObject(object);
         canvas.renderAll();
-        canvas.fire('object:modified', { target: item.object });
+        canvas.fire('object:modified', { target: object });
       }, { crossOrigin: 'anonymous' });
     };
     reader.readAsDataURL(file);

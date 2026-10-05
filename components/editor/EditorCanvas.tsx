@@ -116,6 +116,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   const currentViewIdRef = useRef<string>(initialProduct.views[0]?.id ?? 'front');
   const currentLoadRequestId = useRef(0);
   const canvasDataRef = useRef<Record<string, string | null>>({});
+  // Conserva las instancias de Fabric por vista para reutilizar imágenes ya
+  // decodificadas al volver a una cara, en vez de enlivenarlas en cada cambio.
+  const viewObjectsRef = useRef<Record<string, any[]>>({});
   const getCanvasUsage = useCallback((canvas: any | null) => {
     const usageByView = productViews.map((view) => {
       const isActiveView = view.id === currentViewIdRef.current;
@@ -292,6 +295,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         height: ADMIN_BASE_SIZE,
         enableRetinaScaling: true,
         imageSmoothingEnabled: true,
+        uniformScaling: true,
         // El fondo GLOBAL del canvas es SIEMPRE transparente: el color que
         // elige el usuario en la barra "Fondo" se aplica únicamente al vector
         // de la Zona Segura (setDesignBackground). Así la imagen base del
@@ -465,6 +469,242 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         hasBorders: true,
       };
 
+      // Tipos cuyo escalado debe ser siempre proporcional. Un `fabric.Image`
+      // NUNCA debe deformarse: como `width`/`height` ya son las medidas en
+      // píxeles de la región visible (con el recorte ya aplicado), la imagen
+      // sólo es fiel cuando `scaleX === scaleY`.
+      const PRESERVE_ASPECT_TYPES = ['image', 'group', 'rect', 'ellipse', 'circle', 'triangle', 'polygon', 'path'];
+
+      // Escalado proporcional real para los OCHO tiradores.
+      // En Fabric 5 los laterales (ml/mr/mt/mb) usan `scalingX`/`scalingY`,
+      // que mueven un único eje y deforman el contenido; y las esquinas sólo
+      // escalan proporcionalmente mientras no se pulse Mayús (lo decide
+      // `canvas.uniformScaling`). Reutilizar el manejador de esquina en los
+      // laterales tampoco sirve: su cálculo usa la distancia a la esquina
+      // opuesta, así que al empezar el arrastre el objeto ya saltaba de
+      // tamaño (w / (w + h)). La solución es sustituir el `actionHandler` de
+      // los ocho controles por uno propio que aplica un MISMO factor en X e Y:
+      // - Laterales: el factor sale del único eje que se arrastra y el ancla
+      //   es el borde opuesto, centrado en el eje perpendicular.
+      // - Esquinas: se delega en el manejador de Fabric con la tecla de
+      //   proporcionalidad anulada, para que Mayús tampoco pueda deformar.
+      const controlsUtils = (fabric as any).controlsUtils;
+      const getLocalPoint = controlsUtils?.getLocalPoint;
+      const wrapWithFixedAnchor = controlsUtils?.wrapWithFixedAnchor;
+      const wrapWithFireEvent = controlsUtils?.wrapWithFireEvent;
+      const scalingEqually = controlsUtils?.scalingEqually;
+      const scaleCursorStyleHandler = controlsUtils?.scaleCursorStyleHandler;
+      const isUniformScaleReady = Boolean(
+        getLocalPoint && wrapWithFixedAnchor && wrapWithFireEvent && scalingEqually,
+      );
+
+      const UNIFORM_SIDE_CORNERS = ['ml', 'mr', 'mt', 'mb'];
+      const UNIFORM_CORNER_CORNERS = ['tl', 'tr', 'bl', 'br'];
+
+      // Los controles de Fabric son referencias compartidas en el prototipo:
+      // si en el pasado se ocultaron con `setControlsVisibility`, hay que
+      // restaurarlos o los textos seguirían sin tiradores laterales.
+      const restoreSharedCornerVisibility = () => {
+        const shared = (fabric as any).Object?.prototype?.controls;
+        if (!shared) return;
+        [...UNIFORM_SIDE_CORNERS, ...UNIFORM_CORNER_CORNERS].forEach((corner) => {
+          if (shared[corner]) shared[corner].visible = true;
+        });
+      };
+
+      // Fija el ancla del gesto: el lado opuesto al tirador y el centro en el
+      // eje perpendicular (o el centro total cuando se pulsa Mayús).
+      const setUniformAnchor = (transform: any, corner: string, centered: boolean) => {
+        const horizontal = corner === 'ml' || corner === 'mr';
+        if (centered) {
+          transform.originX = 'center';
+          transform.originY = 'center';
+          return horizontal;
+        }
+        if (horizontal) {
+          transform.originX = corner === 'mr' ? 'left' : 'right';
+          transform.originY = 'center';
+        } else {
+          transform.originX = 'center';
+          transform.originY = corner === 'mb' ? 'top' : 'bottom';
+        }
+        return horizontal;
+      };
+
+      const uniformSideHandlerCache = new Map<string, (eventData: any, transform: any, x: number, y: number) => boolean>();
+
+      // Manejador de un tirador lateral: el factor de escala sale del único
+      // eje que el usuario arrastra y se aplica igual a `scaleX` y `scaleY`.
+      const uniformSideScaler = (corner: string) => {
+        const cached = uniformSideHandlerCache.get(corner);
+        if (cached) return cached;
+        const horizontal = corner === 'ml' || corner === 'mr';
+
+        const scaleFromSide = (_eventData: any, transform: any, x: number, y: number) => {
+          const target = transform?.target;
+          const original = transform?.original;
+          if (!target || !original) return false;
+          if (target.lockScalingX && target.lockScalingY) return false;
+
+          const localPoint = getLocalPoint(transform, transform.originX, transform.originY, x, y);
+          const rawDistance = horizontal ? Number(localPoint?.x) : Number(localPoint?.y);
+          if (!Number.isFinite(rawDistance)) return false;
+
+          // No se permite cruzar el ancla: `lockScalingFlip` bloquea el giro
+          // de la imagen a negativo cuando el puntero cambia de lado.
+          const sign = Math.sign(rawDistance);
+          if (target.lockScalingFlip && sign !== 0) {
+            if (!transform.uniformScaleSign) transform.uniformScaleSign = sign;
+            else if (transform.uniformScaleSign !== sign) return false;
+          }
+
+          const dim = target._getTransformedDimensions();
+          const originalDistance = horizontal
+            ? Math.abs(dim.x * (original.scaleX / target.scaleX))
+            : Math.abs(dim.y * (original.scaleY / target.scaleY));
+          if (!originalDistance) return false;
+
+          // Con Mayús el ancla es el centro: el puntero sólo recorre media
+          // medida, así que el factor se duplica (mismo criterio que Fabric).
+          const centered = transform.originX === 'center' && transform.originY === 'center';
+          const ratio = (Math.abs(rawDistance) * (centered ? 2 : 1)) / originalDistance;
+          const base = Math.abs(Number(original.scaleX)) || Math.abs(Number(original.scaleY)) || 1;
+          const uniform = base * ratio;
+
+          const previousScaleX = target.scaleX;
+          const previousScaleY = target.scaleY;
+          if (!target.lockScalingX) target.set('scaleX', uniform);
+          if (!target.lockScalingY) target.set('scaleY', uniform);
+          return previousScaleX !== target.scaleX || previousScaleY !== target.scaleY;
+        };
+
+        const wrapped = wrapWithFireEvent('scaling', wrapWithFixedAnchor(scaleFromSide));
+        const handler = (eventData: any, transform: any, x: number, y: number) => {
+          if (!transform?.target) return false;
+          const centered = Boolean(eventData?.[canvas.centeredKey] ?? eventData?.altKey);
+          setUniformAnchor(transform, corner, centered);
+          return wrapped(eventData, transform, x, y);
+        };
+        uniformSideHandlerCache.set(corner, handler);
+        return handler;
+      };
+
+      // Las esquinas ya son proporcionales por `canvas.uniformScaling`, pero
+      // Mayús invierte ese comportamiento. Se anula la tecla antes de delegar
+      // para que la imagen tampoco pueda estirarse desde una esquina.
+      const uniformCornerScaler = (eventData: any, transform: any, x: number, y: number) => {
+        if (!transform?.target) return false;
+        const neutralEvent = { ...eventData, shiftKey: false, altKey: Boolean(eventData?.altKey) };
+        return scalingEqually(neutralEvent, transform, x, y);
+      };
+
+      // Un control de Fabric NO es un objeto plano: `calcCornerCoords`,
+      // `positionHandler` y `render` viven en `fabric.Control.prototype`.
+      // Hacer `{...control}` los pierde y revienta con
+      // "control.positionHandler is not a function". Se clona respetando el
+      // prototipo y se aplican encima los ajustes propios.
+      const cloneControl = (source: any, overrides: Record<string, any> = {}) => {
+        const prototype = Object.getPrototypeOf(source) || (fabric as any).Control?.prototype;
+        const clone: any = Object.create(prototype);
+        // Primero el control original y encima los ajustes propios, de modo que
+        // `overrides` siempre tiene prioridad.
+        Object.assign(clone, source, overrides);
+        return clone;
+      };
+
+      // Aplica a cualquier objeto los ocho tiradores con escalado uniforme.
+      // El recorte (`isCropOverlay`) queda excluido a propósito: su único
+      // papel es deformar el recorte a voluntad.
+      const applyAspectSafeControls = (target: any) => {
+        if (!target) return;
+        target.set({
+          lockUniScaling: true,
+          centeredScaling: false,
+          lockSkewingX: true,
+          lockSkewingY: true,
+          lockScalingFlip: true,
+          // Fabric conserva el bitmap cacheado durante el escalado si
+          // `noScaleCache` está activo. Al actualizar el cache por frame la
+          // imagen no muestra el salto/deformación temporal al soltar.
+          ...(String(target.type).toLowerCase() === 'image' ? { noScaleCache: false } : {}),
+          cornerStyle: 'circle',
+          cornerColor: '#2563eb',
+          transparentCorners: false,
+        });
+        if (!isUniformScaleReady) return;
+
+        restoreSharedCornerVisibility();
+        const baseControls = (target.controls || (fabric as any).Object?.prototype?.controls || {}) as Record<string, any>;
+        const nextControls: Record<string, any> = { ...baseControls };
+
+        UNIFORM_SIDE_CORNERS.forEach((corner) => {
+          const source = baseControls[corner];
+          if (!source) return;
+          const horizontal = corner === 'ml' || corner === 'mr';
+          nextControls[corner] = cloneControl(source, {
+            visible: true,
+            x: horizontal ? (corner === 'ml' ? -0.5 : 0.5) : 0,
+            y: horizontal ? 0 : (corner === 'mt' ? -0.5 : 0.5),
+            actionHandler: uniformSideScaler(corner),
+            getActionName: () => 'scale',
+            cursorStyleHandler: source.cursorStyleHandler || scaleCursorStyleHandler,
+          });
+        });
+
+        UNIFORM_CORNER_CORNERS.forEach((corner) => {
+          const source = baseControls[corner];
+          if (!source) return;
+          nextControls[corner] = cloneControl(source, {
+            visible: true,
+            x: corner.endsWith('l') ? -0.5 : 0.5,
+            y: corner.startsWith('t') ? -0.5 : 0.5,
+            actionHandler: uniformCornerScaler,
+          });
+        });
+
+        // Copia propia por objeto: los controles de Fabric son referencias
+        // compartidas y cada objeto necesita su propio juego.
+        target.controls = nextControls;
+      };
+
+      // Red de seguridad: si algún camino (objeto restaurado de un borrador,
+      // undo/redo, duplicado o un `setSrc`) deja `scaleX !== scaleY`, la
+      // imagen queda estirada. Se corrige en el acto igualando el eje que el
+      // usuario NO está arrastrando y conservando el centro visual.
+      const enforceUniformScale = (object: any) => {
+        if (!object || String(object.type).toLowerCase() !== 'image') return false;
+        const scaleX = Number(object.scaleX);
+        const scaleY = Number(object.scaleY);
+        if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX === 0 || scaleY === 0) return false;
+        if (Math.abs(scaleX - scaleY) <= Math.abs(scaleX) * 1e-6) return false;
+
+        const corner = String((canvas as any)._currentTransform?.corner ?? '');
+        let uniform: number;
+        if (corner === 'ml' || corner === 'mr') {
+          // Eje guiado por el usuario: manda la X.
+          uniform = scaleX;
+        } else if (corner === 'mt' || corner === 'mb') {
+          uniform = scaleY;
+        } else {
+          // Escalado desde una esquina con proporciones libres (p. ej.
+          // Mayús + arrastre): se conserva el área con la media geométrica.
+          uniform = Math.sign(scaleX || 1) * Math.sqrt(Math.abs(scaleX * scaleY));
+        }
+
+        const centerBefore = typeof object.getCenterPoint === 'function' ? object.getCenterPoint() : null;
+        object.set({ scaleX: uniform, scaleY: uniform });
+        object.setCoords?.();
+        if (centerBefore) {
+          const centerAfter = object.getCenterPoint();
+          object.set({
+            left: (object.left || 0) + (centerBefore.x - centerAfter.x),
+            top: (object.top || 0) + (centerBefore.y - centerAfter.y),
+          });
+          object.setCoords?.();
+        }
+        return true;
+      };
+
       // Reafirma la edición en cada objeto creado por el usuario. Se aplica
       // después de construirlo para que ninguna opción específica de Fabric
       // (o de un SVG cargado) pueda dejarlo estático.
@@ -480,6 +720,15 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           lockScalingX: false,
           lockScalingY: false,
         });
+        const objectType = String((object as any).type).toLowerCase();
+        if (PRESERVE_ASPECT_TYPES.includes(objectType)) {
+          applyAspectSafeControls(object as any);
+          // Un objeto heredado de un borrador/plantilla puede venir ya
+          // estirado (así se guardaron las imágenes deformadas). Se corrige
+          // al reenlivenarlo para que a partir de ese momento la imagen
+          // vuelva a ser siempre fiel a su proporción original.
+          if (objectType === 'image') enforceUniformScale(object as any);
+        }
         applyPrintAreaClip(object as any);
         return object;
       };
@@ -599,6 +848,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // Cada carga de fondo recibe un token. Un callback de Fabric que llega
       // tarde nunca puede sobrescribir la variante/vista ya resuelta.
       let currentRenderToken = 0;
+      let viewSwitchToken = 0;
+      let pendingViewId: string | null = null;
       let baseProductViews: ProductView[] = initialProduct.views;
       let activeOptionSelections: Record<string, ProductOptionValue> = {};
       // Un valor de opción puede sustituir temporalmente la zona de la vista.
@@ -1423,6 +1674,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           canvasHeight: logicalSize.height,
           surface3D: activeView?.printSurface3DMode === 'custom' ? activeView.printSurface3D : undefined,
           surface3DMode: activeView?.printSurface3DMode,
+          designBackground: designBackgroundColorsRef.current[activeView?.id ?? ''] ?? 'transparent',
           shape: renderedArea.shape,
           radius: renderedArea.radius,
           polygon: renderedArea.polygon,
@@ -1620,6 +1872,17 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           [view.id]: normalizedValue,
         };
         setDesignBackgroundColor(normalizedValue);
+        const viewAreas = (window as any).__editorPrintAreasByView ?? {};
+        if (viewAreas[view.id]) {
+          viewAreas[view.id] = { ...viewAreas[view.id], designBackground: normalizedValue };
+          if (view.id === currentViewIdRef.current) {
+            (window as any).__editorPrintArea = viewAreas[view.id];
+            window.dispatchEvent(new CustomEvent('editor:print-area-changed', { detail: viewAreas[view.id] }));
+          }
+        }
+        window.dispatchEvent(new CustomEvent('editor:design-background-changed', {
+          detail: { viewId: view.id, designBackground: normalizedValue },
+        }));
 
         // 2) APLICAR EL COLOR ÚNICAMENTE A LA ZONA SEGURA: el único objetivo
         //    intervenido es el vector gemelo de la guía punteada
@@ -1696,6 +1959,45 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         obj.set({
           left: (obj.left || 0) + (clampedLeft - bound.left),
           top: (obj.top || 0) + (clampedTop - bound.top),
+        });
+      };
+
+      const showImageScaleControls = (event: any) => {
+        const selectedObjects = event?.selected ?? (event?.target ? [event.target] : []);
+        selectedObjects.forEach((object: any) => {
+          if (String(object?.type).toLowerCase() !== 'image') return;
+          applyAspectSafeControls(object);
+          // Imágenes que ya venían deformadas de un borrador o de un
+          // `setSrc` se enderezan al seleccionarlas.
+          enforceUniformScale(object);
+          object.setCoords?.();
+        });
+      };
+      let lastImageScaleDiagnosticAt = 0;
+      const logImageScaleDiagnostic = (object: any, phase: 'drag' | 'end') => {
+        if (!object || String(object.type).toLowerCase() !== 'image') return;
+        const now = Date.now();
+        if (phase === 'drag' && now - lastImageScaleDiagnosticAt < 250) return;
+        lastImageScaleDiagnosticAt = now;
+        const element = object.getElement?.();
+        const naturalWidth = Number(element?.naturalWidth || element?.width || object.width || 0);
+        const naturalHeight = Number(element?.naturalHeight || element?.height || object.height || 0);
+        const scaleX = Number(object.scaleX || 0);
+        const scaleY = Number(object.scaleY || 0);
+        const transform = (canvas as any)._currentTransform;
+        console.log('[EditorCanvas] Diagnóstico de escala de imagen', {
+          phase,
+          id: object.id ?? object.data?.id ?? null,
+          control: transform?.corner ?? transform?.action ?? null,
+          sourceSize: { width: naturalWidth, height: naturalHeight },
+          scale: { x: scaleX, y: scaleY },
+          renderedSize: { width: Number(object.width || 0) * scaleX, height: Number(object.height || 0) * scaleY },
+          sourceAspectRatio: naturalHeight ? naturalWidth / naturalHeight : null,
+          renderedAspectRatio: naturalHeight && scaleY ? (naturalWidth * scaleX) / (naturalHeight * scaleY) : null,
+          scaleRatio: scaleY ? scaleX / scaleY : null,
+          noScaleCache: object.noScaleCache,
+          objectCaching: object.objectCaching,
+          hasClipPath: Boolean(object.clipPath),
         });
       };
 
@@ -1781,7 +2083,22 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             projectionArea,
             selectedVariants: Object.values(activeOptionSelections).map((variant) => ({ id: variant.id, label: variant.label })),
           }));
-          return { viewId: view.id, viewName: view.name, viewIndex, viewCount, area: { ...area, viewId: view.id, viewName: view.name, viewIndex, viewCount }, projectionArea, objects };
+          return {
+            viewId: view.id,
+            viewName: view.name,
+            viewIndex,
+            viewCount,
+            area: {
+              ...area,
+              viewId: view.id,
+              viewName: view.name,
+              viewIndex,
+              viewCount,
+              designBackground: designBackgroundColorsRef.current[view.id] ?? 'transparent',
+            },
+            projectionArea,
+            objects,
+          };
         });
         (window as any).__editor3DViews = views;
         window.dispatchEvent(new CustomEvent('editor:3d-views-changed', {
@@ -1843,6 +2160,18 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
               hasControls: true,
               hasBorders: true,
             });
+            // Los objetos que vuelven de un borrador, de un undo/redo o de
+            // otra cara se re-crean desde su JSON: hay que reaplicarles el
+            // escalado proporcional, o quedarían con los tiradores laterales
+            // nativos (que estiran un solo eje) y se deformarían al tocarlos.
+            // El overlay de recorte queda excluido a propósito: su única
+            // función es deformar el recorte a voluntad.
+            if (!obj.isCropOverlay) {
+              const objectType = String(obj.type).toLowerCase();
+              if (PRESERVE_ASPECT_TYPES.includes(objectType)) applyAspectSafeControls(obj);
+              if (objectType === 'image') enforceUniformScale(obj);
+            }
+            obj.setCoords?.();
           }
         });
       };
@@ -1887,6 +2216,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         canvas.calcOffset();
 
         canvasDataRef.current = {};
+        viewObjectsRef.current = {};
         designBackgroundColorsRef.current = {};
         viewThumbnailsRef.current = {};
         setViewThumbnails({});
@@ -1987,31 +2317,39 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
       const switchView = async (viewId: string) => {
         const c = fabricCanvasRef.current;
-        if (!c || viewId === currentViewIdRef.current) return;
+        if (!c) return;
+        if (viewId === currentViewIdRef.current) {
+          if (!pendingViewId) return;
+          const cancelToken = ++viewSwitchToken;
+          pendingViewId = null;
+          const currentView = getView(viewId);
+          activeView = currentView;
+          const currentIndex = Math.max(0, baseProductViews.findIndex((view) => view.id === viewId));
+          const currentResolvedView = resolveCurrentViewData(baseProductViews, currentIndex, activeOptionSelections);
+          await loadResolvedViewBackground(currentView, currentResolvedView);
+          if (cancelToken !== viewSwitchToken || fabricCanvasRef.current !== c) return;
+          finishViewSwitch(viewId);
+          return;
+        }
+        const switchToken = ++viewSwitchToken;
+        pendingViewId = viewId;
 
         const requestedViewIndex = activeProduct.views.findIndex((view) => view.id === viewId);
         console.log('👁️ [CAMBIO DE VISTA]: Index pedido ->', requestedViewIndex);
         console.log('👁️ [VISTA APUNTADA]:', activeProduct.views[requestedViewIndex]);
 
-        // Persistir los objetos de la cara actual antes de cambiar de mockup.
+        // Persistir la vista de origen antes de iniciar cargas asíncronas. No
+        // vaciamos el canvas aún: así el diseño sigue visible mientras prepara
+        // el mockup y los objetos de destino.
         captureViewThumbnail(currentViewIdRef.current, true);
         canvasDataRef.current[currentViewIdRef.current] = snapshotCurrentObjects();
-        isUpdatingHistory.current = true;
-        // Cada vista tiene su diseño INDEPENDIENTE: tras guardar el snapshot,
-        // se eliminan del lienzo los objetos del usuario (y el fondo de color
-        // de esta vista, que se re-aplica al volver). Sin esto, el diseño de
-        // la vista anterior se arrastraba a la vista nueva.
-        c.getObjects()
-          .filter((obj: any) => !obj.isMockup && !obj.isGuide && !obj.isGuideLine)
-          .forEach((obj: any) => c.remove(obj));
+        viewObjectsRef.current[currentViewIdRef.current] = c.getObjects()
+          .filter((obj: any) => !obj.isMockup && !obj.isGuide && !obj.isGuideLine && !obj.isDesignBackground);
         const nextView = getView(viewId);
-        activeView = nextView;
         console.log('🔍 [EDITOR - VISTA ACTIVA]:', {
-          id: activeView?.id,
-          name: activeView?.name,
+          id: nextView?.id,
+          name: nextView?.name,
         });
-        currentViewIdRef.current = viewId;
-        setCurrentViewId(viewId);
         const currentViewIndex = Math.max(0, baseProductViews.findIndex((view) => view.id === viewId));
         const syncedView = Object.keys(activeOptionSelections).length
           ? syncEditorWithVariant(activeOptionSelections)
@@ -2023,24 +2361,49 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           resolvedPrintArea: resolvedView.printArea,
         });
 
-        await loadResolvedViewBackground(activeView, resolvedView);
-
         const stored = canvasDataRef.current[viewId];
-        if (stored) {
-          await new Promise<void>((resolve) => {
-            // @ts-ignore Fabric.js types mismatch
-            fabric.util.enlivenObjects(JSON.parse(stored), (enlivened: any[]) => {
-              enlivened.forEach((obj: any) => c.add(makeObjectInteractive(obj)));
-              resolve();
+        let restoredObjects = viewObjectsRef.current[viewId] ?? [];
+        let ownsRestoredObjects = false;
+        if (!restoredObjects.length && stored) {
+          try {
+            restoredObjects = await new Promise<any[]>((resolve) => {
+              // @ts-ignore Fabric.js types mismatch
+              fabric.util.enlivenObjects(JSON.parse(stored), (enlivened: any[]) => resolve(enlivened || []));
             });
-          });
+            ownsRestoredObjects = true;
+          } catch (error) {
+            console.error('[EditorCanvas] No se pudo restaurar el diseño de la vista:', viewId, error);
+          }
         }
+
+        if (switchToken !== viewSwitchToken || fabricCanvasRef.current !== c) {
+          if (ownsRestoredObjects) restoredObjects.forEach((object) => object.dispose?.());
+          return;
+        }
+
+        activeView = nextView;
+        await loadResolvedViewBackground(nextView, resolvedView);
+        if (switchToken !== viewSwitchToken || fabricCanvasRef.current !== c) {
+          if (ownsRestoredObjects) restoredObjects.forEach((object) => object.dispose?.());
+          return;
+        }
+
+        isUpdatingHistory.current = true;
+        // Cada vista conserva su propio diseño. Reemplazamos los objetos solo
+        // cuando la carga de destino ya está lista, para evitar un canvas vacío.
+        c.discardActiveObject();
+        c.getObjects()
+          .filter((obj: any) => !obj.isMockup && !obj.isGuide && !obj.isGuideLine)
+          .forEach((obj: any) => c.remove(obj));
+        restoredObjects.forEach((obj: any) => c.add(makeObjectInteractive(obj)));
+        viewObjectsRef.current[viewId] = restoredObjects;
         ensureObjectsInteractable();
         c.selection = true;
         c.calcOffset();
         if (safeZoneRef.current) c.sendToBack(safeZoneRef.current);
         c.requestRenderAll();
         finishViewSwitch(viewId);
+        if (switchToken === viewSwitchToken) pendingViewId = null;
         // Refresca el panel de textos de la sidebar para la vista cargada.
         emitSmartInputs();
       };
@@ -2115,6 +2478,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           });
           if (safeZoneRef.current) canvas.sendToBack(safeZoneRef.current);
           canvas.renderAll();
+          viewObjectsRef.current[currentViewIdRef.current] = canvas.getObjects().filter(isDraftDesignObject);
           emitSmartInputs();
           window.dispatchEvent(new CustomEvent('editor:selection-changed', { detail: { selectedObject: null } }));
           resolve();
@@ -2180,16 +2544,25 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         canvas.requestRenderAll();
       });
       canvas.on('object:scaling', (e: any) => {
+        // Primero se corrige cualquier deformación (scaleX !== scaleY) y
+        // sólo después se recalculan las coordenadas: si se invirtiera el
+        // orden, los tiradores quedarían desfasados del tamaño real.
+        enforceUniformScale(e.target);
         clampToPrintArea(e.target);
         e.target?.setCoords?.();
+        logImageScaleDiagnostic(e.target, 'drag');
       });
       canvas.on('object:modified', (e: any) => {
+        enforceUniformScale(e.target);
         clampToPrintArea(e.target);
         // Recalcular coordenadas y offset tras cada transformación para que
         // el cursor y el objeto queden perfectamente sincronizados (sin saltos).
         e.target?.setCoords?.();
         canvas.calcOffset();
+        logImageScaleDiagnostic(e.target, 'end');
       });
+      canvas.on('selection:created', showImageScaleControls);
+      canvas.on('selection:updated', showImageScaleControls);
       // Fabric modifica el objeto en memoria durante las transformaciones.
       // Forzar el render mantiene sincronizado el upper-canvas visible con
       // esas modificaciones, especialmente en pantallas con escala Retina.
@@ -3417,6 +3790,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         
         activeObject.clone((clonedObj: any) => {
           canvas.discardActiveObject();
+          // `clone` reconstruye el objeto desde su JSON, que no incluye los
+          // controles de escala: sin reaplicarlos, la copia volvería a tener
+          // los tiradores laterales nativos y se deformaría al estirarla.
+          makeObjectInteractive(clonedObj);
           clonedObj.set({
             left: clonedObj.left + 20,
             top: clonedObj.top + 20,
@@ -3687,6 +4064,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           left: cropRectLeft,
           top: cropRectTop,
         });
+        // El recorte redefine `width`/`height` (píxeles de la región visible),
+        // pero la escala debe seguir siendo uniforme o el recorte se
+        // deformaría. El overlay sí es libre; la foto, no.
+        enforceUniformScale(targetImg);
         targetImg.setCoords();
         c.remove(cropRect);
         cropOverlayRef = null;
