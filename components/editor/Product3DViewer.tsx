@@ -10,6 +10,7 @@ import { DEFAULT_MESH_SETTINGS, type MeshSettings, type ProductVariant } from '@
 type FabricCanvasLike = {
   getElement: () => HTMLCanvasElement;
   getObjects: () => Array<any>;
+  backgroundColor?: unknown;
   on: (eventName: string, handler: () => void) => void;
   off: (eventName: string, handler: () => void) => void;
 };
@@ -217,7 +218,7 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1 }: { viewIndex?: n
   />;
 }
 
-function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds | null, targetCanvas: HTMLCanvasElement, baseColor: string, panoramic: boolean, objectsOverride?: any[], outlineColor = '#22c55e', projectionArea?: PrintAreaBounds, totalViews = 0) {
+function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds | null, targetCanvas: HTMLCanvasElement, panoramic: boolean, objectsOverride?: any[], projectionArea?: PrintAreaBounds, totalViews = 0) {
   // Si falta el área publicada por el editor, recorta una faja panorámica
   // centrada en el espacio lógico cuadrado de Fabric. El buffer conserva la
   // resolución/aspecto de la plantilla de impresión.
@@ -244,8 +245,11 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
   // izquierda y Espalda (1) la mitad derecha. No invertir el índice: eso
   // desplaza el origen de una cara al límite UV de la otra.
   const segmentIndex = panoramic ? Math.min(viewCount - 1, Math.max(0, viewIndex)) : 0;
-  const sideWidth = panoramic ? target.width / viewCount : target.width;
-  const sideLeft = panoramic ? sideWidth * segmentIndex : 0;
+  // Usa límites enteros y contiguos para que dividir la textura entre un
+  // número impar de píxeles no deje costuras transparentes entre segmentos.
+  const sideLeft = panoramic ? Math.floor(target.width * segmentIndex / viewCount) : 0;
+  const sideRight = panoramic ? Math.floor(target.width * (segmentIndex + 1) / viewCount) : target.width;
+  const sideWidth = Math.max(1, sideRight - sideLeft);
   const canvasWidth = Math.max(1, Number(area?.canvasWidth) || logicalWidth);
   const canvasHeight = Math.max(1, Number(area?.canvasHeight) || logicalHeight);
   const autoSurfaceHeight = (bounds.height / canvasHeight) * 100;
@@ -320,7 +324,19 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
   context.setTransform(1, 0, 0, 1, 0, 0);
   context.globalCompositeOperation = 'source-over';
   context.clearRect(sideLeft, 0, sideWidth, target.height);
-  context.fillStyle = baseColor || '#ffffff';
+  const canvasBackground = typeof fabricCanvas.backgroundColor === 'string'
+    ? fabricCanvas.backgroundColor.trim()
+    : '';
+  const hasValidBackground = Boolean(canvasBackground)
+    && (typeof CSS === 'undefined' || CSS.supports('color', canvasBackground));
+  const hasVisibleBackground = hasValidBackground
+    && !/^transparent$/i.test(canvasBackground)
+    && !/^rgba\([^)]*,\s*0(?:\.0+)?\s*\)$/i.test(canvasBackground)
+    && !/^#[\da-f]{3}0(?:[\da-f]{3}0)?$/i.test(canvasBackground);
+  // Los píxeles transparentes de CanvasTexture se multiplican por el color
+  // base del material y pueden verse negros. La textura de impresión siempre
+  // parte de una base opaca; un fondo vacío/transparente se representa blanco.
+  context.fillStyle = hasVisibleBackground ? canvasBackground : '#ffffff';
   context.fillRect(sideLeft, 0, sideWidth, target.height);
 
   // En el editor final, la zona 2D es el origen lógico del diseño y la zona
@@ -402,55 +418,8 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     });
     context.restore();
 
-    context.save();
-    context.strokeStyle = outlineColor;
-    context.lineWidth = 2;
-    context.setLineDash([6, 6]);
-    context.strokeRect(destX, destY, destW, destH);
-    context.restore();
     return;
   }
-
-  const safeWidth = hasCalibratedTarget ? panelWidth : bounds.width * scaleX;
-  const safeHeight = hasCalibratedTarget ? panelHeight : bounds.height * scaleY;
-  const pathLeft = hasCalibratedTarget ? panelLeft : safeLeft;
-  const pathTop = hasCalibratedTarget ? panelTop : safeTop;
-  const safePathArea = hasCalibratedTarget ? targetBounds : area;
-
-  const traceSafeAreaPath = () => {
-    context.beginPath();
-    if (safePathArea?.polygon && safePathArea.polygon.length >= 3) {
-      safePathArea.polygon.forEach((point, index) => {
-        const x = hasCalibratedTarget
-          ? panelLeft + ((point.x - Number(targetBounds?.left ?? 0)) / 100) * sideWidth
-          : safeLeft + (point.x - bounds.left) * scaleX;
-        const y = hasCalibratedTarget
-          ? panelTop + ((point.y - Number(targetBounds?.top ?? 0)) / 100) * target.height
-          : safeTop + (point.y - bounds.top) * scaleY;
-        if (index === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      });
-      context.closePath();
-    } else if (safePathArea?.shape === 'ellipse') {
-      context.ellipse(pathLeft + safeWidth / 2, pathTop + safeHeight / 2, safeWidth / 2, safeHeight / 2, 0, 0, Math.PI * 2);
-    } else if (safePathArea?.shape === 'rounded') {
-      const radius = Math.min(50, Math.max(0, Number(safePathArea.radius) || 0)) / 100;
-      const radiusX = Math.min(safeWidth / 2, safeWidth * radius);
-      const radiusY = Math.min(safeHeight / 2, safeHeight * radius);
-      context.moveTo(pathLeft + radiusX, pathTop);
-      context.lineTo(pathLeft + safeWidth - radiusX, pathTop);
-      context.quadraticCurveTo(pathLeft + safeWidth, pathTop, pathLeft + safeWidth, pathTop + radiusY);
-      context.lineTo(pathLeft + safeWidth, pathTop + safeHeight - radiusY);
-      context.quadraticCurveTo(pathLeft + safeWidth, pathTop + safeHeight, pathLeft + safeWidth - radiusX, pathTop + safeHeight);
-      context.lineTo(pathLeft + radiusX, pathTop + safeHeight);
-      context.quadraticCurveTo(pathLeft, pathTop + safeHeight, pathLeft, pathTop + safeHeight - radiusY);
-      context.lineTo(pathLeft, pathTop + radiusY);
-      context.quadraticCurveTo(pathLeft, pathTop, pathLeft + radiusX, pathTop);
-      context.closePath();
-    } else {
-      context.rect(pathLeft, pathTop, safeWidth, safeHeight);
-    }
-  };
 
   context.save();
   context.setTransform(scaleX, 0, 0, scaleY, offsetX, offsetY);
@@ -465,25 +434,6 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     context.restore();
   }
 
-  context.save();
-  context.setTransform(1, 0, 0, 1, 0, 0);
-  context.strokeStyle = outlineColor;
-  context.lineWidth = Math.max(2, target.height / 300);
-  context.setLineDash([6, 6]);
-  traceSafeAreaPath();
-  context.stroke();
-  context.restore();
-
-  if (area) {
-    context.save();
-    context.globalCompositeOperation = 'source-over';
-    context.strokeStyle = outlineColor;
-    context.lineWidth = Math.max(8, target.height / 150);
-    context.setLineDash([Math.max(20, target.height / 40), Math.max(10, target.height / 100)]);
-    traceSafeAreaPath();
-    context.stroke();
-    context.restore();
-  }
 }
 
 async function enlivenDesignObjects(serializedObjects: any[]) {
@@ -582,7 +532,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                 radius: liveArea3D.radius,
                 polygon: liveArea3D.nodes ?? liveArea3D.polygon,
               } : undefined;
-              renderFullTexture360(fabricCanvas, printArea, printCanvas, partColors.body, panoramic, undefined, adminArea ? '#0284c7' : '#22c55e', liveProjection, totalViews);
+              renderFullTexture360(fabricCanvas, printArea, printCanvas, panoramic, undefined, liveProjection, totalViews);
             } else {
               const context = printCanvas.getContext('2d');
               if (!context) return;
@@ -615,7 +565,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                   radius: livePrintArea3D.radius,
                   polygon: livePrintArea3D.nodes ?? livePrintArea3D.polygon,
                 } : snapshot.projectionArea;
-                renderFullTexture360(fabricCanvas, isActiveSnapshot ? printArea : snapshot.area, printCanvas, partColors.body, panoramic, objects, adminArea ? '#0284c7' : '#22c55e', activeProjection, totalViews);
+                renderFullTexture360(fabricCanvas, isActiveSnapshot ? printArea : snapshot.area, printCanvas, panoramic, objects, activeProjection, totalViews);
                 if (snapshot.viewId !== printArea?.viewId) objects.forEach((object) => object.dispose?.());
               }
             }
