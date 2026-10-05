@@ -581,7 +581,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const wrapped = wrapWithFireEvent('scaling', wrapWithFixedAnchor(scaleFromSide));
         const handler = (eventData: any, transform: any, x: number, y: number) => {
           if (!transform?.target) return false;
-          const centered = Boolean(eventData?.[canvas.centeredKey] ?? eventData?.altKey);
+          const centeredModifier = Boolean(eventData?.[canvas.centeredKey] ?? eventData?.altKey);
+          // Las imágenes escalan desde el centro por defecto, expandiéndose
+          // hacia sus cuatro lados. La tecla centrada invierte ese modo.
+          const centered = transform.target.centeredScaling ? !centeredModifier : centeredModifier;
           setUniformAnchor(transform, corner, centered);
           return wrapped(eventData, transform, x, y);
         };
@@ -619,7 +622,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (!target) return;
         target.set({
           lockUniScaling: true,
-          centeredScaling: false,
+          centeredScaling: String(target.type).toLowerCase() === 'image',
           lockSkewingX: true,
           lockSkewingY: true,
           lockScalingFlip: true,
@@ -1998,6 +2001,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           noScaleCache: object.noScaleCache,
           objectCaching: object.objectCaching,
           hasClipPath: Boolean(object.clipPath),
+          centeredScaling: object.centeredScaling,
+          anchor: transform ? { originX: transform.originX, originY: transform.originY } : null,
         });
       };
 
