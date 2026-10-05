@@ -4433,9 +4433,39 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
   return (
     <div
-      ref={canvasAreaRef}
-      className="flex-1 h-full w-full flex items-center justify-center p-6 relative overflow-hidden bg-slate-100/50 mx-auto"
+      className="relative mx-auto flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-slate-100/50"
     >
+      {productViews.length > 1 && (
+        <nav aria-label="Vistas del producto" className="z-20 flex w-full shrink-0 justify-center px-2 py-2">
+          <div className="flex max-w-full gap-1.5 overflow-x-auto rounded-xl border border-slate-200 bg-white/90 p-1 shadow-sm backdrop-blur-sm">
+            {productViews.map((view) => {
+              const isActive = view.id === currentViewId;
+              const thumbnailUrl = viewThumbnails[view.id]
+                || (isActive ? currentMockupUrl : view.mockupUrl)
+                || initialProduct.views.find((item) => item.id === view.id)?.mockupUrl;
+              return (
+                <button
+                  key={view.id}
+                  type="button"
+                  onClick={() => switchViewRef.current?.(view.id)}
+                  aria-pressed={isActive}
+                  aria-label={`Cambiar a la vista ${view.label || view.name || view.id}`}
+                  className={`inline-flex min-w-0 shrink-0 items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${isActive ? 'border-blue-600 bg-blue-50 text-blue-800' : 'border-transparent text-slate-700 hover:bg-slate-50'}`}
+                >
+                  <span className="flex h-9 w-7 shrink-0 items-center justify-center overflow-hidden rounded bg-slate-100">
+                    {thumbnailUrl ? <img src={thumbnailUrl} alt="" className="h-full w-full object-contain" /> : <span className="text-[8px] text-slate-400">—</span>}
+                  </span>
+                  <span className="max-w-28 truncate text-xs font-semibold">{view.label || view.name || view.id}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      )}
+      <div
+        ref={canvasAreaRef}
+        className="relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden p-6"
+      >
       <canvas ref={canvasRef} className="block select-none" style={{ pointerEvents: 'auto' }} />
 
       {draftStatus !== 'idle' && (
@@ -4453,50 +4483,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         </div>
       )}
 
-      {/* Vistas del producto: cada tarjeta conserva una miniatura del diseño
-          propio de esa cara, para que frente, espalda y vistas adicionales se
-          distingan sin cubrir el centro del diseño. */}
-      {productViews.length > 1 && (
-        <div className="absolute right-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] flex-row gap-2 overflow-x-auto rounded-2xl bg-white/85 p-1.5 shadow-lg shadow-slate-900/10 backdrop-blur-md sm:right-4 sm:top-4 sm:gap-2.5 sm:p-2">
-          {productViews.map((view) => {
-            const isActive = view.id === currentViewId;
-            const thumbnailUrl = viewThumbnails[view.id]
-              || (isActive ? currentMockupUrl : view.mockupUrl)
-              || initialProduct.views.find((item) => item.id === view.id)?.mockupUrl;
-            return (
-              <button
-                key={view.id}
-                type="button"
-                onClick={() => switchViewRef.current?.(view.id)}
-                aria-pressed={isActive}
-                aria-label={`Cambiar a la vista ${view.label || view.name || view.id}`}
-                className={`group w-[68px] shrink-0 overflow-hidden rounded-xl border-2 bg-white text-left shadow-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 sm:w-[78px] ${
-                  isActive
-                    ? 'border-blue-700 ring-1 ring-blue-700/20'
-                    : 'border-transparent hover:border-slate-300 hover:shadow-md'
-                }`}
-              >
-                <div className="aspect-square w-full overflow-hidden bg-slate-100">
-                  {thumbnailUrl ? (
-                    <img
-                      src={thumbnailUrl}
-                      alt=""
-                      className="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.03]"
-                    />
-                  ) : (
-                    <div className="flex h-full items-center justify-center px-2 text-center text-[10px] text-slate-400">
-                      Sin vista previa
-                    </div>
-                  )}
-                </div>
-                <span className={`block truncate px-2 py-2 text-center text-xs font-semibold ${isActive ? 'text-blue-800' : 'text-slate-700'}`}>
-                  {view.label || view.name || view.id}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
       {false ? (
         <div className="pointer-events-none absolute left-4 top-4 z-20 w-60 space-y-3 rounded-2xl border border-gray-200 bg-white/95 p-3 shadow-xl backdrop-blur-md">
           {productViews.length > 1 && <div>
@@ -4733,6 +4719,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         views={threeDViews}
         onClose={() => setIs3DModalOpen(false)}
       />
+      </div>
     </div>
   );
 }

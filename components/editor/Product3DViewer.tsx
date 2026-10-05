@@ -662,15 +662,15 @@ function resetTextureUvTransform(texture: THREE.CanvasTexture, panoramic: boolea
   // circunferencia; cada cara ocupa media imagen. No hay que comprimirla otra vez.
   const repeatX = panoramic ? 1 : Math.min(1, cylinderAspect / canvasAspect);
 
-  texture.wrapS = panoramic ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
+  // El panorama completo (todas las vistas) ya ocupa U=0..1 una sola vez.
+  // RepeatWrapping mezcla el último píxel con el primero en la costura UV,
+  // lo que puede dibujar una línea clara cuando esos extremos difieren.
+  texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   // El UV del GLB está orientado en sentido opuesto al lienzo. Invertimos U
   // alrededor del centro para corregir el espejo sin invertir el eje vertical.
   texture.center.set(0.5, 0.5);
   texture.repeat.set(-Math.abs(repeatX), 1.0);
-  // Con repeat.x negativo, el centro de la cara física frontal (U=.5) cae en
-  // U=.5+offset. Lo alineamos al centro del primer segmento (U=.5/N), dejando
-  // la costura entre segmentos y no en el centro de la cámara.
   // El panorama se dibuja de U=0 a U=1. Mantener el offset en cero evita
   // desplazar globalmente la costura; la cámara se alinea con cada segmento.
   texture.offset.set(0, 0);
