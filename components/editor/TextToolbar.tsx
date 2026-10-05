@@ -66,7 +66,7 @@ interface ObjectStyle {
   linethrough?: boolean;
 }
 
-export default function TextToolbar() {
+export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama, allowPanorama = false }: { isPanoramaActive?: boolean; onTogglePanorama?: () => void; allowPanorama?: boolean }) {
   const [isVisible, setIsVisible] = useState(true);
   const [isTextObject, setIsTextObject] = useState(false);
   const [isImageObject, setIsImageObject] = useState(false);
@@ -326,6 +326,18 @@ export default function TextToolbar() {
         })}
         <input type="color" aria-label="Elegir fondo personalizado" value={/^#[0-9a-f]{6}$/i.test(backgroundColor) ? backgroundColor : '#ffffff'} onChange={(event) => changeBackground(event.target.value)} className="h-6 w-6 cursor-pointer rounded-md border-0 p-0" />
       </div>
+
+      {allowPanorama && onTogglePanorama && (
+        <button
+          type="button"
+          aria-pressed={isPanoramaActive}
+          onClick={onTogglePanorama}
+          className={`shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold transition ${isPanoramaActive ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
+          title="Editar todas las vistas en un lienzo horizontal continuo"
+        >
+          {isPanoramaActive ? 'Volver a vistas individuales' : 'Diseñar lienzo 360°'}
+        </button>
+      )}
 
       {isImageObject && !isCropping && (
         <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('editor:start-crop'))} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-700">

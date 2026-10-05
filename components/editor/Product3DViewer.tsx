@@ -608,7 +608,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
               const snapshotsToRender = activeOnly && activeSnapshot ? [activeSnapshot] : snapshots;
               for (const snapshot of snapshotsToRender) {
                 let objects: any[];
-                if (snapshot.viewId === printArea?.viewId) {
+                if (snapshot.viewId === printArea?.viewId && !(window as any).__editorPanoramaMode) {
                   objects = fabricCanvas.getObjects();
                 } else {
                   let cached = snapshotObjectsCache.current.get(snapshot.viewId);

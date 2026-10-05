@@ -53,9 +53,10 @@ const getInitialSelectedOptions = (_product: Product): Record<string, ProductOpt
 interface EditorCanvasProps {
   product: Product;
   workflowStep?: 'design' | 'options' | 'review';
+  isPanoramaActive?: boolean;
 }
 
-export default function EditorCanvas({ product: initialProduct, workflowStep = 'design' }: EditorCanvasProps) {
+export default function EditorCanvas({ product: initialProduct, workflowStep = 'design', isPanoramaActive = false }: EditorCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Contenedor del lienzo central: se usa para dimensionar el canvas y aplicar
   // "zoom to fit" de forma proporcional al área disponible del editor.
@@ -79,6 +80,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   const [threeDViews, setThreeDViews] = useState<ThreeDViewPreview[]>([]);
   const [currentViewId, setCurrentViewId] = useState<string>(initialProduct.views[0]?.id ?? 'front');
   const [productViews, setProductViews] = useState<ProductView[]>(initialProduct.views);
+  const panoramaModeRef = useRef(false);
+  const panoramaToggleRef = useRef<((enabled: boolean) => void) | null>(null);
   const activeView = productViews.find((view) => view.id === currentViewId) ?? productViews[0];
   const [selectedColor, setSelectedColor] = useState<ColorVariant | null>(
     initialProduct.views[0]?.colorVariants?.[0] ?? initialProduct.colors?.[0] ?? null,
@@ -123,7 +126,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
     const usageByView = productViews.map((view) => {
       const isActiveView = view.id === currentViewIdRef.current;
       let objects: any[] = [];
-      if (isActiveView && canvas?.getObjects) {
+      if (isActiveView && !panoramaModeRef.current && canvas?.getObjects) {
         objects = canvas.getObjects();
       } else {
         try {
@@ -135,7 +138,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         }
       }
 
-      const printAreaBounds = isActiveView && safeZoneRef.current?.getBoundingRect
+      const printAreaBounds = isActiveView && !panoramaModeRef.current && safeZoneRef.current?.getBoundingRect
         ? safeZoneRef.current.getBoundingRect(true, true)
         : null;
       const areaLeft = Number(printAreaBounds?.left ?? ((view.printAreaUnit === 'percent' ? view.printArea.x * 8 : view.printArea.x) || 0));
@@ -208,6 +211,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
   useEffect(() => {
     if (!initialProduct || !activeView || !currentViewId) return;
+    // En modo 360 el cambio de segmento solo cambia la vista seleccionada; no
+    // debe volver a cargar mockup ni reaplicar el clip individual al lienzo.
+    if (panoramaModeRef.current) return;
     refreshResolvedMockupRef.current?.(currentViewId, selectedOptions, initialProduct);
   }, [selectedOptions, currentViewId, activeView, initialProduct]);
 
@@ -218,6 +224,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
     // Referencia al "zoom to fit" definido dentro de la carga asíncrona de
     // Fabric, para poder reaplicarlo desde el listener de resize y limpiarlo.
     let fitOnResize: (() => void) | null = null;
+    let logicalCanvasWidth = ADMIN_BASE_SIZE;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     const scheduleFit = () => {
       clearTimeout(resizeTimer);
@@ -388,7 +395,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // ancho se acota para que el plano lógico 800×800 nunca desborde.
         const scale = Math.min(
           (availableHeight * 0.95) / originalHeight,
-          availableWidth / ADMIN_BASE_SIZE,
+          availableWidth / logicalCanvasWidth,
         );
 
         // El plano lógico sigue siendo 800×800 (con el mockup 600×800 centrado
@@ -396,7 +403,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // así el elemento respeta la proporción, el mockup llena el alto al 92%
         // y no hay estiramiento ni recorte por CSS.
         canvasInstance.setDimensions({
-          width: ADMIN_BASE_SIZE * scale,
+          width: logicalCanvasWidth * scale,
           height: ADMIN_BASE_SIZE * scale,
         });
 
@@ -732,7 +739,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           // vuelva a ser siempre fiel a su proporción original.
           if (objectType === 'image') enforceUniformScale(object as any);
         }
-        applyPrintAreaClip(object as any);
+        if (!panoramaModeRef.current) applyPrintAreaClip(object as any);
         return object;
       };
 
@@ -861,6 +868,12 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // Límites reales del mockup después de aplicar `contain`. La zona segura
       // es porcentual respecto a la imagen, no a las franjas del canvas.
       let activeMockupBounds = { left: 0, top: 0, width: ADMIN_BASE_SIZE, height: ADMIN_BASE_SIZE };
+      // Transformación entre cada canvas individual y su segmento del lienzo
+      // panorámico. Los segmentos ocupan solo la zona imprimible y se pegan.
+      let panoramaSegments: Array<{
+        viewId: string; sourceX: number; sourceY: number; sourceWidth: number;
+        sourceHeight: number; destX: number; destWidth: number; scale: number;
+      }> = [];
 
       // Dimensiones LÓGICAS del plano de trabajo (800×800). Con el "zoom to
       // fit" activo, canvas.getWidth() devuelve píxeles de pantalla
@@ -902,6 +915,25 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
       const getView = (viewId: string): ProductView =>
         activeProduct.views.find((v) => v.id === viewId) || activeProduct.views[0];
+      const getCurrentViewPanoramaSegment = () => panoramaSegments.find((segment) => segment.viewId === currentViewIdRef.current);
+      const getCurrentViewPanoramaOffset = () => panoramaModeRef.current
+        ? (getCurrentViewPanoramaSegment()?.destX ?? 0)
+        : 0;
+      const getCurrentPanoramaCenter = () => {
+        const segment = getCurrentViewPanoramaSegment();
+        return segment
+          ? { x: segment.destX + segment.destWidth / 2, y: ADMIN_BASE_SIZE / 2 }
+          : { x: ADMIN_BASE_SIZE / 2, y: ADMIN_BASE_SIZE / 2 };
+      };
+      const mapPointToCurrentPanorama = (x: number, y: number) => {
+        const segment = getCurrentViewPanoramaSegment();
+        if (!panoramaModeRef.current || !segment) return { x, y, scale: 1 };
+        return {
+          x: segment.destX + (x - segment.sourceX) * segment.scale,
+          y: (y - segment.sourceY) * segment.scale,
+          scale: segment.scale,
+        };
+      };
 
       const resolveCurrentViewData = (
         productViews: ProductView[],
@@ -1139,7 +1171,20 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const applyPrintAreaClipping = (view = activeView) => {
         canvas.getObjects().forEach((object: any) => applyPrintAreaClip(object, view));
       };
-      const clipAddedDesignObject = (event: any) => applyPrintAreaClip(event?.target);
+      const clipAddedDesignObject = (event: any) => {
+        if (panoramaModeRef.current) {
+          const object = event?.target;
+          if (!object || object.isGuide || object.isMockup) return;
+          const centerX = object.getCenterPoint?.().x ?? Number(object.left) ?? 0;
+          const segment = panoramaSegments.find((candidate) => centerX >= candidate.destX && centerX <= candidate.destX + candidate.destWidth)
+            ?? panoramaSegments[panoramaSegments.length - 1];
+          object.panoramaViewId = object.panoramaViewId || segment?.viewId;
+          object.set?.({ clipPath: undefined });
+          canvas.bringToFront(object);
+          return;
+        }
+        applyPrintAreaClip(event?.target);
+      };
 
       // Una variante puede usar una imagen diferente para cada cara del
       // producto. Si no existe ese mapa, se conserva su mockup general.
@@ -1197,6 +1242,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       };
 
       const loadProductMockup = async (view: ProductView, mockupUrlOverride?: string) => {
+        // El panorama representa únicamente el arte imprimible. No iniciar ni
+        // aceptar cargas de mockup mientras está activo.
+        if (panoramaModeRef.current) return;
         currentLoadRequestId.current += 1;
         const requestId = currentLoadRequestId.current;
         const selectedVariant = view.colorVariants?.find(
@@ -1218,8 +1266,12 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
           const applyMockupImage = async (img: any) => {
             try {
-              if (requestId !== currentLoadRequestId.current || renderToken !== currentRenderToken) {
+            if (requestId !== currentLoadRequestId.current || renderToken !== currentRenderToken) {
                 console.log('⛔ Petición obsoleta descartada:', mockupUrl);
+                resolve();
+                return;
+              }
+              if (panoramaModeRef.current) {
                 resolve();
                 return;
               }
@@ -1378,6 +1430,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       };
 
       refreshResolvedMockupRef.current = (viewId, options, product) => {
+        if (panoramaModeRef.current) return;
         const view = product.views.find((item) => item.id === viewId) ?? activeProduct.views.find((item) => item.id === viewId);
         if (!view || !fabricCanvasRef.current) return;
 
@@ -1527,6 +1580,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
               console.log('⛔ Petición obsoleta descartada:', incomingMockupUrl);
               return;
             }
+            if (panoramaModeRef.current) return;
             setupSafeAreaAndClipping(targetView);
             // NO re-clampar posiciones en bloque al cambiar de opción: eso
             // MOVERÍA permanentemente el diseño del usuario hacia la zona de
@@ -1887,6 +1941,15 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           detail: { viewId: view.id, designBackground: normalizedValue },
         }));
 
+        if (panoramaModeRef.current) {
+          const panoramaBackground = c.getObjects().find((object: any) => object?.isPanoramaBackground && object.panoramaViewId === view.id);
+          if (panoramaBackground) {
+            panoramaBackground.set('fill', buildFabricBackgroundFill(background, panoramaBackground.width ?? 0, panoramaBackground.height ?? 0));
+            c.requestRenderAll();
+          }
+          return;
+        }
+
         // 2) APLICAR EL COLOR ÚNICAMENTE A LA ZONA SEGURA: el único objetivo
         //    intervenido es el vector gemelo de la guía punteada
         //    (buildSafeAreaShape). Recibe 'fill' = color sólido, 'transparent'
@@ -2009,17 +2072,23 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const snapshotCurrentObjects = () => {
         const c = fabricCanvasRef.current;
         if (!c) return '[]';
-        // `toJSON()` conserva todas las propiedades necesarias para volver a
-        // enlivenar textos, imágenes y vectores de esta cara. Las guías no se
-        // incluyen porque se marcan con `excludeFromExport`.
-        const serializedCanvas = c.toJSON(['id', 'label', 'layerName', 'isLock']);
-        return JSON.stringify((serializedCanvas.objects || []).filter((obj: any) => !obj.isDesignBackground));
+        // Serializar directamente los objetos de diseño evita que Fabric
+        // omita imágenes/capas que estén marcadas como excludeFromExport por
+        // flujos auxiliares del mockup. Las guías y fondos se reconstruyen.
+        const objects = c.getObjects()
+          .filter((object: any) => !object.isMockup && !object.isGuide && !object.isGuideLine
+            && !object.isCropOverlay && !object.isDesignBackground && !object.isPanoramaBackground)
+          .map((object: any) => object.toObject(['id', 'label', 'layerName', 'isLock']));
+        return JSON.stringify(objects);
       };
 
       const publish3DViewSnapshots = () => {
+        if (panoramaModeRef.current) persistPanoramaViews();
         const currentViewId = currentViewIdRef.current;
-        const currentObjects = snapshotCurrentObjects();
-        canvasDataRef.current[currentViewId] = currentObjects;
+        const currentObjects = panoramaModeRef.current
+          ? (canvasDataRef.current[currentViewId] ?? '[]')
+          : snapshotCurrentObjects();
+        if (!panoramaModeRef.current) canvasDataRef.current[currentViewId] = currentObjects;
         const currentAreas = (window as any).__editorPrintAreasByView ?? {};
         const viewCount = Math.max(1, baseProductViews.length);
         const views = baseProductViews.map((view, viewIndex) => {
@@ -2116,6 +2185,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // deben aparecer aquí para que la tarjeta sea reconocible de un vistazo.
       // La guía permanece fuera gracias a `excludeFromExport`.
       const captureViewThumbnail = (viewId = currentViewIdRef.current, immediate = false) => {
+        if (panoramaModeRef.current) return;
         const capture = () => {
           const c = fabricCanvasRef.current;
           if (!c || viewId !== currentViewIdRef.current) return;
@@ -2323,6 +2393,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const switchView = async (viewId: string) => {
         const c = fabricCanvasRef.current;
         if (!c) return;
+        if (panoramaModeRef.current) await setPanoramaMode(false);
+        if (fabricCanvasRef.current !== c) return;
         if (viewId === currentViewIdRef.current) {
           if (!pendingViewId) return;
           const cancelToken = ++viewSwitchToken;
@@ -2436,8 +2508,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
       const persistDraft = () => {
         if (isHydratingDraftRef.current || !fabricCanvasRef.current) return;
+        if (panoramaModeRef.current) persistPanoramaViews();
         const canvasJSON = serializeCurrentDraftView();
-        canvasDataRef.current[currentViewIdRef.current] = JSON.stringify(canvasJSON.objects ?? []);
+        if (panoramaModeRef.current) {
+          canvasJSON.objects = JSON.parse(canvasDataRef.current[currentViewIdRef.current] || '[]');
+        } else {
+          canvasDataRef.current[currentViewIdRef.current] = JSON.stringify(canvasJSON.objects ?? []);
+        }
         const views = Object.fromEntries(
           Object.entries(canvasDataRef.current).filter(([, objects]) => typeof objects === 'string'),
         ) as Record<string, string>;
@@ -2542,7 +2619,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       canvas.on('object:moving', (e: any) => {
         const object = e.target;
         if (!object) return;
-        clampToPrintArea(object);
+        if (!panoramaModeRef.current) clampToPrintArea(object);
         // Actualiza la matriz de colisión y los controles durante el drag,
         // sin escribir estado de React ni recrear el canvas.
         object.setCoords();
@@ -2553,13 +2630,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // sólo después se recalculan las coordenadas: si se invirtiera el
         // orden, los tiradores quedarían desfasados del tamaño real.
         enforceUniformScale(e.target);
-        clampToPrintArea(e.target);
+        if (!panoramaModeRef.current) clampToPrintArea(e.target);
         e.target?.setCoords?.();
         logImageScaleDiagnostic(e.target, 'drag');
       });
       canvas.on('object:modified', (e: any) => {
         enforceUniformScale(e.target);
-        clampToPrintArea(e.target);
+        if (!panoramaModeRef.current) clampToPrintArea(e.target);
         // Recalcular coordenadas y offset tras cada transformación para que
         // el cursor y el objeto queden perfectamente sincronizados (sin saltos).
         e.target?.setCoords?.();
@@ -2617,6 +2694,207 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
         });
       };
+
+      const persistPanoramaViews = () => {
+        const c = fabricCanvasRef.current;
+        if (!c || !panoramaModeRef.current || !panoramaSegments.length) return;
+        const buckets: Record<string, any[]> = Object.fromEntries(baseProductViews.map((view) => [view.id, []]));
+        c.getObjects().forEach((object: any) => {
+          if (object.isGuide || object.isGuideLine || object.isMockup || object.isDesignBackground || object.isCropOverlay) return;
+          const centerX = typeof object.getCenterPoint === 'function' ? object.getCenterPoint().x : Number(object.left) || 0;
+          const segment = panoramaSegments.find((candidate) => centerX >= candidate.destX && centerX <= candidate.destX + candidate.destWidth)
+            ?? panoramaSegments.find((candidate) => candidate.viewId === object.panoramaViewId)
+            ?? panoramaSegments[centerX < panoramaSegments[0].destX ? 0 : panoramaSegments.length - 1];
+          if (!segment || !buckets[segment.viewId]) return;
+          const objectJson = object.toObject(['id', 'label', 'layerName', 'isLock']);
+          const scale = segment.scale || 1;
+          objectJson.left = (Number(objectJson.left) - segment.destX) / scale + segment.sourceX;
+          objectJson.top = Number(objectJson.top) / scale + segment.sourceY;
+          objectJson.scaleX = Number(objectJson.scaleX ?? 1) / scale;
+          objectJson.scaleY = Number(objectJson.scaleY ?? 1) / scale;
+          delete objectJson.panoramaViewId;
+          delete objectJson.clipPath;
+          buckets[segment.viewId].push(objectJson);
+        });
+        Object.entries(buckets).forEach(([viewId, objects]) => {
+          canvasDataRef.current[viewId] = JSON.stringify(objects);
+          viewObjectsRef.current[viewId] = [];
+        });
+      };
+
+      const setPanoramaMode = async (enabled: boolean) => {
+        const c = fabricCanvasRef.current;
+        if (!c || panoramaModeRef.current === enabled || baseProductViews.length < 2) return;
+        if (enabled) {
+          // Invalidar cargas de imagen ya iniciadas; un callback atrasado no
+          // debe volver a insertar el termo después de limpiar el lienzo.
+          currentLoadRequestId.current += 1;
+          currentRenderToken += 1;
+          // Capturar todo ANTES de borrar mockup/guías del canvas actual.
+          const currentId = currentViewIdRef.current;
+          canvasDataRef.current[currentId] = snapshotCurrentObjects();
+          viewObjectsRef.current[currentId] = c.getObjects().filter(isDraftDesignObject);
+          const panoramaSourceData: Record<string, string> = {};
+          const panoramaLiveObjects: Record<string, any[]> = {};
+          baseProductViews.forEach((view) => {
+            const liveObjects = view.id === currentId
+              ? c.getObjects().filter(isDraftDesignObject)
+              : (viewObjectsRef.current[view.id] ?? []);
+            panoramaLiveObjects[view.id] = [...liveObjects];
+            const stored = canvasDataRef.current[view.id];
+            panoramaSourceData[view.id] = liveObjects.length
+              ? JSON.stringify(liveObjects.map((object: any) => object.toObject(['id', 'label', 'layerName', 'isLock'])))
+              : (stored ?? '[]');
+            canvasDataRef.current[view.id] = panoramaSourceData[view.id];
+          });
+          console.info('[EditorCanvas] Preparando lienzo 360 desde las vistas:', baseProductViews.map((view) => ({
+            viewId: view.id,
+            viewName: view.name,
+            liveObjects: panoramaLiveObjects[view.id]?.length ?? 0,
+            serializedObjects: (() => { try { return JSON.parse(panoramaSourceData[view.id] || '[]').length; } catch { return 0; } })(),
+          })));
+
+          // Leer la geometría real publicada por el editor individual. Para
+          // vistas nunca visitadas se usa el printArea porcentual del producto.
+          const publishedAreas = (window as any).__editorPrintAreasByView ?? {};
+          const segments: typeof panoramaSegments = [];
+          let destX = 0;
+          for (let index = 0; index < baseProductViews.length; index += 1) {
+            const view = baseProductViews[index];
+            const published = publishedAreas[view.id];
+            const resolved = resolveCurrentViewData(baseProductViews, index, activeOptionSelections);
+            const percentArea = resolved.printArea ?? getPercentPrintArea(view);
+            const sourceX = Number.isFinite(Number(published?.left)) ? Number(published.left) : (Number(percentArea.x) / 100) * ADMIN_BASE_SIZE;
+            const sourceY = Number.isFinite(Number(published?.top)) ? Number(published.top) : (Number(percentArea.y) / 100) * ADMIN_BASE_SIZE;
+            const sourceWidth = Number(published?.width) > 0 ? Number(published.width) : (Number(percentArea.width) / 100) * ADMIN_BASE_SIZE;
+            const sourceHeight = Number(published?.height) > 0 ? Number(published.height) : (Number(percentArea.height) / 100) * ADMIN_BASE_SIZE;
+            const safeWidth = Math.max(1, sourceWidth);
+            const safeHeight = Math.max(1, sourceHeight);
+            const scale = ADMIN_BASE_SIZE / safeHeight;
+            const destWidth = safeWidth * scale;
+            segments.push({ viewId: view.id, sourceX, sourceY, sourceWidth: safeWidth, sourceHeight: safeHeight, destX, destWidth, scale });
+            destX += destWidth;
+          }
+          panoramaSegments = segments;
+          isUpdatingHistory.current = true;
+          panoramaModeRef.current = true;
+          (window as any).__editorPanoramaMode = true;
+          c.discardActiveObject();
+          c.getObjects().slice().forEach((object: any) => c.remove(object));
+          c.setBackgroundImage(null, () => undefined);
+          c.backgroundImage = null;
+          logicalCanvasWidth = Math.max(ADMIN_BASE_SIZE, destX);
+          c.setDimensions({ width: logicalCanvasWidth, height: ADMIN_BASE_SIZE });
+          c.backgroundColor = '#ffffff';
+
+          const restoreTasks = baseProductViews.map(async (view) => {
+            const serialized = panoramaSourceData[view.id] || '[]';
+            const segment = segments.find((candidate) => candidate.viewId === view.id)!;
+            let objects = panoramaLiveObjects[view.id] ?? [];
+            if (!objects.length) objects = await new Promise<any[]>((resolve) => {
+              try {
+                // @ts-ignore Fabric.js overload differs between installed versions.
+                fabric.util.enlivenObjects(JSON.parse(serialized), (enlivened: any[]) => resolve(enlivened || []));
+              } catch (error) {
+                console.error('[EditorCanvas] No se pudo cargar el diseño en lienzo 360:', view.id, error);
+                resolve([]);
+              }
+            });
+            objects.forEach((object: any) => {
+              object.set({
+                left: segment.destX + (Number(object.left) - segment.sourceX) * segment.scale,
+                top: (Number(object.top) - segment.sourceY) * segment.scale,
+                scaleX: Number(object.scaleX ?? 1) * segment.scale,
+                scaleY: Number(object.scaleY ?? 1) * segment.scale,
+                clipPath: undefined,
+              });
+              object.panoramaViewId = view.id;
+              object.setCoords?.();
+            });
+            return objects;
+          });
+          const restoredByView = await Promise.all(restoreTasks);
+          if (!panoramaModeRef.current || fabricCanvasRef.current !== c) return;
+          console.info('[EditorCanvas] Objetos colocados en lienzo 360:', restoredByView.map((objects, index) => ({
+            viewId: baseProductViews[index]?.id,
+            count: objects.length,
+            segment: segments[index] && { x: segments[index].destX, width: segments[index].destWidth, scale: segments[index].scale },
+          })));
+          restoredByView.flat().forEach((object) => c.add(makeObjectInteractive(object)));
+
+          segments.forEach((segment, index) => {
+            const view = baseProductViews.find((candidate) => candidate.id === segment.viewId)!;
+            const separator = new fabric.Line([segment.destX, 0, segment.destX, ADMIN_BASE_SIZE], {
+              stroke: '#94a3b8', strokeDashArray: [6, 6], selectable: false, evented: false,
+              excludeFromExport: true, isGuide: true, isGuideLine: true,
+            } as any);
+            if (index > 0) c.add(separator);
+            const label = new fabric.Text(String(view.label || view.name || `Vista ${index + 1}`).toUpperCase(), {
+              left: segment.destX + 12, top: 10, fontSize: 13, fontWeight: 'bold', fill: '#64748b',
+              selectable: false, evented: false, excludeFromExport: true, isGuide: true,
+            } as any);
+            c.add(label);
+          });
+          c.selection = true;
+          c.calcOffset();
+          fitCanvasToContainer();
+          c.requestRenderAll();
+          isUpdatingHistory.current = false;
+          publish3DViewSnapshots();
+          window.dispatchEvent(new CustomEvent('editor:panorama-mode-changed', { detail: { enabled: true } }));
+          return;
+        }
+
+        persistPanoramaViews();
+        panoramaModeRef.current = false;
+        (window as any).__editorPanoramaMode = false;
+        isUpdatingHistory.current = true;
+        c.discardActiveObject();
+        c.getObjects().slice().forEach((object: any) => c.remove(object));
+        logicalCanvasWidth = ADMIN_BASE_SIZE;
+        c.setDimensions({ width: ADMIN_BASE_SIZE, height: ADMIN_BASE_SIZE });
+        const view = getView(currentViewIdRef.current);
+        await loadViewObjects(view);
+        if (fabricCanvasRef.current !== c) return;
+        panoramaSegments = [];
+        fitCanvasToContainer();
+        historyRef.current = [snapshotCurrentObjects()];
+        redoStackRef.current = [];
+        updateHistoryButtons();
+        isUpdatingHistory.current = false;
+        publish3DViewSnapshots();
+        window.dispatchEvent(new CustomEvent('editor:panorama-mode-changed', { detail: { enabled: false } }));
+      };
+      panoramaToggleRef.current = (enabled) => { void setPanoramaMode(enabled); };
+      if (isPanoramaActive) void setPanoramaMode(true);
+
+      const activatePanoramaViewAtPointer = (event: any) => {
+        if (!panoramaModeRef.current) return;
+        const canvasInstance = fabricCanvasRef.current;
+        const targetViewId = event?.target?.panoramaViewId as string | undefined;
+        const pointer = event?.e && canvasInstance ? canvasInstance.getPointer(event.e) : null;
+        const segmentFromPointer = pointer
+          ? panoramaSegments.find((segment) => pointer.x >= segment.destX && pointer.x <= segment.destX + segment.destWidth)
+          : undefined;
+        const targetView = targetViewId
+          ? baseProductViews.find((view) => view.id === targetViewId)
+          : baseProductViews.find((view) => view.id === segmentFromPointer?.viewId) ?? baseProductViews[0];
+        if (targetView && targetView.id !== currentViewIdRef.current) finishViewSwitch(targetView.id);
+      };
+      canvas.on('mouse:down', activatePanoramaViewAtPointer);
+
+      let panoramaRefreshFrame = 0;
+      const refreshPanoramaTexture = () => {
+        if (!panoramaModeRef.current || panoramaRefreshFrame) return;
+        panoramaRefreshFrame = window.requestAnimationFrame(() => {
+          panoramaRefreshFrame = 0;
+          if (!panoramaModeRef.current) return;
+          persistPanoramaViews();
+          publish3DViewSnapshots();
+        });
+      };
+      ['object:moving', 'object:scaling', 'object:rotating', 'object:modified', 'object:added', 'object:removed', 'path:created', 'text:changed']
+        .forEach((eventName) => canvas.on(eventName, refreshPanoramaTexture));
 
       // Exporta miniaturas/renders de todas las vistas para el resumen del pedido
       const exportAll = async () => {
@@ -3581,7 +3859,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         fabricCanvasRef.current.add(newText);
         // Centrar SIEMPRE en el punto medio visible del área de trabajo
         // (nunca en coordenadas fijas de esquina).
-        fabricCanvasRef.current.centerObject(newText);
+        if (panoramaModeRef.current) { const center = getCurrentPanoramaCenter(); const mapped = mapPointToCurrentPanorama(ADMIN_BASE_SIZE / 2, ADMIN_BASE_SIZE / 2); newText.set({ left: center.x, top: center.y, fontSize: (fontSize || 24) * mapped.scale }); }
+        else fabricCanvasRef.current.centerObject(newText);
+        newText.setCoords();
         fabricCanvasRef.current.setActiveObject(newText);
         fabricCanvasRef.current.bringToFront(newText);
         fabricCanvasRef.current.requestRenderAll();
@@ -3670,7 +3950,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           // de la zona segura (el preset completo viaja a los archivos de print).
           makeObjectInteractive(designObject);
           canvas.add(designObject);
-          canvas.centerObject(designObject);
+          if (panoramaModeRef.current) { const center = getCurrentPanoramaCenter(); const mapped = mapPointToCurrentPanorama(ADMIN_BASE_SIZE / 2, ADMIN_BASE_SIZE / 2); designObject.set({ left: center.x, top: center.y, scaleX: (designObject.scaleX || 1) * mapped.scale, scaleY: (designObject.scaleY || 1) * mapped.scale }); }
+          else canvas.centerObject(designObject);
+          designObject.setCoords();
           canvas.setActiveObject(designObject);
           canvas.bringToFront(designObject);
           canvas.requestRenderAll();
@@ -3712,7 +3994,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             ...defaultObjectProps,
           }));
           canvas.add(newText);
-          canvas.centerObject(newText);
+          if (panoramaModeRef.current) { const center = getCurrentPanoramaCenter(); const mapped = mapPointToCurrentPanorama(ADMIN_BASE_SIZE / 2, ADMIN_BASE_SIZE / 2); newText.set({ left: center.x, top: center.y, fontSize: 30 * mapped.scale }); }
+          else canvas.centerObject(newText);
+          newText.setCoords();
           canvas.setActiveObject(newText);
           canvas.bringToFront(newText);
           canvas.requestRenderAll();
@@ -3747,13 +4031,14 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             transparentCorners: false,
             ...defaultObjectProps,
           }));
-
           // Limitar proporcionalmente el tamaño inicial para que la imagen
           // quede dentro de la zona segura sin deformarse.
           const largestSide = Math.max(fabricImage.width || 0, fabricImage.height || 0);
           if (largestSide > maxInitialSize && maxInitialSize > 0) {
             fabricImage.scale(maxInitialSize / largestSide);
           }
+          if (panoramaModeRef.current) { const mapped = mapPointToCurrentPanorama(Number(fabricImage.left) || 0, Number(fabricImage.top) || 0); fabricImage.set({ left: mapped.x, top: mapped.y, scaleX: (fabricImage.scaleX || 1) * mapped.scale, scaleY: (fabricImage.scaleY || 1) * mapped.scale }); }
+          fabricImage.setCoords();
 
           fabricCanvasRef.current.add(fabricImage);
           fabricCanvasRef.current.setActiveObject(fabricImage);
@@ -4134,8 +4419,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           const fabric = fabricModule.fabric || fabricModule;
           let shape: any = null;
           const safeCenter = safeZoneRef.current?.getCenterPoint?.();
-          const centerX = safeCenter?.x ?? canvas.width / 2;
-          const centerY = safeCenter?.y ?? canvas.height / 2;
+          const panoramaCenter = panoramaModeRef.current ? getCurrentPanoramaCenter() : null;
+          const centerX = panoramaCenter?.x ?? safeCenter?.x ?? ADMIN_BASE_SIZE / 2;
+          const centerY = panoramaCenter?.y ?? safeCenter?.y ?? canvas.height / 2;
 
           const defaultProps = {
             left: centerX,
@@ -4201,6 +4487,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           }
 
           if (shape) {
+            if (panoramaModeRef.current) {
+              const scale = getCurrentViewPanoramaSegment()?.scale ?? 1;
+              shape.set({ scaleX: (Number(shape.scaleX) || 1) * scale, scaleY: (Number(shape.scaleY) || 1) * scale });
+            }
             makeObjectInteractive(shape);
             shape.setCoords();
             canvas.add(shape);
@@ -4272,12 +4562,12 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             const safeCenter = safeZoneRef.current?.getCenterPoint?.();
 
             svgGroup.set({
-              left: safeCenter?.x ?? targetCanvas.width / 2,
-              top: safeCenter?.y ?? targetCanvas.height / 2,
+              left: panoramaModeRef.current ? getCurrentPanoramaCenter().x : (safeCenter?.x ?? ADMIN_BASE_SIZE / 2),
+              top: panoramaModeRef.current ? getCurrentPanoramaCenter().y : (safeCenter?.y ?? targetCanvas.height / 2),
               originX: 'center',
               originY: 'center',
-              scaleX: scale,
-              scaleY: scale,
+              scaleX: panoramaModeRef.current ? scale * (getCurrentViewPanoramaSegment()?.scale ?? 1) : scale,
+              scaleY: panoramaModeRef.current ? scale * (getCurrentViewPanoramaSegment()?.scale ?? 1) : scale,
               ...defaultObjectProps,
             });
             makeObjectInteractive(svgGroup);
@@ -4641,6 +4931,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // clip también contiene los movimientos que cruzan su borde.
       const clipFreehandToPrintArea = (event: any) => {
         if (!event?.path || !safeZoneRef.current) return;
+        if (panoramaModeRef.current) {
+          const centerX = event.path.getCenterPoint?.().x ?? Number(event.path.left) ?? 0;
+          const segment = panoramaSegments.find((candidate) => centerX >= candidate.destX && centerX <= candidate.destX + candidate.destWidth);
+          event.path.panoramaViewId = segment?.viewId;
+          event.path.set({ clipPath: undefined });
+          return;
+        }
         applyPrintAreaClip(event.path);
         event.path.setCoords?.();
         canvas.requestRenderAll();
@@ -4670,6 +4967,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
     return () => {
       isMounted = false;
+      panoramaModeRef.current = false;
+      (window as any).__editorPanoramaMode = false;
+      panoramaToggleRef.current = null;
       if (handleAddText) {
         window.removeEventListener('editor:add-text', handleAddText);
       }
@@ -4817,11 +5117,15 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
     };
   }, []);
 
+  useEffect(() => {
+    panoramaToggleRef.current?.(isPanoramaActive);
+  }, [isPanoramaActive]);
+
   return (
     <div
       className="relative mx-auto flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-slate-100/50"
     >
-      {productViews.length > 1 && (
+      {productViews.length > 1 && !isPanoramaActive && (
         <nav aria-label="Vistas del producto" className="z-20 flex w-full shrink-0 justify-center px-2 py-2">
           <div className="flex max-w-full gap-1.5 overflow-x-auto rounded-xl border border-slate-200 bg-white/90 p-1 shadow-sm backdrop-blur-sm">
             {productViews.map((view) => {

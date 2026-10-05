@@ -25,6 +25,8 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   const [componentColors, setComponentColors] = useState<Record<string, string>>({});
   const [enabledComponentMeshes, setEnabledComponentMeshes] = useState<string[]>([]);
   const [activeStep, setActiveStep] = useState<EditorStep>('design');
+  const [isPanoramaActive, setIsPanoramaActive] = useState(false);
+  const allowPanorama = currentProduct.allowPanorama360 ?? currentProduct.views.length > 1;
   const minimumQuantity = Math.max(1, currentProduct.pricingSchema?.minimumQuantity ?? 1);
   const [quantityValid, setQuantityValid] = useState(minimumQuantity <= 1);
 
@@ -38,12 +40,23 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
     return () => window.removeEventListener('editor:quantity-validity', handleQuantityValidity);
   }, [currentProduct.id, minimumQuantity]);
 
+  useEffect(() => {
+    const syncPanoramaMode = (event: Event) => {
+      const enabled = (event as CustomEvent<{ enabled?: boolean }>).detail?.enabled;
+      setIsPanoramaActive(Boolean(enabled));
+    };
+    window.addEventListener('editor:panorama-mode-changed', syncPanoramaMode);
+    return () => window.removeEventListener('editor:panorama-mode-changed', syncPanoramaMode);
+  }, []);
+
   const handleStepChange = (step: EditorStep) => {
     if (step === 'review' && !quantityValid) return;
+    setIsPanoramaActive(false);
     setActiveStep(step);
   };
 
   useEffect(() => {
+    setIsPanoramaActive(false);
     setComponentColors(Object.fromEntries((currentProduct.customizableParts ?? []).map((part) => [part.meshName, part.defaultColor || '#cbd5e1'])));
     setEnabledComponentMeshes([]);
   }, [currentProduct.id, currentProduct.customizableParts]);
@@ -79,7 +92,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
       {/* Franja de herramientas contextual: barra blanca de ancho completo y fija,
           justo debajo de la navegación. Está FUERA del área del canvas, por lo que
           nunca tapa ni empuja el producto. */}
-      {activeStep === 'design' && <TextToolbar />}
+      {activeStep === 'design' && <TextToolbar isPanoramaActive={isPanoramaActive} onTogglePanorama={() => setIsPanoramaActive((active) => !active)} allowPanorama={allowPanorama} />}
 
       <div className="flex-1 flex flex-row overflow-hidden relative">
         {/* Panel Izquierdo: herramientas de diseño */}
@@ -95,6 +108,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
             key={`${currentProduct.id}-${currentProduct.updatedAt ?? 0}`}
             product={currentProduct}
             workflowStep={activeStep}
+            isPanoramaActive={isPanoramaActive}
           />
           {activeStep === 'design' && <FloatingFooter onReset={() => {}} />}
           {/* Revisar: visor de renders sobre el lienzo. El canvas sigue montado
