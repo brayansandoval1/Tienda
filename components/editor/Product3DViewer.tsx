@@ -138,7 +138,7 @@ function WebGLDiagnostics() {
   return null;
 }
 
-function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1 }: { viewIndex?: number; viewCount?: number }) {
+function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, angleDirection = 1 }: { viewIndex?: number; viewCount?: number; angleOffset?: number; angleDirection?: 1 | -1 }) {
   const { camera } = useThree();
   const controlsRef = useRef<any>(null);
   const zoomRef = useRef(1);
@@ -155,14 +155,15 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1 }: { viewIndex?: n
       const direction = camera.position.clone().sub(controls.target);
       const spherical = new THREE.Spherical().setFromVector3(direction);
       const count = Math.max(1, Math.floor(viewCount));
-      spherical.theta = (Math.max(0, Math.min(count - 1, Math.floor(index))) * 2 * Math.PI / count) + Math.PI / count;
+      const normalizedIndex = Math.max(0, Math.min(count - 1, Math.floor(index)));
+      spherical.theta = angleDirection * ((normalizedIndex + 0.5) * 2 * Math.PI / count) + angleOffset;
       camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical));
       camera.lookAt(controls.target);
       controls.update();
     };
     window.addEventListener('editor:view-changed', handleViewChanged);
     return () => window.removeEventListener('editor:view-changed', handleViewChanged);
-  }, [camera, viewCount]);
+  }, [angleDirection, angleOffset, camera, viewCount]);
 
   useEffect(() => {
     const controls = controlsRef.current;
@@ -170,11 +171,12 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1 }: { viewIndex?: n
     const direction = camera.position.clone().sub(controls.target);
     const spherical = new THREE.Spherical().setFromVector3(direction);
     const count = Math.max(1, Math.floor(viewCount));
-    spherical.theta = (Math.max(0, Math.min(count - 1, Math.floor(viewIndex))) * 2 * Math.PI / count) + Math.PI / count;
+    const normalizedIndex = Math.max(0, Math.min(count - 1, Math.floor(viewIndex)));
+    spherical.theta = angleDirection * ((normalizedIndex + 0.5) * 2 * Math.PI / count) + angleOffset;
     camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical));
     camera.lookAt(controls.target);
     controls.update();
-  }, [camera, viewCount, viewIndex]);
+  }, [angleDirection, angleOffset, camera, viewCount, viewIndex]);
 
   useEffect(() => {
     const handleZoom = (event: Event) => {
@@ -445,7 +447,7 @@ async function enlivenDesignObjects(serializedObjects: any[]) {
   });
 }
 
-function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectRatio, modelUrl, meshSettings, partColors, componentColors, enabledMeshNames, adminArea, totalViews }: { fabricCanvas: FabricCanvasLike; phoneCase: boolean; panoramic: boolean; printAspectRatio: number; modelUrl: string; meshSettings: MeshSettings; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[]; adminArea?: PrintAreaBounds; totalViews: number }) {
+function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectRatio, modelUrl, meshSettings, partColors, componentColors, enabledMeshNames, adminArea, totalViews, onUvAngleOffsetChange }: { fabricCanvas: FabricCanvasLike; phoneCase: boolean; panoramic: boolean; printAspectRatio: number; modelUrl: string; meshSettings: MeshSettings; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[]; adminArea?: PrintAreaBounds; totalViews: number; onUvAngleOffsetChange: (angle: number, direction: 1 | -1) => void }) {
   const textureRef = useRef<THREE.CanvasTexture | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUpdatingTexture = useRef(false);
@@ -596,7 +598,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
     ? <PhoneCase texture={texture} bodyColor={partColors.body} />
     : <Drinkware texture={texture} partColors={partColors} />;
   if (modelUrl) return <ModelLoadBoundary key={modelUrl} fallback={fallback}>
-    <Suspense fallback={fallback}><GLBModel url={modelUrl} texture={texture} panoramic={panoramic} viewCount={viewCount} onSurfaceAspectChange={handleSurfaceAspectChange} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} /></Suspense>
+    <Suspense fallback={fallback}><GLBModel url={modelUrl} texture={texture} panoramic={panoramic} viewCount={viewCount} onSurfaceAspectChange={handleSurfaceAspectChange} onUvAngleOffsetChange={onUvAngleOffsetChange} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} /></Suspense>
   </ModelLoadBoundary>;
   if (phoneCase) return fallback;
   return <Drinkware texture={texture} partColors={partColors} />;
@@ -662,10 +664,10 @@ function resetTextureUvTransform(texture: THREE.CanvasTexture, panoramic: boolea
   // circunferencia; cada cara ocupa media imagen. No hay que comprimirla otra vez.
   const repeatX = panoramic ? 1 : Math.min(1, cylinderAspect / canvasAspect);
 
-  // El panorama completo (todas las vistas) ya ocupa U=0..1 una sola vez.
-  // RepeatWrapping mezcla el último píxel con el primero en la costura UV,
-  // lo que puede dibujar una línea clara cuando esos extremos difieren.
-  texture.wrapS = THREE.ClampToEdgeWrapping;
+  // La malla cilíndrica del GLB cruza U=1→0 en su costura. Los UV se
+  // desenvuelven por triángulo más abajo, por lo que RepeatWrapping mantiene
+  // continuo ese borde; ClampToEdge estiraba una franja del mapa en la costura.
+  texture.wrapS = panoramic ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   // El UV del GLB está orientado en sentido opuesto al lienzo. Invertimos U
   // alrededor del centro para corregir el espejo sin invertir el eje vertical.
@@ -705,22 +707,82 @@ function panoramicUvRange(mesh: THREE.Mesh) {
 }
 
 function normalizePanoramicUvSeam(mesh: THREE.Mesh) {
-  const range = panoramicUvRange(mesh);
-  if (!range?.hasOpenSeam) return;
-  const geometry = mesh.geometry.clone();
-  const uv = geometry.getAttribute('uv') as THREE.BufferAttribute;
-  for (let index = 0; index < uv.count; index += 1) {
-    uv.setX(index, (uv.getX(index) - range.minU) / range.span);
+  const sourceGeometry = mesh.geometry;
+  const geometry = sourceGeometry.index ? sourceGeometry.toNonIndexed() : sourceGeometry.clone();
+  const uv = geometry.getAttribute('uv') as THREE.BufferAttribute | undefined;
+  if (!uv) {
+    geometry.dispose();
+    return;
+  }
+
+  // Algunos triángulos tienen vértices cerca de U=1 y otros cerca de U=0.
+  // Interpolarlos tal cual atraviesa casi toda la textura y produce una copia
+  // diminuta del diseño en el cierre entre la primera y última vista. Desplazar
+  // los UV bajos una vuelta conserva la continuidad; RepeatWrapping los vuelve
+  // a mapear al borde 0 de la textura.
+  let unwrappedTriangles = 0;
+  for (let start = 0; start + 2 < uv.count; start += 3) {
+    const values = [uv.getX(start), uv.getX(start + 1), uv.getX(start + 2)];
+    const minU = Math.min(...values);
+    const maxU = Math.max(...values);
+    if (maxU - minU <= 0.5 || minU >= 0.5 || maxU <= 0.5) continue;
+    for (let vertex = 0; vertex < 3; vertex += 1) {
+      if (values[vertex] < 0.5) uv.setX(start + vertex, values[vertex] + 1);
+    }
+    unwrappedTriangles += 1;
   }
   uv.needsUpdate = true;
   mesh.geometry = geometry;
-  console.info('[Product3DViewer] Costura UV panorámica normalizada:', {
+  console.info('[Product3DViewer] Costura UV panorámica corregida:', {
     mesh: mesh.name,
-    previousRange: `${range.minU.toFixed(4)}–${range.maxU.toFixed(4)}`,
+    unwrappedTriangles,
+    vertexCount: uv.count,
   });
 }
 
-function GLBModel({ url, texture, panoramic, viewCount, onSurfaceAspectChange, partColors, componentColors, enabledMeshNames }: { url: string; texture: THREE.CanvasTexture; panoramic: boolean; viewCount: number; onSurfaceAspectChange: (aspectRatio: number) => void; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[] }) {
+function getMeshUvAngleOffset(mesh: THREE.Mesh) {
+  const positions = mesh.geometry.getAttribute('position');
+  const range = panoramicUvRange(mesh);
+  if (!positions?.count || !range || positions.count !== range.uv.count) return null;
+  mesh.updateWorldMatrix(true, false);
+  const bounds = new THREE.Box3().setFromObject(mesh);
+  const center = bounds.getCenter(new THREE.Vector3());
+  let forwardCos = 0;
+  let forwardSin = 0;
+  let reverseCos = 0;
+  let reverseSin = 0;
+  let samples = 0;
+  const worldPosition = new THREE.Vector3();
+  for (let index = 0; index < positions.count; index += 1) {
+    worldPosition.fromBufferAttribute(positions, index).applyMatrix4(mesh.matrixWorld);
+    const dx = worldPosition.x - center.x;
+    const dz = worldPosition.z - center.z;
+    if (dx * dx + dz * dz < 1e-8) continue;
+    const rawU = range.hasOpenSeam ? (range.uv.getX(index) - range.minU) / range.span : range.uv.getX(index);
+    const textureU = 1 - rawU; // Coincide con repeat.x negativo y offset cero.
+    const theta = Math.atan2(dx, dz);
+    const forwardPhase = theta - 2 * Math.PI * textureU;
+    const reversePhase = theta + 2 * Math.PI * textureU;
+    forwardCos += Math.cos(forwardPhase);
+    forwardSin += Math.sin(forwardPhase);
+    reverseCos += Math.cos(reversePhase);
+    reverseSin += Math.sin(reversePhase);
+    samples += 1;
+  }
+  if (!samples) return null;
+  const forwardStrength = Math.hypot(forwardCos, forwardSin) / samples;
+  const reverseStrength = Math.hypot(reverseCos, reverseSin) / samples;
+  const useForward = forwardStrength >= reverseStrength;
+  const phaseCos = useForward ? forwardCos : reverseCos;
+  const phaseSin = useForward ? forwardSin : reverseSin;
+  return {
+    angle: Math.atan2(phaseSin, phaseCos),
+    direction: useForward ? 1 as const : -1 as const,
+    confidence: Math.max(forwardStrength, reverseStrength),
+  };
+}
+
+function GLBModel({ url, texture, panoramic, viewCount, onSurfaceAspectChange, onUvAngleOffsetChange, partColors, componentColors, enabledMeshNames }: { url: string; texture: THREE.CanvasTexture; panoramic: boolean; viewCount: number; onSurfaceAspectChange: (aspectRatio: number) => void; onUvAngleOffsetChange: (angle: number, direction: 1 | -1) => void; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[] }) {
   const gltf = useGLTF(url);
   useEffect(() => {
     const meshes: Array<Record<string, unknown>> = [];
@@ -762,6 +824,13 @@ function GLBModel({ url, texture, panoramic, viewCount, onSurfaceAspectChange, p
       return vertexCount > bestVertexCount ? mesh : best;
     }, null);
     const printMesh = printableMesh ?? bodyMesh ?? geometryMesh ?? mostDetailedMesh ?? meshObjects[0] ?? null;
+    if (panoramic && printMesh) {
+      const alignment = getMeshUvAngleOffset(printMesh);
+      if (alignment) {
+        onUvAngleOffsetChange(alignment.angle, alignment.direction);
+        console.info('[Product3DViewer] Alineación angular UV/cámara:', { mesh: printMesh.name, angleOffset: alignment.angle, angleDegrees: THREE.MathUtils.radToDeg(alignment.angle), direction: alignment.direction, confidence: alignment.confidence });
+      }
+    }
     const size = printMesh?.geometry.boundingBox?.getSize(new THREE.Vector3());
     if (size && size.x > 0 && size.y > 0 && size.z >= 0) {
       const diameter = (size.x + size.z) / 2;
@@ -778,7 +847,7 @@ function GLBModel({ url, texture, panoramic, viewCount, onSurfaceAspectChange, p
     console.info(`[Product3DViewer] GLB cargado: ${url}`);
     if (meshes.length) console.table(meshes);
     else console.error(`[Product3DViewer] El GLB no contiene mallas: ${url}`);
-  }, [gltf.scene, onSurfaceAspectChange, panoramic, url, viewCount]);
+  }, [gltf.scene, onSurfaceAspectChange, onUvAngleOffsetChange, panoramic, url, viewCount]);
   const scene = useMemo(() => {
     const clonedScene = gltf.scene.clone(true);
     const meshes: THREE.Mesh[] = [];
@@ -922,7 +991,7 @@ class ModelLoadBoundary extends Component<{ fallback: ReactNode; children: React
   render() { return this.state.failed ? this.props.fallback : this.props.children; }
 }
 
-function ProductModel({ product, fabricCanvas, meshSettings, partColors, componentColors, enabledMeshNames, adminArea }: { product: Product; fabricCanvas: FabricCanvasLike | null; meshSettings: MeshSettings; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[]; adminArea?: PrintAreaBounds }) {
+function ProductModel({ product, fabricCanvas, meshSettings, partColors, componentColors, enabledMeshNames, adminArea, onUvAngleOffsetChange }: { product: Product; fabricCanvas: FabricCanvasLike | null; meshSettings: MeshSettings; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[]; adminArea?: PrintAreaBounds; onUvAngleOffsetChange: (angle: number, direction: 1 | -1) => void }) {
   const phoneCase = /funda|iphone|phone|case/i.test(`${product.id} ${product.name}`);
   const hasPhysicalPrintSize = (product.printWidthCm ?? 0) > 0 && (product.printHeightCm ?? 0) > 0;
   const printAspect = hasPhysicalPrintSize
@@ -949,16 +1018,21 @@ function ProductModel({ product, fabricCanvas, meshSettings, partColors, compone
     console.error('[Product3DViewer] El producto llegó al Canvas sin model3dUrl.', { productId: product.id });
     return fallback;
   }
-  return <FabricTextureSurface key={product.id} fabricCanvas={fabricCanvas} phoneCase={phoneCase} panoramic={panoramic} printAspectRatio={textureAspectRatio} modelUrl={modelUrl} meshSettings={meshSettings} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} adminArea={adminArea} totalViews={Math.max(1, product.views?.length || 1)} />;
+  return <FabricTextureSurface key={product.id} fabricCanvas={fabricCanvas} phoneCase={phoneCase} panoramic={panoramic} printAspectRatio={textureAspectRatio} modelUrl={modelUrl} meshSettings={meshSettings} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} adminArea={adminArea} totalViews={Math.max(1, product.views?.length || 1)} onUvAngleOffsetChange={onUvAngleOffsetChange} />;
 }
 
-export default function Product3DViewer({ product, componentColors, enabledMeshNames, showSafeAreaGuide = false, safeArea, activeViewIndex = 0, activeViewName }: { product: Product; componentColors: ComponentColors; enabledMeshNames: string[]; showSafeAreaGuide?: boolean; safeArea?: PrintAreaBounds; activeViewIndex?: number; activeViewName?: string }) {
+export default function Product3DViewer({ product, componentColors, enabledMeshNames, showSafeAreaGuide = false, safeArea, activeViewIndex = 0 }: { product: Product; componentColors: ComponentColors; enabledMeshNames: string[]; showSafeAreaGuide?: boolean; safeArea?: PrintAreaBounds; activeViewIndex?: number; activeViewName?: string }) {
   const fabricCanvas = useFabricCanvas();
   const editorPrintArea = usePrintAreaBounds();
   const adminArea = showSafeAreaGuide ? safeArea : undefined;
   const printArea = adminArea ?? editorPrintArea;
   const model3dUrl = product.model3dUrl?.trim();
   const viewCount = Math.max(1, Math.floor(product.views?.length || Number(printArea?.viewCount) || 1));
+  const [uvAlignment, setUvAlignment] = useState<{ angle: number; direction: 1 | -1 }>({ angle: 0, direction: 1 });
+  const handleUvAngleOffsetChange = useCallback((angle: number, direction: 1 | -1) => {
+    if (!Number.isFinite(angle)) return;
+    setUvAlignment((current) => Math.abs(current.angle - angle) > 0.001 || current.direction !== direction ? { angle, direction } : current);
+  }, []);
   const viewNumber = Math.min(viewCount, Math.max(1, Math.floor(Number(printArea?.viewIndex) || 0) + 1));
   const defaultBodyColor = product.colors?.[0]?.hexColor ?? '#f8fafc';
   const adminFabricCanvas = useMemo<FabricCanvasLike>(() => {
@@ -980,12 +1054,7 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
     window.addEventListener('editor:view-changed', handleViewChanged);
     return () => window.removeEventListener('editor:view-changed', handleViewChanged);
   }, [viewCount]);
-  const normalizedViewName = (activeViewName ?? safeArea?.viewName ?? '').trim().toLocaleLowerCase();
-  const adminViewAngle = /espalda|back|trasera/.test(normalizedViewName)
-    ? Math.PI
-    : /frente|front|delantera/.test(normalizedViewName)
-      ? 0
-      : (activeAdminViewIndex / previewViewCount) * Math.PI * 2;
+  const adminViewAngle = uvAlignment.direction * ((activeAdminViewIndex + 0.5) * 2 * Math.PI / previewViewCount) + uvAlignment.angle;
   const adminCameraPosition: [number, number, number] = [5 * Math.sin(adminViewAngle), 0, 5 * Math.cos(adminViewAngle)];
   const [meshSettings, setMeshSettings] = useState<MeshSettings>(product.meshSettings ?? DEFAULT_MESH_SETTINGS);
   const [partColors, setPartColors] = useState<ProductPartColors>({ body: product.colors?.[0]?.hexColor ?? '#f8fafc', ...neutralPartColors });
@@ -1030,13 +1099,13 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
       <ambientLight intensity={1.05} />
       <directionalLight castShadow position={[3, 5, 4]} intensity={2} />
       <directionalLight position={[-4, 1, 2]} intensity={0.7} color="#c4b5fd" />
-      <ProductModel product={product} fabricCanvas={resolvedFabricCanvas} meshSettings={meshSettings} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} adminArea={adminArea} />
+      <ProductModel product={product} fabricCanvas={resolvedFabricCanvas} meshSettings={meshSettings} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} adminArea={adminArea} onUvAngleOffsetChange={handleUvAngleOffsetChange} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.55, 0]} receiveShadow>
         <planeGeometry args={[200, 200]} />
         <shadowMaterial opacity={0.12} />
       </mesh>
       <Grid position={[0, -1.54, 0]} rotation={[0, 0, 0]} infiniteGrid cellSize={0.35} sectionSize={1.4} fadeDistance={12} fadeStrength={1.2} cellColor="#cbd5e1" sectionColor="#94a3b8" />
-      <ZoomableOrbitControls viewIndex={previewMode ? activeAdminViewIndex : editorViewIndex} viewCount={previewMode ? previewViewCount : viewCount} />
+      <ZoomableOrbitControls viewIndex={previewMode ? activeAdminViewIndex : editorViewIndex} viewCount={previewMode ? previewViewCount : viewCount} angleOffset={uvAlignment.angle} angleDirection={uvAlignment.direction} />
     </Canvas>
     <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/80 bg-white/75 px-3 py-1.5 text-[10px] font-medium text-slate-500 shadow-sm backdrop-blur">Arrastra para girar · rueda para acercar</div>
   </section>;
