@@ -3,7 +3,7 @@
 import { FormEvent, type InputHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import { Camera, Info, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
+import { Camera, Copy, Info, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
 import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { useProductStore, type CustomizablePart, type Product, type ProductOption, type ProductOptionValue } from '@/src/store/useProductStore';
@@ -403,6 +403,28 @@ export default function AdminProductEditor() {
       }
       : view),
   }));
+  const handleReplicatePrintArea = (sourceViewId: string) => setForm((current) => {
+    const sourceView = current.views.find((view) => view.id === sourceViewId);
+    if (!sourceView) return current;
+    const sourceArea3D = normalizePrintArea(sourceView.area3D);
+    return {
+      ...current,
+      views: current.views.map((view) => view.id === sourceViewId ? view : ({
+        ...view,
+        x: sourceView.x,
+        y: sourceView.y,
+        width: sourceView.width,
+        height: sourceView.height,
+        shape: sourceView.shape,
+        radius: sourceView.radius,
+        polygon: sourceView.polygon,
+        area3D: {
+          ...sourceArea3D,
+          polygon: sourceArea3D.polygon?.map((point) => ({ ...point })),
+        },
+      })),
+    };
+  });
   const handleAddView = () => setForm((current) => { const next = [...current.views, createViewForm(current.views.length)]; setActiveTab(next.length - 1); return { ...current, views: next }; });
   const removeView = (index: number) => setForm((current) => ({ ...current, views: current.views.filter((_, viewIndex) => viewIndex !== index) }));
   const resetForm = () => { setSelectedId(null); setForm(emptyForm()); setLocalGLBFile(null); setMeshInspection({ status: 'idle', message: '', meshes: [] }); setActiveTab(0); };
@@ -569,7 +591,7 @@ export default function AdminProductEditor() {
                 <div><span className="mb-1.5 block text-sm font-medium text-slate-700">Mockup de la vista</span><input ref={fileInputRef} type="file" accept="image/*" className="sr-only" onChange={(event) => { handleMockupFile(event.target.files?.[0]); event.currentTarget.value = ''; }} />
                   {activeView.mockupUrl ? <div className="group relative overflow-hidden rounded-lg border border-slate-200"><img src={activeView.mockupUrl} alt="Mockup" className="h-32 w-full bg-slate-50 object-contain" /><div className="absolute inset-0 flex items-center justify-center bg-slate-900/40 opacity-0 transition-opacity group-hover:opacity-100"><button type="button" onClick={handleReplaceMockup} className="rounded-md bg-white px-3 py-1.5 text-xs font-medium text-slate-800 shadow">Cambiar imagen</button></div></div> : <button type="button" onClick={handleReplaceMockup} className="group flex w-full items-center gap-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-left transition hover:border-emerald-400 hover:bg-emerald-50/40"><span className="flex h-16 w-16 items-center justify-center rounded-lg bg-white text-slate-400 shadow-sm"><Camera size={23} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-slate-700">Subir mockup</span><span className="mt-1 block text-xs text-slate-500">PNG, JPG o WebP · se mostrará en la vista previa</span></span><Upload size={18} className="text-emerald-600" /></button>}</div>
                 <Field label="O pega una URL o ruta del mockup" value={activeView.mockupUrl.startsWith('data:') ? '' : activeView.mockupUrl} onChange={(value) => setViewField(activeIndex, 'mockupUrl', value)} placeholder="/mockups/playera-frente.png" />
-                <div className="rounded-xl border border-slate-200 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] p-3"><p className="mb-2 text-sm font-semibold text-slate-800">Configuración 2D · Zona segura</p>{activeArea ? <MockupAreaPicker mockupUrl={activeView.mockupUrl} initialPrintArea={activeArea} onChange={(area) => setViewPrintArea(activeIndex, area)} /> : null}</div>
+                <div className="rounded-xl border border-slate-200 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] p-3"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold text-slate-800">Configuración 2D · Zona segura</p>{form.views.length > 1 && <button type="button" onClick={() => handleReplicatePrintArea(activeView.id)} title="Copiar las dimensiones de esta zona segura (2D y 3D) a las demás vistas" className="inline-flex items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-100"><Copy size={14} />Replicar Zona Segura a todas las vistas</button>}</div>{activeArea ? <MockupAreaPicker mockupUrl={activeView.mockupUrl} initialPrintArea={activeArea} onChange={(area) => setViewPrintArea(activeIndex, area)} /> : null}</div>
                 {activeArea && <p className="text-center text-xs text-slate-500">Zona segura: <span className="font-semibold text-slate-700">{activeArea.width}% × {activeArea.height}%</span> del mockup.</p>}
                 {form.views.length > 1 && <button type="button" onClick={() => removeView(activeIndex)} className="inline-flex items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700"><Trash2 size={16} /> Eliminar esta vista</button>}
               </div>
