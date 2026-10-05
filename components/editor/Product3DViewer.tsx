@@ -250,7 +250,7 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, 
   />;
 }
 
-function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds | null, targetCanvas: HTMLCanvasElement, panoramic: boolean, objectsOverride?: any[], projectionArea?: PrintAreaBounds, totalViews = 0) {
+function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds | null, targetCanvas: HTMLCanvasElement, panoramic: boolean, objectsOverride?: any[], projectionArea?: PrintAreaBounds, totalViews = 0, surfaceBaseColor?: string) {
   // Si falta el área publicada por el editor, recorta una faja panorámica
   // centrada en el espacio lógico cuadrado de Fabric. El buffer conserva la
   // resolución/aspecto de la plantilla de impresión.
@@ -368,7 +368,7 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
   // Los píxeles transparentes de CanvasTexture se multiplican por el color
   // base del material y pueden verse negros. La textura de impresión siempre
   // parte de una base opaca; un fondo vacío/transparente se representa blanco.
-  context.fillStyle = hasVisibleBackground ? canvasBackground : '#ffffff';
+  context.fillStyle = surfaceBaseColor || (hasVisibleBackground ? canvasBackground : '#ffffff');
   context.fillRect(sideLeft, 0, sideWidth, target.height);
 
   // En el editor final, la zona 2D es el origen lógico del diseño y la zona
@@ -490,6 +490,15 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
   const editorPrintArea = usePrintAreaBounds();
   const printArea = adminArea ?? editorPrintArea;
   const viewCount = Math.max(1, Math.floor(Number(totalViews) || Number(printArea?.viewCount) || 1));
+  const printableSurfaceColor = useMemo(() => {
+    const enabledPrintableName = enabledMeshNames.find((name) => matchesMeshName(name, 'printable'));
+    if (!enabledPrintableName) return undefined;
+    const entry = Object.entries(componentColors).find(([meshName]) =>
+      matchesMeshName(meshName, 'printable')
+      && meshName.trim().toLocaleLowerCase() === enabledPrintableName.trim().toLocaleLowerCase(),
+    );
+    return entry?.[1];
+  }, [componentColors, enabledMeshNames]);
   const [surfaceAspectRatio, setSurfaceAspectRatio] = useState(printAspectRatio);
   useEffect(() => setSurfaceAspectRatio(printAspectRatio), [modelUrl, printAspectRatio]);
   const handleSurfaceAspectChange = useCallback((aspectRatio: number) => {
@@ -580,14 +589,14 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                 radius: liveArea3D.radius,
                 polygon: liveArea3D.nodes ?? liveArea3D.polygon,
               } : undefined;
-              renderFullTexture360(fabricCanvas, printArea, printCanvas, panoramic, undefined, liveProjection, totalViews);
+              renderFullTexture360(fabricCanvas, printArea, printCanvas, panoramic, undefined, liveProjection, totalViews, printableSurfaceColor);
             } else {
               const context = printCanvas.getContext('2d');
               if (!context) return;
               context.setTransform(1, 0, 0, 1, 0, 0);
               context.globalCompositeOperation = 'source-over';
               context.clearRect(0, 0, printCanvas.width, printCanvas.height);
-              context.fillStyle = partColors.body || '#ffffff';
+              context.fillStyle = printableSurfaceColor || partColors.body || '#ffffff';
               context.fillRect(0, 0, printCanvas.width, printCanvas.height);
 
               for (const snapshot of snapshots) {
@@ -626,7 +635,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                   radius: livePrintArea3D.radius,
                   polygon: livePrintArea3D.nodes ?? livePrintArea3D.polygon,
                 } : snapshot.projectionArea;
-                renderFullTexture360(fabricCanvas, isActiveSnapshot ? printArea : snapshot.area, printCanvas, panoramic, objects, activeProjection, totalViews);
+                renderFullTexture360(fabricCanvas, isActiveSnapshot ? printArea : snapshot.area, printCanvas, panoramic, objects, activeProjection, totalViews, printableSurfaceColor);
               }
             }
             if (textureRef.current) textureRef.current.needsUpdate = true;
@@ -663,7 +672,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
       window.removeEventListener('editor:design-background-changed', handleDesignBackgroundChanged);
       textureRef.current = null;
     };
-  }, [adminArea, designViews, fabricCanvas, panoramic, partColors.body, printArea, printCanvas, texture]);
+  }, [adminArea, designViews, fabricCanvas, panoramic, partColors.body, printArea, printCanvas, printableSurfaceColor, texture]);
 
   useEffect(() => () => {
     snapshotObjectsCache.current.forEach(({ objects }) => {
@@ -1025,10 +1034,13 @@ function GLBModel({ url, texture, panoramic, viewCount, onSurfaceAspectChange, o
         }
         const part = namedPart ?? (isPrintMesh ? 'body' : null);
         if ((part || customColorEntry) && 'color' in material && material.color instanceof THREE.Color) {
-          const color = customColorEntry
-            ? customColorEntry[1]
-            : isPrintMesh
+          // La malla imprimible usa blanco como multiplicador del mapa. Su
+          // color seleccionado ya se pinta debajo del arte en el canvas, para
+          // que nunca tiña ni tape imágenes, formas o texto.
+          const color = isPrintMesh
             ? '#ffffff'
+            : customColorEntry
+            ? customColorEntry[1]
             : part === 'body'
               ? partColors.body
               : part === 'ring' || part === 'interior' || part === 'handle'
