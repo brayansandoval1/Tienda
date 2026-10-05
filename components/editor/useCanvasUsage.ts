@@ -35,13 +35,25 @@ export function useCanvasUsage(
 
     const refresh = () => update(getCanvasUsage(fabricCanvas));
     const onUsageRefresh = () => refresh();
+    let refreshFrame: number | null = null;
+    const scheduleRefresh = () => {
+      // Fabric puede emitir varios eventos por frame durante un drag. Lee el
+      // canvas una sola vez en el siguiente frame para mantener el estado de
+      // cobertura al día sin recalcular todas las vistas por cada píxel.
+      if (refreshFrame !== null) return;
+      refreshFrame = window.requestAnimationFrame(() => {
+        refreshFrame = null;
+        refresh();
+      });
+    };
     const fabricEvents = ['object:added', 'object:modified', 'object:removed', 'object:moving', 'object:scaling', 'object:rotating', 'path:created'];
-    fabricEvents.forEach((event) => fabricCanvas.on?.(event, refresh));
+    fabricEvents.forEach((event) => fabricCanvas.on?.(event, scheduleRefresh));
     window.addEventListener('editor:canvas-usage-refresh', onUsageRefresh);
     refresh();
 
     return () => {
-      fabricEvents.forEach((event) => fabricCanvas.off?.(event, refresh));
+      fabricEvents.forEach((event) => fabricCanvas.off?.(event, scheduleRefresh));
+      if (refreshFrame !== null) window.cancelAnimationFrame(refreshFrame);
       window.removeEventListener('editor:canvas-usage-refresh', onUsageRefresh);
     };
   }, [fabricCanvas, getCanvasUsage]);

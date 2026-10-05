@@ -558,12 +558,12 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
   useEffect(() => {
     textureRef.current = texture;
     let effectActive = true;
-    // Durante el gesto actualiza como máximo cada 100 ms; el repintado
-    // completo e inmediato se solicita al recibir `object:modified`.
-    const updateTexture = (immediate = false) => {
+    // Durante el gesto repinta sólo el segmento activo y como máximo cada
+    // 32 ms. Los cambios estructurales repintan todos los segmentos.
+    const updateTexture = (immediate = false, activeOnly = false) => {
       if (!effectActive) return;
       if (isUpdatingTexture.current) {
-        queuedTextureRefresh.current = () => updateTexture(immediate);
+        queuedTextureRefresh.current = () => updateTexture(immediate, activeOnly);
         return;
       }
       if (debounceRef.current) {
@@ -593,13 +593,20 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
             } else {
               const context = printCanvas.getContext('2d');
               if (!context) return;
-              context.setTransform(1, 0, 0, 1, 0, 0);
-              context.globalCompositeOperation = 'source-over';
-              context.clearRect(0, 0, printCanvas.width, printCanvas.height);
-              context.fillStyle = printableSurfaceColor || partColors.body || '#ffffff';
-              context.fillRect(0, 0, printCanvas.width, printCanvas.height);
+              if (!activeOnly) {
+                context.setTransform(1, 0, 0, 1, 0, 0);
+                context.globalCompositeOperation = 'source-over';
+                context.clearRect(0, 0, printCanvas.width, printCanvas.height);
+                context.fillStyle = printableSurfaceColor || partColors.body || '#ffffff';
+                context.fillRect(0, 0, printCanvas.width, printCanvas.height);
+              }
 
-              for (const snapshot of snapshots) {
+              const activeSnapshot = snapshots.find((snapshot) =>
+                snapshot.viewId === printArea?.viewId
+                || (Number.isFinite(Number(printArea?.viewIndex)) && snapshot.viewIndex === Number(printArea?.viewIndex)),
+              );
+              const snapshotsToRender = activeOnly && activeSnapshot ? [activeSnapshot] : snapshots;
+              for (const snapshot of snapshotsToRender) {
                 let objects: any[];
                 if (snapshot.viewId === printArea?.viewId) {
                   objects = fabricCanvas.getObjects();
@@ -650,16 +657,16 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
           }
         };
         void renderTexture();
-      }, immediate ? 0 : 100);
+      }, immediate ? 0 : 32);
     };
     const handleDesignBackgroundChanged = (event: Event) => {
       const changedViewId = (event as CustomEvent<{ viewId?: string }>).detail?.viewId;
-      if (!changedViewId || changedViewId === printArea?.viewId) updateTexture(true);
+      if (!changedViewId || changedViewId === printArea?.viewId) updateTexture(true, true);
     };
     const throttledFabricEvents = ['object:moving', 'object:scaling', 'object:rotating'];
     const immediateFabricEvents = ['object:modified', 'object:added', 'object:removed', 'path:created'];
-    const handleThrottledFabricEvent = () => updateTexture(false);
-    const handleImmediateFabricEvent = () => updateTexture(true);
+    const handleThrottledFabricEvent = () => updateTexture(false, true);
+    const handleImmediateFabricEvent = () => updateTexture(true, true);
     throttledFabricEvents.forEach((eventName) => fabricCanvas.on(eventName, handleThrottledFabricEvent));
     immediateFabricEvents.forEach((eventName) => fabricCanvas.on(eventName, handleImmediateFabricEvent));
     window.addEventListener('editor:design-background-changed', handleDesignBackgroundChanged);
