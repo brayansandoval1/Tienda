@@ -1962,6 +1962,58 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         } as any);
       };
 
+      // Rectángulo de fondo de un segmento en el lienzo 360. Cada cara tiene
+      // su propio relleno (equivalente al vector de la Zona Segura en modo
+      // individual) para que el color elegido en la barra "Fondo" se pinte
+      // también en el mockup, no sólo en la textura 3D. Lleva
+      // `isPanoramaBackground` (para que setDesignBackground lo localice) e
+      // `isDesignBackground` (excluido de historial, borradores y datos por
+      // vista; incluido en la exportación de impresión).
+      const ensurePanoramaBackgroundRect = (viewId: string) => {
+        const c = fabricCanvasRef.current;
+        const segment = panoramaSegments.find((item) => item.viewId === viewId);
+        if (!c || !segment) return null;
+        const existing = c
+          .getObjects()
+          .find((object: any) => object?.isPanoramaBackground && object.panoramaViewId === viewId);
+        if (existing) return existing;
+        const storedValue = designBackgroundColorsRef.current[viewId] ?? 'transparent';
+        const rect = new fabric.Rect({
+          left: segment.destX,
+          top: 0,
+          width: segment.destWidth,
+          height: ADMIN_BASE_SIZE,
+          originX: 'left',
+          originY: 'top',
+          fill: buildFabricBackgroundFill(decodeDesignBackground(storedValue), segment.destWidth, ADMIN_BASE_SIZE),
+          selectable: false,
+          evented: false,
+          hasControls: false,
+          hasBorders: false,
+          lockMovementX: true,
+          lockMovementY: true,
+          lockScalingX: true,
+          lockScalingY: true,
+          lockRotation: true,
+          isPanoramaBackground: true,
+          isDesignBackground: true,
+          panoramaViewId: viewId,
+        } as any);
+        // Los listeners de object:added llevan el objeto nuevo al frente; el
+        // fondo debe quedar POR DETRÁS del arte del usuario y de las guías.
+        // El guard isUpdatingHistory evita que este alta empuje una entrada
+        // duplicada al historial de deshacer.
+        const wasUpdatingHistory = isUpdatingHistory.current;
+        isUpdatingHistory.current = true;
+        try {
+          c.add(rect);
+          c.sendToBack(rect);
+        } finally {
+          isUpdatingHistory.current = wasUpdatingHistory;
+        }
+        return rect;
+      };
+
       // El color elegido en la barra "Fondo" se aplica EXCLUSIVAMENTE al
       // vector de la Zona Segura (safeAreaBackgroundRef): el fondo global del
       // canvas NUNCA se pinta (permanece 'transparent'), de modo que la
@@ -1998,7 +2050,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         }));
 
         if (panoramaModeRef.current) {
-          const panoramaBackground = c.getObjects().find((object: any) => object?.isPanoramaBackground && object.panoramaViewId === view.id);
+          // Find-or-create: si el segmento aún no tiene rectángulo de fondo
+          // se crea con el color ya guardado en el ref (recién actualizado).
+          const panoramaBackground = ensurePanoramaBackgroundRect(view.id);
           if (panoramaBackground) {
             panoramaBackground.set('fill', buildFabricBackgroundFill(background, panoramaBackground.width ?? 0, panoramaBackground.height ?? 0));
             c.requestRenderAll();
@@ -2279,7 +2333,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const c = fabricCanvasRef.current;
         if (!c) return;
         c.forEachObject((obj: any) => {
-          if (obj && obj !== safeZoneRef.current && !obj.isGuide && !obj.isMockup) {
+          if (obj && obj !== safeZoneRef.current && !obj.isGuide && !obj.isMockup && !obj.isDesignBackground) {
             obj.set({
               selectable: true,
               evented: true,
@@ -2867,6 +2921,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           logicalCanvasWidth = Math.max(ADMIN_BASE_SIZE, destX);
           c.setDimensions({ width: logicalCanvasWidth, height: ADMIN_BASE_SIZE });
           c.backgroundColor = '#ffffff';
+          // Fondos por segmento: cada cara del lienzo 360 pinta su propio
+          // color de fondo (el mismo que la textura 3D y que la Zona Segura
+          // en modo individual) para que la barra "Fondo" se refleje también
+          // en el mockup, no sólo en el modelo.
+          segments.forEach((segment) => ensurePanoramaBackgroundRect(segment.viewId));
 
           const restoreTasks = baseProductViews.map(async (view) => {
             const serialized = panoramaSourceData[view.id] || '[]';
@@ -4224,8 +4283,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (!fabricCanvasRef.current) return;
         const objects = fabricCanvasRef.current.getObjects();
         // Mantener zona segura y mockup base; eliminar sólo objetos del usuario
+        // (el relleno de fondo es capa de sistema: el 3D lo conserva y no está
+        // en el historial, así que limpiarlo aquí sólo desincronizaría ambos).
         const userObjects = objects.filter(
-          (obj: any) => obj !== safeZoneRef.current && !obj.isGuide && !obj.isMockup,
+          (obj: any) => obj !== safeZoneRef.current && !obj.isGuide && !obj.isMockup && !obj.isDesignBackground,
         );
         userObjects.forEach((obj: any) => fabricCanvasRef.current.remove(obj));
         fabricCanvasRef.current.discardActiveObject();
@@ -4237,8 +4298,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (!fabricCanvasRef.current || !jsonString) return;
         const canvas = fabricCanvasRef.current;
 
-        // 1. Remove only user objects
-        const userObjects = canvas.getObjects().filter((obj: any) => !obj.isGuide && !obj.isMockup);
+        // 1. Remove only user objects. Las capas de sistema (p. ej. el relleno
+        // de fondo) quedan fuera del JSON de historial, así que también deben
+        // conservarse aquí o undo/redo borrarían el color del lienzo.
+        const userObjects = canvas.getObjects().filter((obj: any) => !obj.isGuide && !obj.isMockup && !obj.isDesignBackground);
         userObjects.forEach((obj: any) => canvas.remove(obj));
 
         // 2. Enliven and add new objects
