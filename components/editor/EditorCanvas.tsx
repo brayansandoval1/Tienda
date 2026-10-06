@@ -2772,6 +2772,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const loadViewObjects = async (view: ProductView): Promise<void> => {
         const c = fabricCanvasRef.current;
         if (!c) return;
+        // Si otra navegación (cambio de vista o modo 360) avanzó el token, esta
+        // carga quedó obsoleta y no debe tocar el lienzo: una continuación
+        // atrasada añadiría objetos de otra vista y el usuario vería los
+        // diseños aparecer "a trozos" al cambiar de vista.
+        const loadToken = viewSwitchToken;
         isUpdatingHistory.current = true;
         // Guardar la referencia ANTES de esperar el mockup. Al salir del
         // panorama, otras actualizaciones (modo sin límites/3D) pueden
@@ -2783,34 +2788,69 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // Limpiar solo objetos de usuario (conservando la zona segura)
         const userObjects = c.getObjects().filter((o: any) => o !== safeZoneRef.current);
         userObjects.forEach((o: any) => c.remove(o));
+        // Encuadre individual inmediato, sin esperar al mockup: al salir del
+        // modo sin límites el viewport seguía siendo el ancho/desplazado del
+        // 360 y el diseño restaurado se dibujaba fuera de pantalla (lienzo en
+        // blanco) hasta que la imagen del producto terminaba de cargar.
+        c.setViewportTransform([1, 0, 0, 1, 0, 0]);
+        fitCanvasToContainer();
+
         const viewIndex = Math.max(0, baseProductViews.findIndex((baseView) => baseView.id === view.id));
         const resolvedView = resolveCurrentViewData(baseProductViews, viewIndex, activeOptionSelections);
-        await loadResolvedViewBackground(view, resolvedView);
-        drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
 
-        if (!stored) {
+        // Mockup y diseños se preparan EN PARALELO: el arte se restaura y se
+        // pinta en cuanto esté listo, sin esperar la imagen del producto, para
+        // que salir de "Diseño sin límites" muestre el diseño en tiempo real.
+        const backgroundReady = loadResolvedViewBackground(view, resolvedView);
+        let restoredObjects: any[] = [];
+        if (stored) {
+          try {
+            restoredObjects = await new Promise<any[]>((resolve) => {
+              // @ts-ignore Fabric.js types mismatch
+              fabric.util.enlivenObjects(JSON.parse(stored), (enlivened: any[]) => resolve(enlivened || []));
+            });
+          } catch (error) {
+            console.error('[EditorCanvas] No se pudo restaurar el diseño de la vista:', view.id, error);
+          }
+        }
+        if (loadToken !== viewSwitchToken || fabricCanvasRef.current !== c) {
           isUpdatingHistory.current = false;
           return;
         }
-        await new Promise<void>((resolve) => {
-          // @ts-ignore Fabric.js types mismatch
-          fabric.util.enlivenObjects(JSON.parse(stored), (enlivened: any[]) => {
-            enlivened.forEach((obj: any) => c.add(obj));
-            ensureObjectsInteractable();
-            // Los objetos del borrador traen su clipPath absoluto calculado
-            // con los límites de otra sesión/zoom: reafirmar el área de ESTA
-            // vista para que el recorte de exportación no los borre de un
-            // plumazo al renderizar otra cara (multi-vista sin diseño).
-            applyPrintAreaClipping(view);
-            // Reafirmar interactividad global tras cargar objetos
-            c.selection = true;
-            c.calcOffset();
-            c.requestRenderAll();
-            isUpdatingHistory.current = false;
-            resolve();
-          });
+        // El mockup entra con sendToBack() cuando termine de cargar, así que
+        // los objetos añadidos ahora quedan siempre por encima de la imagen.
+        restoredObjects.forEach((obj: any) => c.add(obj));
+        ensureObjectsInteractable();
+        c.selection = true;
+        c.calcOffset();
 
-        });
+        try {
+          await backgroundReady;
+        } catch (error) {
+          // Sin mockup el diseño ya está visible: registrar y seguir para no
+          // congelar isUpdatingHistory ni dejar la vista a medias.
+          console.error('[EditorCanvas] No se pudo cargar el fondo de la vista:', view.id, error);
+        }
+        if (loadToken !== viewSwitchToken || fabricCanvasRef.current !== c) {
+          isUpdatingHistory.current = false;
+          return;
+        }
+        drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
+        // drawSafeArea recrea el rectángulo de fondo en transparente: reaplicar
+        // el color elegido o el mockup pierde el fondo en cada carga de vista
+        // (el 3D sí lo conserva y ambos quedan desincronizados).
+        setDesignBackground(designBackgroundColorsRef.current[view.id] ?? 'transparent', view);
+        // Los objetos del borrador traen su clipPath absoluto calculado
+        // con los límites de otra sesión/zoom: reafirmar el área de ESTA
+        // vista para que el recorte de exportación no los borre de un
+        // plumazo al renderizar otra cara (multi-vista sin diseño).
+        if (restoredObjects.length) applyPrintAreaClipping(view);
+        // Reafirmar interactividad global tras cargar objetos
+        ensureObjectsInteractable();
+        c.selection = true;
+        c.calcOffset();
+        c.requestRenderAll();
+        isUpdatingHistory.current = false;
       };
 
       const persistPanoramaViews = () => {
@@ -2860,6 +2900,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const setPanoramaMode = async (enabled: boolean) => {
         const c = fabricCanvasRef.current;
         if (!c || panoramaModeRef.current === enabled || baseProductViews.length < 2) return;
+        // Invalida cualquier loadViewObjects en curso: entrar o salir del modo
+        // 360 no debe mezclarse con una carga individual pendiente, o su
+        // continuación mutaría el lienzo ya reconstruido por el nuevo modo.
+        viewSwitchToken += 1;
+        const modeToken = viewSwitchToken;
         if (enabled) {
           // Invalidar cargas de imagen ya iniciadas; un callback atrasado no
           // debe volver a insertar el termo después de limpiar el lienzo.
@@ -2955,7 +3000,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             return objects;
           });
           const restoredByView = await Promise.all(restoreTasks);
-          if (!panoramaModeRef.current || fabricCanvasRef.current !== c) return;
+          if (!panoramaModeRef.current || viewSwitchToken !== modeToken || fabricCanvasRef.current !== c) return;
           console.info('[EditorCanvas] Objetos colocados en lienzo 360:', restoredByView.map((objects, index) => ({
             viewId: baseProductViews[index]?.id,
             count: objects.length,
@@ -3000,7 +3045,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         c.setDimensions({ width: ADMIN_BASE_SIZE, height: ADMIN_BASE_SIZE });
         const view = getView(currentViewIdRef.current);
         await loadViewObjects(view);
-        if (fabricCanvasRef.current !== c) return;
+        if (viewSwitchToken !== modeToken || fabricCanvasRef.current !== c) return;
         panoramaSegments = [];
         fitCanvasToContainer();
         historyRef.current = [snapshotCurrentObjects()];
@@ -4283,12 +4328,19 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (!fabricCanvasRef.current) return;
         const objects = fabricCanvasRef.current.getObjects();
         // Mantener zona segura y mockup base; eliminar sólo objetos del usuario
-        // (el relleno de fondo es capa de sistema: el 3D lo conserva y no está
-        // en el historial, así que limpiarlo aquí sólo desincronizaría ambos).
+        // (el relleno de fondo es capa de sistema y se resetea aparté abajo).
         const userObjects = objects.filter(
           (obj: any) => obj !== safeZoneRef.current && !obj.isGuide && !obj.isMockup && !obj.isDesignBackground,
         );
         userObjects.forEach((obj: any) => fabricCanvasRef.current.remove(obj));
+        // "Reiniciar" también borra el color de fondo (mockup + 3D + barra
+        // "Fondo"). En modo sin límites se limpió el arte de todas las caras,
+        // así que el fondo se limpia en todas; en modo individual sólo en la
+        // vista activa, igual que los objetos.
+        const targetViews = panoramaModeRef.current ? baseProductViews : [getView(currentViewIdRef.current)];
+        targetViews.forEach((targetView) => setDesignBackground('transparent', targetView));
+        // Republica las áreas con el fondo ya limpio para que el 3D repinte.
+        publish3DViewSnapshots();
         fabricCanvasRef.current.discardActiveObject();
         fabricCanvasRef.current.renderAll();
         saveState();

@@ -134,14 +134,22 @@ export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama
 
     const handleCropMode = () => setIsCropping(true);
     const handleCropEnd = () => setIsCropping(false);
+    // Sincroniza el swatch "Fondo" cuando el color cambia desde fuera de la
+    // barra (sidebar "Fondo impreso", botón Reiniciar, cambio de vista 3D...).
+    const handleBackgroundChanged = (e: Event) => {
+      const color = (e as CustomEvent<{ designBackground?: string }>)?.detail?.designBackground;
+      if (color) setBackgroundColor(color);
+    };
     window.addEventListener('editor:selection-changed', handleSelectionChanged);
     window.addEventListener('editor:crop-mode-active', handleCropMode);
     window.addEventListener('editor:crop-mode-inactive', handleCropEnd);
+    window.addEventListener('editor:design-background-changed', handleBackgroundChanged);
 
     return () => {
       window.removeEventListener('editor:selection-changed', handleSelectionChanged);
       window.removeEventListener('editor:crop-mode-active', handleCropMode);
       window.removeEventListener('editor:crop-mode-inactive', handleCropEnd);
+      window.removeEventListener('editor:design-background-changed', handleBackgroundChanged);
     };
   }, []);
 
