@@ -26,6 +26,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   const [enabledComponentMeshes, setEnabledComponentMeshes] = useState<string[]>([]);
   const [activeStep, setActiveStep] = useState<EditorStep>('design');
   const [isPanoramaActive, setIsPanoramaActive] = useState(false);
+  const [isUnrestrictedDesign, setIsUnrestrictedDesign] = useState(false);
   const allowPanorama = currentProduct.allowPanorama360 ?? currentProduct.views.length > 1;
   const minimumQuantity = Math.max(1, currentProduct.pricingSchema?.minimumQuantity ?? 1);
   const [quantityValid, setQuantityValid] = useState(minimumQuantity <= 1);
@@ -44,6 +45,9 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
     const syncPanoramaMode = (event: Event) => {
       const enabled = (event as CustomEvent<{ enabled?: boolean }>).detail?.enabled;
       setIsPanoramaActive(Boolean(enabled));
+      // Al volver al modo individual, también hay que volver a recortar cada
+      // objeto con el área segura de la vista actual.
+      if (!enabled) setIsUnrestrictedDesign(false);
     };
     window.addEventListener('editor:panorama-mode-changed', syncPanoramaMode);
     return () => window.removeEventListener('editor:panorama-mode-changed', syncPanoramaMode);
@@ -52,11 +56,20 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   const handleStepChange = (step: EditorStep) => {
     if (step === 'review' && !quantityValid) return;
     setIsPanoramaActive(false);
+    setIsUnrestrictedDesign(false);
     setActiveStep(step);
+  };
+
+  const handlePanoramaToggle = () => {
+    setIsPanoramaActive((active) => {
+      if (active) setIsUnrestrictedDesign(false);
+      return !active;
+    });
   };
 
   useEffect(() => {
     setIsPanoramaActive(false);
+    setIsUnrestrictedDesign(false);
     setComponentColors(Object.fromEntries((currentProduct.customizableParts ?? []).map((part) => [part.meshName, part.defaultColor || '#cbd5e1'])));
     setEnabledComponentMeshes([]);
   }, [currentProduct.id, currentProduct.customizableParts]);
@@ -92,7 +105,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
       {/* Franja de herramientas contextual: barra blanca de ancho completo y fija,
           justo debajo de la navegación. Está FUERA del área del canvas, por lo que
           nunca tapa ni empuja el producto. */}
-      {activeStep === 'design' && <TextToolbar isPanoramaActive={isPanoramaActive} onTogglePanorama={() => setIsPanoramaActive((active) => !active)} allowPanorama={allowPanorama} />}
+      {activeStep === 'design' && <TextToolbar isPanoramaActive={isPanoramaActive} onTogglePanorama={handlePanoramaToggle} allowPanorama={allowPanorama} isUnrestrictedDesign={isUnrestrictedDesign} onToggleUnrestrictedDesign={(enabled) => { setIsUnrestrictedDesign(enabled); setIsPanoramaActive(enabled); }} />}
 
       <div className="flex-1 flex flex-row overflow-hidden relative">
         {/* Panel Izquierdo: herramientas de diseño */}
@@ -109,6 +122,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
             product={currentProduct}
             workflowStep={activeStep}
             isPanoramaActive={isPanoramaActive}
+            isUnrestrictedDesign={isUnrestrictedDesign}
           />
           {activeStep === 'design' && <FloatingFooter onReset={() => {}} />}
           {/* Revisar: visor de renders sobre el lienzo. El canvas sigue montado

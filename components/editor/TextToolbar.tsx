@@ -52,6 +52,7 @@ import {
   Eraser,
   Scissors,
   X,
+  Move,
 } from 'lucide-react';
 
 interface ObjectStyle {
@@ -66,7 +67,7 @@ interface ObjectStyle {
   linethrough?: boolean;
 }
 
-export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama, allowPanorama = false }: { isPanoramaActive?: boolean; onTogglePanorama?: () => void; allowPanorama?: boolean }) {
+export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama, allowPanorama = false, isUnrestrictedDesign = false, onToggleUnrestrictedDesign }: { isPanoramaActive?: boolean; onTogglePanorama?: () => void; allowPanorama?: boolean; isUnrestrictedDesign?: boolean; onToggleUnrestrictedDesign?: (enabled: boolean) => void }) {
   const [isVisible, setIsVisible] = useState(true);
   const [isTextObject, setIsTextObject] = useState(false);
   const [isImageObject, setIsImageObject] = useState(false);
@@ -327,7 +328,10 @@ export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama
         <input type="color" aria-label="Elegir fondo personalizado" value={/^#[0-9a-f]{6}$/i.test(backgroundColor) ? backgroundColor : '#ffffff'} onChange={(event) => changeBackground(event.target.value)} className="h-6 w-6 cursor-pointer rounded-md border-0 p-0" />
       </div>
 
-      {allowPanorama && onTogglePanorama && (
+      {/* Botón "Diseñar lienzo 360°" oculto a petición del usuario:
+          solo se usa "Diseño sin límites". Para restaurarlo, basta con
+          descomentar el bloque siguiente. */}
+      {/* allowPanorama && onTogglePanorama && (
         <button
           type="button"
           aria-pressed={isPanoramaActive}
@@ -336,6 +340,19 @@ export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama
           title="Editar todas las vistas en un lienzo horizontal continuo"
         >
           {isPanoramaActive ? 'Volver a vistas individuales' : 'Diseñar lienzo 360°'}
+        </button>
+      ) */}
+
+      {allowPanorama && onToggleUnrestrictedDesign && (
+        <button
+          type="button"
+          aria-pressed={isUnrestrictedDesign}
+          onClick={() => onToggleUnrestrictedDesign(!isUnrestrictedDesign)}
+          className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${isUnrestrictedDesign ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
+          title="Permite mover y extender diseños fuera de la zona segura y entre las caras del producto"
+        >
+          <Move size={14} />
+          {isUnrestrictedDesign ? 'Límites desactivados' : 'Diseño sin límites'}
         </button>
       )}
 

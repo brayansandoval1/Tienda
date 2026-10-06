@@ -54,9 +54,10 @@ interface EditorCanvasProps {
   product: Product;
   workflowStep?: 'design' | 'options' | 'review';
   isPanoramaActive?: boolean;
+  isUnrestrictedDesign?: boolean;
 }
 
-export default function EditorCanvas({ product: initialProduct, workflowStep = 'design', isPanoramaActive = false }: EditorCanvasProps) {
+export default function EditorCanvas({ product: initialProduct, workflowStep = 'design', isPanoramaActive = false, isUnrestrictedDesign = false }: EditorCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Contenedor del lienzo central: se usa para dimensionar el canvas y aplicar
   // "zoom to fit" de forma proporcional al área disponible del editor.
@@ -81,7 +82,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   const [currentViewId, setCurrentViewId] = useState<string>(initialProduct.views[0]?.id ?? 'front');
   const [productViews, setProductViews] = useState<ProductView[]>(initialProduct.views);
   const panoramaModeRef = useRef(false);
+  const unrestrictedDesignRef = useRef(isUnrestrictedDesign);
   const panoramaToggleRef = useRef<((enabled: boolean) => void) | null>(null);
+  const unrestrictedToggleRef = useRef<((enabled: boolean) => void) | null>(null);
   const activeView = productViews.find((view) => view.id === currentViewId) ?? productViews[0];
   const [selectedColor, setSelectedColor] = useState<ColorVariant | null>(
     initialProduct.views[0]?.colorVariants?.[0] ?? initialProduct.colors?.[0] ?? null,
@@ -1074,7 +1077,14 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         };
       };
 
-      const getPercentPrintArea = (view: ProductView): PrintArea => activeOptionPrintArea ?? getBasePercentPrintArea(view);
+      const getPercentPrintArea = (view: ProductView): PrintArea => {
+        // `activeOptionPrintArea` sólo pertenece a la cara que tiene abierta
+        // el administrador/cliente. Reutilizarla al restaurar otra cara
+        // desplaza o recorta mal sus objetos (y puede dejar Espalda vacía).
+        if (view.id === currentViewIdRef.current && activeOptionPrintArea) return activeOptionPrintArea;
+        const resolvedView = activeProduct.views.find((candidate) => candidate.id === view.id) ?? view;
+        return getBasePercentPrintArea(resolvedView);
+      };
 
       const getRenderedPrintArea = (view: ProductView): PrintArea => {
         const area = getPercentPrintArea(view);
@@ -1155,6 +1165,29 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         } as any);
       };
 
+      // En el panorama cada panel corresponde al área imprimible de una cara.
+      // El modo sin límites quita este clip; en modo normal limita el objeto
+      // al panel para que lienzo, exportación y textura 3D coincidan.
+      const applyPanoramaSegmentClip = (object: any, segment?: (typeof panoramaSegments)[number]) => {
+        if (!object || object.isGuide || object.isMockup || object.isDesignBackground) return;
+        const target = segment ?? panoramaSegments.find((item) => item.viewId === object.panoramaViewId);
+        if (unrestrictedDesignRef.current || !target) {
+          object.set({ clipPath: undefined });
+          return;
+        }
+        object.set({
+          clipPath: new fabric.Rect({
+            left: target.destX,
+            top: 0,
+            width: target.destWidth,
+            height: ADMIN_BASE_SIZE,
+            originX: 'left',
+            originY: 'top',
+            absolutePositioned: true,
+          }),
+        });
+      };
+
       // Fabric aplica el clipPath por objeto. Así el mockup y la guía siguen
       // visibles completos, mientras que el diseño del usuario sólo aparece
       // dentro del área imprimible sobre el cuerpo del producto.
@@ -1162,6 +1195,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // El relleno de la zona segura YA tiene la forma exacta del área
         // imprimible: recortarlo con su propio clipPath es redundante.
         if (!object || object.isGuide || object.isMockup || object.isCropOverlay || object.isSafeAreaBackground) return;
+        if (unrestrictedDesignRef.current || panoramaModeRef.current) {
+          object.set({ clipPath: undefined });
+          return;
+        }
         const area = getRenderedPrintArea(view);
         object.set({
           clipPath: buildSafeAreaShape(area, { absolutePositioned: true }),
@@ -1171,6 +1208,23 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const applyPrintAreaClipping = (view = activeView) => {
         canvas.getObjects().forEach((object: any) => applyPrintAreaClip(object, view));
       };
+      const setUnrestrictedDesignMode = (enabled: boolean) => {
+        unrestrictedDesignRef.current = enabled;
+        const c = fabricCanvasRef.current;
+        if (!c) return;
+        if (safeZoneRef.current) safeZoneRef.current.set('visible', !enabled && !panoramaModeRef.current);
+        c.getObjects().forEach((object: any) => {
+          if (object.isGuide || object.isMockup || object.isCropOverlay || object.isDesignBackground) return;
+          if (panoramaModeRef.current) applyPanoramaSegmentClip(object);
+          else if (enabled) object.set({ clipPath: undefined });
+          else applyPrintAreaClip(object);
+        });
+        c.requestRenderAll();
+        if (panoramaModeRef.current) persistPanoramaViews();
+        publish3DViewSnapshots();
+        scheduleDraftSave();
+      };
+      unrestrictedToggleRef.current = setUnrestrictedDesignMode;
       const clipAddedDesignObject = (event: any) => {
         if (panoramaModeRef.current) {
           const object = event?.target;
@@ -1179,7 +1233,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           const segment = panoramaSegments.find((candidate) => centerX >= candidate.destX && centerX <= candidate.destX + candidate.destWidth)
             ?? panoramaSegments[panoramaSegments.length - 1];
           object.panoramaViewId = object.panoramaViewId || segment?.viewId;
-          object.set?.({ clipPath: undefined });
+          applyPanoramaSegmentClip(object, panoramaSegments.find((candidate) => candidate.viewId === object.panoramaViewId));
           canvas.bringToFront(object);
           return;
         }
@@ -1761,6 +1815,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           // PROPIEDADES CLAVE PARA QUE NO BLOQUEE EL MOUSE:
           selectable: false,
           evented: false,
+          visible: !unrestrictedDesignRef.current,
           lockMovementX: true,
           lockMovementY: true,
           lockScalingX: true,
@@ -1835,13 +1890,14 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       let guideHideTimer: ReturnType<typeof setTimeout> | null = null;
       const setGuidesOpacity = (opacity: number) => {
         const c = fabricCanvasRef.current;
-        if (!c) return;
+        if (!c || unrestrictedDesignRef.current || panoramaModeRef.current) return;
         c.getObjects()
           .filter((obj: any) => obj?.isGuideLine)
           .forEach((obj: any) => obj.set('opacity', opacity));
         c.requestRenderAll();
       };
       const flashGuides = () => {
+        if (unrestrictedDesignRef.current || panoramaModeRef.current) return;
         setGuidesOpacity(1);
         if (guideHideTimer) clearTimeout(guideHideTimer);
         guideHideTimer = setTimeout(() => setGuidesOpacity(0), 1500);
@@ -2001,7 +2057,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // exportado vía `clipPath`, pero nunca empuja objetos de forma impredecible
       // en las esquinas, así arrastrar sigue siendo estable.
       const clampToPrintArea = (obj: any) => {
-        if (!obj || obj.isGuide || obj.isMockup || !activeView) return;
+        if (!obj || obj.isGuide || obj.isMockup || !activeView || unrestrictedDesignRef.current || panoramaModeRef.current) return;
         const area = getRenderedPrintArea(activeView);
         const left = area.x;
         const top = area.y;
@@ -2432,6 +2488,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           ? syncEditorWithVariant(activeOptionSelections)
           : null;
         const resolvedView = syncedView ?? resolveCurrentViewData(baseProductViews, currentViewIndex, activeOptionSelections);
+        // La zona de opción anterior no debe filtrarse a la siguiente cara;
+        // cada vista usa su printArea ya resuelto en `activeProduct.views`.
+        activeOptionPrintArea = null;
         console.log('🎨 [CAMBIO DE VISTA -> FABRIC]:', {
           viewId,
           resolvedMockupUrl: resolvedView.mockupUrl,
@@ -2660,6 +2719,12 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const c = fabricCanvasRef.current;
         if (!c) return;
         isUpdatingHistory.current = true;
+        // Guardar la referencia ANTES de esperar el mockup. Al salir del
+        // panorama, otras actualizaciones (modo sin límites/3D) pueden
+        // publicarse mientras la carga está pendiente y el canvas está vacío.
+        // Leer canvasDataRef después del await permitiría que ese estado
+        // transitorio sobrescriba el diseño persistido de la cara.
+        const stored = canvasDataRef.current[view.id];
 
         // Limpiar solo objetos de usuario (conservando la zona segura)
         const userObjects = c.getObjects().filter((o: any) => o !== safeZoneRef.current);
@@ -2669,7 +2734,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         await loadResolvedViewBackground(view, resolvedView);
         drawSafeArea(canvas.getWidth(), canvas.getHeight(), getPercentPrintArea(view));
 
-        const stored = canvasDataRef.current[view.id];
         if (!stored) {
           isUpdatingHistory.current = false;
           return;
@@ -2702,19 +2766,36 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         c.getObjects().forEach((object: any) => {
           if (object.isGuide || object.isGuideLine || object.isMockup || object.isDesignBackground || object.isCropOverlay) return;
           const centerX = typeof object.getCenterPoint === 'function' ? object.getCenterPoint().x : Number(object.left) || 0;
-          const segment = panoramaSegments.find((candidate) => centerX >= candidate.destX && centerX <= candidate.destX + candidate.destWidth)
+          const centerSegment = panoramaSegments.find((candidate) => centerX >= candidate.destX && centerX <= candidate.destX + candidate.destWidth)
             ?? panoramaSegments.find((candidate) => candidate.viewId === object.panoramaViewId)
             ?? panoramaSegments[centerX < panoramaSegments[0].destX ? 0 : panoramaSegments.length - 1];
-          if (!segment || !buckets[segment.viewId]) return;
-          const objectJson = object.toObject(['id', 'label', 'layerName', 'isLock']);
-          const scale = segment.scale || 1;
-          objectJson.left = (Number(objectJson.left) - segment.destX) / scale + segment.sourceX;
-          objectJson.top = Number(objectJson.top) / scale + segment.sourceY;
-          objectJson.scaleX = Number(objectJson.scaleX ?? 1) / scale;
-          objectJson.scaleY = Number(objectJson.scaleY ?? 1) / scale;
-          delete objectJson.panoramaViewId;
-          delete objectJson.clipPath;
-          buckets[segment.viewId].push(objectJson);
+          const bounds = object.getBoundingRect?.(true) ?? {
+            left: Number(object.left) || 0,
+            top: Number(object.top) || 0,
+            width: (Number(object.width) || 0) * (Number(object.scaleX) || 1),
+            height: (Number(object.height) || 0) * (Number(object.scaleY) || 1),
+          };
+          const objectRight = Number(bounds.left) + Number(bounds.width);
+          const objectBottom = Number(bounds.top) + Number(bounds.height);
+          const targetSegments = unrestrictedDesignRef.current
+            ? panoramaSegments.filter((segment) =>
+              objectRight > segment.destX && Number(bounds.left) < segment.destX + segment.destWidth
+              && objectBottom > 0 && Number(bounds.top) < ADMIN_BASE_SIZE,
+            )
+            : (centerSegment ? [centerSegment] : []);
+          const baseJson = object.toObject(['id', 'label', 'layerName', 'isLock']);
+          targetSegments.forEach((segment) => {
+            if (!buckets[segment.viewId]) return;
+            const objectJson = { ...baseJson };
+            const scale = segment.scale || 1;
+            objectJson.left = (Number(baseJson.left) - segment.destX) / scale + segment.sourceX;
+            objectJson.top = Number(baseJson.top) / scale + segment.sourceY;
+            objectJson.scaleX = Number(baseJson.scaleX ?? 1) / scale;
+            objectJson.scaleY = Number(baseJson.scaleY ?? 1) / scale;
+            delete objectJson.panoramaViewId;
+            delete objectJson.clipPath;
+            buckets[segment.viewId].push(objectJson);
+          });
         });
         Object.entries(buckets).forEach(([viewId, objects]) => {
           canvasDataRef.current[viewId] = JSON.stringify(objects);
@@ -2809,6 +2890,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
                 clipPath: undefined,
               });
               object.panoramaViewId = view.id;
+              applyPanoramaSegmentClip(object, segment);
               object.setCoords?.();
             });
             return objects;
@@ -2847,6 +2929,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
         persistPanoramaViews();
         panoramaModeRef.current = false;
+        // Los diseños sin límites se guardan primero en todas las vistas; al
+        // regresar a una cara individual, reaplicamos inmediatamente su clip.
+        unrestrictedDesignRef.current = false;
+        if (safeZoneRef.current) safeZoneRef.current.set('visible', true);
         (window as any).__editorPanoramaMode = false;
         isUpdatingHistory.current = true;
         c.discardActiveObject();
@@ -2882,6 +2968,21 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (targetView && targetView.id !== currentViewIdRef.current) finishViewSwitch(targetView.id);
       };
       canvas.on('mouse:down', activatePanoramaViewAtPointer);
+      const updatePanoramaObjectClip = (event: any) => {
+        if (!panoramaModeRef.current || unrestrictedDesignRef.current) return;
+        const object = event?.target;
+        if (!object || object.isGuide || object.isMockup) return;
+        const centerX = object.getCenterPoint?.().x ?? Number(object.left) ?? 0;
+        const segment = panoramaSegments.find((candidate) => centerX >= candidate.destX && centerX < candidate.destX + candidate.destWidth);
+        if (!segment) return;
+        if (object.panoramaViewId === segment.viewId) return;
+        object.panoramaViewId = segment.viewId;
+        applyPanoramaSegmentClip(object, segment);
+        object.setCoords?.();
+      };
+      canvas.on('object:moving', updatePanoramaObjectClip);
+      canvas.on('object:scaling', updatePanoramaObjectClip);
+      canvas.on('object:modified', updatePanoramaObjectClip);
 
       let panoramaRefreshFrame = 0;
       const refreshPanoramaTexture = () => {
@@ -3603,6 +3704,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             const originalMouseUp = brush.onMouseUp.bind(brush);
             const originalRender = brush._render.bind(brush);
             const isInsideSafeBounds = (pointer: any) => {
+              if (unrestrictedDesignRef.current || panoramaModeRef.current) return true;
               const safeZone = safeZoneRef.current;
               if (!safeZone) return true;
               const bounds = safeZone.getBoundingRect(true, true);
@@ -3659,7 +3761,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
               const safeZone = safeZoneRef.current;
               const ctx = context || canvas.contextTop;
               const baseTransform = ctx.getTransform?.();
-              if (!safeZone || !baseTransform) {
+              if (unrestrictedDesignRef.current || panoramaModeRef.current || !safeZone || !baseTransform) {
                 originalRender(ctx);
                 return;
               }
@@ -3693,7 +3795,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             if (!isErasePointerDown || !nativeEvent) return;
             const pointer = canvas.getPointer(nativeEvent);
             const safeZone = safeZoneRef.current;
-            if (safeZone) {
+            if (safeZone && !unrestrictedDesignRef.current && !panoramaModeRef.current) {
               const safeBounds = safeZone.getBoundingRect(true, true);
               if (pointer.x < safeBounds.left || pointer.x > safeBounds.left + safeBounds.width ||
                 pointer.y < safeBounds.top || pointer.y > safeBounds.top + safeBounds.height) return;
@@ -4871,6 +4973,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         );
       };
 
+      if (unrestrictedDesignRef.current) setUnrestrictedDesignMode(true);
       window.addEventListener('editor:add-text', handleAddText);
       window.addEventListener('editor:add-text-preset', handleAddTextPreset);
       window.addEventListener('editor:apply-library-font', handleApplyLibraryFont);
@@ -4970,6 +5073,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       panoramaModeRef.current = false;
       (window as any).__editorPanoramaMode = false;
       panoramaToggleRef.current = null;
+      unrestrictedToggleRef.current = null;
       if (handleAddText) {
         window.removeEventListener('editor:add-text', handleAddText);
       }
@@ -5120,6 +5224,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   useEffect(() => {
     panoramaToggleRef.current?.(isPanoramaActive);
   }, [isPanoramaActive]);
+
+  useEffect(() => {
+    unrestrictedDesignRef.current = isUnrestrictedDesign;
+    unrestrictedToggleRef.current?.(isUnrestrictedDesign);
+  }, [isUnrestrictedDesign]);
 
   return (
     <div

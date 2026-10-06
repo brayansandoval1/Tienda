@@ -436,6 +436,11 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     }
 
     context.save();
+    if (panoramic) {
+      context.beginPath();
+      context.rect(sideLeft, 0, sideWidth, target.height);
+      context.clip();
+    }
     context.setTransform(scaleX, 0, 0, scaleY, offsetX, offsetY);
     visibleObjects.forEach((object) => {
       const clipPath = object.clipPath;
@@ -456,6 +461,11 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
 
   paintDesignBackground(context, area?.designBackground, panelLeft, panelTop, panelWidth, panelHeight);
   context.save();
+  if (panoramic) {
+    context.beginPath();
+    context.rect(sideLeft, 0, sideWidth, target.height);
+    context.clip();
+  }
   context.setTransform(scaleX, 0, 0, scaleY, offsetX, offsetY);
   try {
     (objectsOverride ?? fabricCanvas.getObjects()).forEach((object) => {
