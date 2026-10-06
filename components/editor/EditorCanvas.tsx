@@ -14,6 +14,7 @@ import { useCartStore } from '@/src/store/useCartStore';
 import { loadGoogleFonts } from '@/lib/googleFonts';
 import { libraryFontWeights } from '@/lib/googleFontLibrary';
 import { TYPOGRAPHY_PRESETS, presetFontRequests } from '@/components/editor/typographyPresets';
+import { restackGroup } from '@/components/editor/groupStacking';
 import {
   decodeDesignBackground,
   designBackgroundToCss,
@@ -744,6 +745,20 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         }
         if (!panoramaModeRef.current) applyPrintAreaClip(object as any);
         return object;
+      };
+
+      // Destinos de estilo de texto: un objeto de texto suelto, o cada capa
+      // IText/Text de un combo (Group de la galería), para que fuente/tamaño/
+      // formato se apliquen a los combos igual que a un texto normal.
+      const textTargetsOf = (object: any): any[] => {
+        if (!object) return [];
+        if (object.type === 'i-text' || object.type === 'text') return [object];
+        if (object.type === 'group') {
+          return (object.getObjects?.() ?? []).filter(
+            (child: any) => child?.type === 'i-text' || child?.type === 'text',
+          );
+        }
+        return [];
       };
 
 
@@ -3634,8 +3649,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const activeObject = canvas.getActiveObject();
 
         let fill: string | undefined = activeObject ? activeObject.get('fill') : undefined;
-
-        // Para grupos (SVG importado), tomar el color del primer hijo con relleno visible
+        // Combos de texto (Group de ITexts de la galería) y grupos SVG: el color
+        // sale del primer hijo con relleno visible; para los combos, además, la
+        // fuente/tamaño de la primera capa de texto y la marca `containsText`
+        // con la que la barra muestra los controles de texto.
+        let fontFamily: unknown = activeObject ? activeObject.get('fontFamily') : undefined;
+        let fontSize: unknown = activeObject ? activeObject.get('fontSize') : undefined;
+        let containsText = false;
         if (activeObject && (activeObject.type === 'group' || activeObject._objects)) {
           const children =
             activeObject.getObjects && typeof activeObject.getObjects === 'function'
@@ -3645,6 +3665,14 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             (c: any) => c.fill && c.fill !== 'none' && c.fill !== 'transparent' && c.fill !== '',
           );
           fill = (firstFilled ? firstFilled.fill : children[0]?.fill) ?? fill;
+          const textChild = children.find(
+            (child: any) => child?.type === 'i-text' || child?.type === 'text',
+          );
+          containsText = Boolean(textChild);
+          if (textChild) {
+            fontFamily = textChild.get('fontFamily');
+            fontSize = textChild.get('fontSize');
+          }
         }
 
         // Emitir evento unificado de cambio de selección (SIEMPRE con detail)
@@ -3654,8 +3682,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             selectedObject: activeObject ? {
               type: activeObject.type,
               fill: fill ?? '#000000',
-              fontFamily: activeObject.get('fontFamily'),
-              fontSize: activeObject.get('fontSize'),
+              fontFamily,
+              fontSize,
+              containsText,
             } : null
           }
         }));
@@ -3712,26 +3741,32 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       };
 
       handleFontChange = async (e: Event) => {
-        if (!fabricCanvasRef.current) return;
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
         const customEvent = e as CustomEvent;
         const { fontFamily } = customEvent.detail || {};
         if (!fontFamily) return;
 
-        const activeObject = fabricCanvasRef.current.getActiveObject();
-        if (!activeObject || (activeObject.type !== 'i-text' && activeObject.type !== 'text')) return;
+        const activeObject = canvas.getActiveObject();
+        // Un combo (Group de ITexts) aplica la familia a cada línea.
+        const targets = textTargetsOf(activeObject);
+        if (!targets.length) return;
 
+        const applyFont = () => {
+          targets.forEach((target: any) => target.set('fontFamily', fontFamily));
+          if (activeObject?.type === 'group') restackGroup(canvas, activeObject);
+          canvas.renderAll();
+          saveState();
+        };
         // Esperar a que el navegador cargue la fuente (con los pesos reales
         // declarados en la biblioteca) antes de aplicarla.
         try {
           await loadGoogleFonts([{ family: fontFamily, weights: libraryFontWeights(fontFamily) }]);
-          activeObject.set('fontFamily', fontFamily);
-          fabricCanvasRef.current.renderAll();
-          saveState();
+          applyFont();
         } catch (err) {
           console.warn('Error al cargar la fuente:', fontFamily, err);
           // Aplicar de todas formas incluso si falla la precarga
-          activeObject.set('fontFamily', fontFamily);
-          fabricCanvasRef.current.renderAll();
+          applyFont();
         }
       };
 
@@ -3739,42 +3774,50 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const customEvent = e as CustomEvent;
         const detail = customEvent?.detail || {};
         const fontSize = detail.fontSize;
-        
+
         if (!fontSize) return;
-        
-        const activeObject = fabricCanvasRef.current?.getActiveObject();
-        if (activeObject && (activeObject.type === 'i-text' || activeObject.type === 'text')) {
-          activeObject.set('fontSize', fontSize);
-          fabricCanvasRef.current.renderAll();
-          saveState();
-        }
+
+        const canvas = fabricCanvasRef.current;
+        const activeObject = canvas?.getActiveObject();
+        const targets = textTargetsOf(activeObject);
+        if (!canvas || !targets.length) return;
+        targets.forEach((target: any) => target.set('fontSize', fontSize));
+        // El alto de las líneas cambió: re-apilar el combo para que no se encimien.
+        if (activeObject.type === 'group') restackGroup(canvas, activeObject);
+        canvas.renderAll();
+        saveState();
       };
 
       handleTextFormat = (e: Event) => {
         const canvas = fabricCanvasRef.current;
         const detail = (e as CustomEvent<{ property?: string; value?: unknown }>).detail || {};
         const activeObject: any = canvas?.getActiveObject();
-        if (!canvas || !activeObject || (activeObject.type !== 'i-text' && activeObject.type !== 'text')) return;
+        const targets = textTargetsOf(activeObject);
+        if (!canvas || !targets.length) return;
 
         const reset: Record<string, unknown> = {
           fontFamily: 'Arial', fontWeight: 'normal', fontStyle: 'normal',
           underline: false, linethrough: false, textBackgroundColor: '',
         };
-        if (detail.property === 'clear') {
-          if (activeObject.isEditing && typeof activeObject.setSelectionStyles === 'function') {
-            activeObject.setSelectionStyles(reset);
-          } else {
-            activeObject.set(reset);
+        targets.forEach((target: any) => {
+          if (detail.property === 'clear') {
+            if (target.isEditing && typeof target.setSelectionStyles === 'function') {
+              target.setSelectionStyles(reset);
+            } else {
+              target.set(reset);
+            }
+          } else if (detail.property) {
+            const formatting = { [detail.property]: detail.value };
+            if (target.isEditing && typeof target.setSelectionStyles === 'function') {
+              target.setSelectionStyles(formatting);
+            } else {
+              target.set(formatting);
+            }
           }
-        } else if (detail.property) {
-          const formatting = { [detail.property]: detail.value };
-          if (activeObject.isEditing && typeof activeObject.setSelectionStyles === 'function') {
-            activeObject.setSelectionStyles(formatting);
-          } else {
-            activeObject.set(formatting);
-          }
-        }
-        activeObject.setCoords?.();
+          target.setCoords?.();
+        });
+        // Anchos/altos de las líneas pueden cambiar: re-apilar el combo.
+        if (activeObject.type === 'group') restackGroup(canvas, activeObject);
         canvas.requestRenderAll();
         saveState();
       };
@@ -4062,15 +4105,24 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           ...defaultObjectProps,
         }));
 
-        fabricCanvasRef.current.add(newText);
-        // Centrar SIEMPRE en el punto medio visible del área de trabajo
-        // (nunca en coordenadas fijas de esquina).
-        if (panoramaModeRef.current) { const center = getCurrentPanoramaCenter(); const mapped = mapPointToCurrentPanorama(ADMIN_BASE_SIZE / 2, ADMIN_BASE_SIZE / 2); newText.set({ left: center.x, top: center.y, fontSize: (fontSize || 24) * mapped.scale }); }
-        else fabricCanvasRef.current.centerObject(newText);
-        newText.setCoords();
-        fabricCanvasRef.current.setActiveObject(newText);
-        fabricCanvasRef.current.bringToFront(newText);
-        fabricCanvasRef.current.requestRenderAll();
+        // Añadir y posicionar con el historial en pausa: `object:added` se
+        // dispara ANTES de centrar y, sin esta guarda, el primer undo
+        // devolvería el texto a una esquina en lugar de quitarlo.
+        isUpdatingHistory.current = true;
+        try {
+          fabricCanvasRef.current.add(newText);
+          // Centrar SIEMPRE en el punto medio visible del área de trabajo
+          // (nunca en coordenadas fijas de esquina).
+          if (panoramaModeRef.current) { const center = getCurrentPanoramaCenter(); const mapped = mapPointToCurrentPanorama(ADMIN_BASE_SIZE / 2, ADMIN_BASE_SIZE / 2); newText.set({ left: center.x, top: center.y, fontSize: (fontSize || 24) * mapped.scale }); }
+          else fabricCanvasRef.current.centerObject(newText);
+          newText.setCoords();
+          fabricCanvasRef.current.setActiveObject(newText);
+          fabricCanvasRef.current.bringToFront(newText);
+          fabricCanvasRef.current.requestRenderAll();
+        } finally {
+          isUpdatingHistory.current = false;
+        }
+        saveState();
       };
 
       // ── Presets tipográficos (galería "Agregar Título / Agregar Párrafo") ──
@@ -4152,16 +4204,27 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
           // Nombre visible en LayersPanel y en los objetos exportados.
           (designObject as any).set('layerName', preset.name);
+          // Opciones de apilado para que SmartInputPanel pueda re-apilar el
+          // combo (mismo gap/alineación) cuando el usuario edite una línea.
+          if (texts.length > 1) (designObject as any).__stackOptions = { gap, align };
           // makeObjectInteractive reafirma interactividad y aplica el clipPath
           // de la zona segura (el preset completo viaja a los archivos de print).
           makeObjectInteractive(designObject);
-          canvas.add(designObject);
-          if (panoramaModeRef.current) { const center = getCurrentPanoramaCenter(); const mapped = mapPointToCurrentPanorama(ADMIN_BASE_SIZE / 2, ADMIN_BASE_SIZE / 2); designObject.set({ left: center.x, top: center.y, scaleX: (designObject.scaleX || 1) * mapped.scale, scaleY: (designObject.scaleY || 1) * mapped.scale }); }
-          else canvas.centerObject(designObject);
-          designObject.setCoords();
-          canvas.setActiveObject(designObject);
-          canvas.bringToFront(designObject);
-          canvas.requestRenderAll();
+          // Igual que handleAddText: pausar el historial durante add + centrado
+          // para que `object:added` no registre el preset fuera del centro (el
+          // primer undo debe quitarlo, no moverlo a una esquina).
+          isUpdatingHistory.current = true;
+          try {
+            canvas.add(designObject);
+            if (panoramaModeRef.current) { const center = getCurrentPanoramaCenter(); const mapped = mapPointToCurrentPanorama(ADMIN_BASE_SIZE / 2, ADMIN_BASE_SIZE / 2); designObject.set({ left: center.x, top: center.y, scaleX: (designObject.scaleX || 1) * mapped.scale, scaleY: (designObject.scaleY || 1) * mapped.scale }); }
+            else canvas.centerObject(designObject);
+            designObject.setCoords();
+            canvas.setActiveObject(designObject);
+            canvas.bringToFront(designObject);
+            canvas.requestRenderAll();
+          } finally {
+            isUpdatingHistory.current = false;
+          }
           saveState();
         })();
       };

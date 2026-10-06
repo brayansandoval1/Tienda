@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Camera, Image as ImageIcon, Pencil } from 'lucide-react';
+import { restackGroup } from './groupStacking';
 
 type FabricCanvas = any;
 type FabricObject = any;
@@ -29,10 +30,25 @@ const getImageSource = (object: FabricObject): string | null => {
   return element?.currentSrc || element?.src || null;
 };
 
+/** Ids de los items que deben resaltarse según el objeto activo del canvas. */
+const activeIdSet = (canvas: FabricCanvas): Set<string> => {
+  const active = canvas.getActiveObject?.();
+  if (!active) return new Set<string>();
+  // Combo seleccionado → resaltar TODAS sus líneas en el panel.
+  if (active.type === 'group') {
+    return new Set(
+      (active.getObjects?.() ?? [])
+        .map((child: FabricObject) => child?.__smartInputId)
+        .filter(Boolean) as string[],
+    );
+  }
+  return new Set(active.__smartInputId ? [active.__smartInputId as string] : []);
+};
+
 export default function SmartInputPanel() {
   const [canvas, setCanvas] = useState<FabricCanvas | null>(null);
   const [items, setItems] = useState<SmartItem[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeIds, setActiveIds] = useState<Set<string>>(() => new Set());
   const fileInputsRef = useRef<Record<string, HTMLInputElement | null>>({});
   const idCounterRef = useRef(0);
 
@@ -61,21 +77,44 @@ export default function SmartInputPanel() {
     const refresh = () => {
       let textNumber = 0;
       let imageNumber = 0;
-      const nextItems = canvas.getObjects().filter(isEditableObject).map((object: FabricObject) => {
-        const kind = object.type === 'image' ? 'image' as const : 'text' as const;
+      const toItem = (object: FabricObject, label?: string): SmartItem => {
+        const kind = object.type === 'image' ? ('image' as const) : ('text' as const);
         const number = kind === 'text' ? ++textNumber : ++imageNumber;
         return {
           id: objectId(object),
           object,
           kind,
-          label: object.label || object.name || object.layerName || `${kind === 'text' ? 'Texto' : 'Imagen'} ${number}`,
+          label:
+            label ??
+            (object.label ||
+              object.name ||
+              object.layerName ||
+              `${kind === 'text' ? 'Texto' : 'Imagen'} ${number}`),
           value: kind === 'text' ? object.text ?? '' : '',
           preview: kind === 'image' ? getImageSource(object) : null,
         };
+      };
+      const nextItems = canvas.getObjects().flatMap((object: FabricObject) => {
+        // Combos de la galería (2+ capas apiladas en fabric.Group): se listan
+        // LÍNEA A LÍNEA, cada IText con su propio input, para que un texto con
+        // estilo se edite igual que uno normal desde "Edición rápida".
+        if (object?.visible !== false && object?.type === 'group') {
+          const children = (object.getObjects?.() ?? []).filter(
+            (child: FabricObject) =>
+              child?.visible !== false && ['i-text', 'textbox'].includes(child?.type),
+          );
+          if (!children.length) return [];
+          const groupLabel =
+            object.label || object.name || object.layerName || 'Texto';
+          return children.map((child: FabricObject, index: number) =>
+            toItem(child, children.length > 1 ? `${groupLabel} · línea ${index + 1}` : groupLabel),
+          );
+        }
+        if (!isEditableObject(object)) return [];
+        return [toItem(object)];
       });
       setItems(nextItems);
-      const active = canvas.getActiveObject();
-      setActiveId(active?.__smartInputId ?? null);
+      setActiveIds(activeIdSet(canvas));
     };
 
     const events = ['object:added', 'object:removed', 'object:modified', 'selection:created', 'selection:updated', 'selection:cleared'];
@@ -86,19 +125,29 @@ export default function SmartInputPanel() {
 
   const selectObject = (item: SmartItem) => {
     if (!canvas) return;
-    canvas.setActiveObject(item.object);
+    // Un hijo dentro de un combo no puede seleccionarse solo en Fabric: se
+    // selecciona el combo entero para que tiradores, resaltado del panel y
+    // handlers de lienzo correspondan a lo que el usuario ve.
+    const target = item.object.group ?? item.object;
+    canvas.setActiveObject(target);
     canvas.requestRenderAll?.();
-    setActiveId(item.id);
+    setActiveIds(activeIdSet(canvas));
   };
 
   const updateText = (item: SmartItem, value: string) => {
     if (!canvas) return;
     item.object.set('text', value);
     item.object.setCoords?.();
+    const parent = item.object.group;
+    // Línea dentro de un combo: re-apilar para que la caja del grupo se adapte
+    // al texto nuevo (si no, Fabric recortaría el texto más largo).
+    if (parent && parent.type === 'group') restackGroup(canvas, parent);
     canvas.renderAll();
     // `set` no dispara eventos en Fabric; emitirlo mantiene historial y el
     // mapeo del panel sincronizados con las demás herramientas del editor.
-    canvas.fire('object:modified', { target: item.object });
+    // El combo es el target para que los handlers que leen coordenadas de
+    // lienzo (clip por segmento del 360) reciban datos válidos.
+    canvas.fire('object:modified', { target: parent ?? item.object });
   };
 
   const replaceImage = (item: SmartItem, file: File) => {
@@ -171,7 +220,7 @@ export default function SmartInputPanel() {
 
       <div className="divide-y divide-slate-100">
         {items.map((item) => {
-          const active = item.id === activeId;
+          const active = activeIds.has(item.id);
           return (
             <div key={item.id} className={`space-y-2 px-3 py-2.5 transition ${active ? 'bg-sky-50/80' : 'bg-white'}`}>
               <label className="block truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">

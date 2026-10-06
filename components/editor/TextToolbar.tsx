@@ -112,13 +112,19 @@ export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama
         setIsVisible(true);
       }
 
-      // Verificar tipo de objeto
-      const isText = selectedObject.type === 'i-text' || selectedObject.type === 'text';
+      // Verificar tipo de objeto. Los combos de la galería (Group de ITexts)
+      // llegan marcados con containsText: la barra muestra fuente/tamaño/formato
+      // y EditorCanvas los aplica a cada línea del grupo.
+      const isText =
+        selectedObject.type === 'i-text' ||
+        selectedObject.type === 'text' ||
+        Boolean(selectedObject.containsText);
       const isImage = selectedObject.type === 'image';
       setIsTextObject(isText);
       setIsImageObject(isImage);
 
-      // Actualizar estilos con valores seguros
+      // Actualizar estilos con valores seguros (para combos, el proyector de
+      // EditorCanvas ya extrajo fuente/tamaño/color de la primera capa).
       setStyle({
         fill: selectedObject.fill ?? '#000000',
         fontFamily: selectedObject.fontFamily ?? 'Arial',
