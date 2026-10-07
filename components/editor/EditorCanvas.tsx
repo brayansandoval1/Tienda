@@ -1224,6 +1224,21 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         canvas.getObjects().forEach((object: any) => applyPrintAreaClip(object, view));
       };
       const setUnrestrictedDesignMode = (enabled: boolean) => {
+        if (unrestrictedDesignRef.current === enabled && panoramaModeRef.current) {
+          console.debug('[EditorCanvas][unrestricted] unchanged during panorama; skip persist', {
+            enabled,
+            viewId: currentViewIdRef.current,
+            canvasObjectCount: fabricCanvasRef.current?.getObjects?.().filter(isDraftDesignObject).length ?? 0,
+          });
+          return;
+        }
+        console.info('[EditorCanvas][unrestricted] toggle', {
+          from: unrestrictedDesignRef.current,
+          to: enabled,
+          panorama: panoramaModeRef.current,
+          viewId: currentViewIdRef.current,
+          canvas: summarizeDesignObjects(fabricCanvasRef.current?.getObjects?.() ?? []),
+        });
         unrestrictedDesignRef.current = enabled;
         const c = fabricCanvasRef.current;
         if (!c) return;
@@ -1241,8 +1256,17 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       };
       unrestrictedToggleRef.current = setUnrestrictedDesignMode;
       const clipAddedDesignObject = (event: any) => {
+        const addedObject = event?.target;
+        if (addedObject && !addedObject.isGuide && !addedObject.isMockup && !addedObject.isDesignBackground) {
+          console.info('[EditorCanvas][object-added]', {
+            mode: panoramaModeRef.current ? 'panorama' : unrestrictedDesignRef.current ? 'unrestricted' : 'view',
+            viewId: currentViewIdRef.current,
+            object: summarizeDesignObjects([addedObject])[0],
+            designObjectCount: canvas.getObjects().filter(isDraftDesignObject).length,
+          });
+        }
         if (panoramaModeRef.current) {
-          const object = event?.target;
+          const object = addedObject;
           if (!object || object.isGuide || object.isMockup) return;
           const centerX = object.getCenterPoint?.().x ?? Number(object.left) ?? 0;
           const segment = panoramaSegments.find((candidate) => centerX >= candidate.destX && centerX <= candidate.destX + candidate.destWidth)
@@ -1429,7 +1453,12 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           }
 
           try {
-            console.log('4. Intentando cargar imagen en Fabric.js:', mockupUrl);
+            console.log('[EditorCanvas][mockup-load] start', {
+              viewId: view.id,
+              sourceLength: mockupUrl.length,
+              isEmbeddedDataUrl: mockupUrl.startsWith('data:'),
+              sourcePrefix: mockupUrl.slice(0, 48),
+            });
             const imageResult = (fabric.Image.fromURL as any)(
               mockupUrl,
               (img: any) => {
@@ -2207,6 +2236,106 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         return JSON.stringify(objects);
       };
 
+      const summarizeDesignObjects = (objects: any[]) => objects
+        .filter((object: any) => isDraftDesignObject(object))
+        .map((object: any, index: number) => ({
+          index,
+          type: object.type,
+          id: object.id ?? null,
+          panoramaDesignId: object.panoramaDesignId ?? null,
+          src: object.type === 'image' ? String(object.getSrc?.() ?? object.src ?? '').slice(0, 100) : undefined,
+          left: Math.round(Number(object.left) || 0),
+          top: Math.round(Number(object.top) || 0),
+          scaleX: Number((Number(object.scaleX) || 1).toFixed(3)),
+          scaleY: Number((Number(object.scaleY) || 1).toFixed(3)),
+          viewId: object.panoramaViewId ?? null,
+        }));
+
+      const removeDuplicateDesignObjects = (objects: any[], context: string) => {
+        const kept: any[] = [];
+        const imageBounds: Array<{ object: any; src: string; left: number; top: number; right: number; bottom: number }> = [];
+        objects.forEach((object: any) => {
+          const id = String(object.panoramaDesignId ?? object.id ?? '');
+          if (id && kept.some((candidate) => String(candidate.panoramaDesignId ?? candidate.id ?? '') === id)) {
+            console.warn('[EditorCanvas][dedupe] duplicate stable ID removed', { context, id, object: summarizeDesignObjects([object])[0] });
+            object.dispose?.();
+            return;
+          }
+          if (object.type === 'image' && typeof object.getSrc === 'function') {
+            const src = object.getSrc();
+            const bounds = object.getBoundingRect?.(true);
+            if (src && bounds) {
+              const candidate = {
+                object,
+                src,
+                left: Number(bounds.left),
+                top: Number(bounds.top),
+                right: Number(bounds.left) + Number(bounds.width),
+                bottom: Number(bounds.top) + Number(bounds.height),
+              };
+              const duplicateOf = imageBounds.find((previous) => {
+                if (previous.src !== candidate.src) return false;
+                const overlapWidth = Math.max(0, Math.min(previous.right, candidate.right) - Math.max(previous.left, candidate.left));
+                const overlapHeight = Math.max(0, Math.min(previous.bottom, candidate.bottom) - Math.max(previous.top, candidate.top));
+                const overlap = overlapWidth * overlapHeight;
+                const candidateArea = Math.max(1, (candidate.right - candidate.left) * (candidate.bottom - candidate.top));
+                const previousArea = Math.max(1, (previous.right - previous.left) * (previous.bottom - previous.top));
+                return overlap / Math.min(candidateArea, previousArea) >= 0.8;
+              });
+              if (duplicateOf) {
+                console.warn('[EditorCanvas][dedupe] overlapping legacy image removed', {
+                  context,
+                  keptId: duplicateOf.object.id ?? null,
+                  removedId: object.id ?? null,
+                  overlapRatioThreshold: 0.8,
+                  kept: summarizeDesignObjects([duplicateOf.object])[0],
+                  removed: summarizeDesignObjects([object])[0],
+                });
+                object.dispose?.();
+                return;
+              }
+              imageBounds.push(candidate);
+            }
+          }
+          kept.push(object);
+        });
+        if (kept.length !== objects.length) {
+          console.info('[EditorCanvas][dedupe] cleaned stored view', { context, before: objects.length, after: kept.length });
+        }
+        return kept;
+      };
+
+      const enlivenDesignObjects = (serialized: string, context: string) => new Promise<any[]>((resolve) => {
+        let records: any[];
+        try {
+          const parsed = JSON.parse(serialized || '[]');
+          records = Array.isArray(parsed) ? parsed : [];
+        } catch (error) {
+          console.error('[EditorCanvas][restore] invalid object JSON', { context, error });
+          resolve([]);
+          return;
+        }
+        try {
+          // Fabric 5 may omit custom fields while enlivening. Restore the
+          // serialized identity explicitly so panorama copies keep one ID
+          // across repeated view/mode changes.
+          // @ts-ignore Fabric.js overload differs between installed versions.
+          fabric.util.enlivenObjects(records, (enlivened: any[]) => {
+            const objects = enlivened || [];
+            objects.forEach((object: any, index: number) => {
+              const record = records[index];
+              if (!record) return;
+              if (record.id != null) object.id = record.id;
+              if (record.panoramaDesignId != null) object.panoramaDesignId = record.panoramaDesignId;
+            });
+            resolve(objects);
+          });
+        } catch (error) {
+          console.error('[EditorCanvas][restore] could not enliven objects', { context, error });
+          resolve([]);
+        }
+      });
+
       const publish3DViewSnapshots = () => {
         if (panoramaModeRef.current) persistPanoramaViews();
         const currentViewId = currentViewIdRef.current;
@@ -2518,6 +2647,20 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const switchView = async (viewId: string) => {
         const c = fabricCanvasRef.current;
         if (!c) return;
+        console.groupCollapsed('[EditorCanvas][view-switch] start', {
+          from: currentViewIdRef.current,
+          to: viewId,
+          panorama: panoramaModeRef.current,
+          unrestricted: unrestrictedDesignRef.current,
+          canvas: summarizeDesignObjects(c.getObjects()),
+          storedCounts: Object.fromEntries(Object.entries(canvasDataRef.current).map(([id, json]) => {
+            try {
+              const objects = JSON.parse(json || '[]');
+              return [id, Array.isArray(objects) ? objects.length : 0];
+            } catch { return [id, 'invalid-json']; }
+          })),
+        });
+        console.groupEnd();
         if (panoramaModeRef.current) await setPanoramaMode(false);
         if (fabricCanvasRef.current !== c) return;
         if (viewId === currentViewIdRef.current) {
@@ -2568,13 +2711,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
         const stored = canvasDataRef.current[viewId];
         let restoredObjects = viewObjectsRef.current[viewId] ?? [];
+        const restoreSource = restoredObjects.length ? 'live-cache' : stored ? 'serialized' : 'empty';
         let ownsRestoredObjects = false;
         if (!restoredObjects.length && stored) {
           try {
-            restoredObjects = await new Promise<any[]>((resolve) => {
-              // @ts-ignore Fabric.js types mismatch
-              fabric.util.enlivenObjects(JSON.parse(stored), (enlivened: any[]) => resolve(enlivened || []));
-            });
+            restoredObjects = await enlivenDesignObjects(stored, `switch-view:${viewId}`);
             ownsRestoredObjects = true;
           } catch (error) {
             console.error('[EditorCanvas] No se pudo restaurar el diseño de la vista:', viewId, error);
@@ -2585,6 +2726,18 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           if (ownsRestoredObjects) restoredObjects.forEach((object) => object.dispose?.());
           return;
         }
+        restoredObjects = removeDuplicateDesignObjects(restoredObjects, `switch-view:${viewId}`);
+        viewObjectsRef.current[viewId] = restoredObjects;
+        canvasDataRef.current[viewId] = JSON.stringify(restoredObjects.map((object: any) =>
+          object.toObject(['id', 'label', 'layerName', 'isLock', 'panoramaDesignId']),
+        ));
+
+        console.info('[EditorCanvas][view-switch] restore prepared', {
+          to: viewId,
+          source: restoreSource,
+          restoredCount: restoredObjects.length,
+          restored: summarizeDesignObjects(restoredObjects),
+        });
 
         activeView = nextView;
         await loadResolvedViewBackground(nextView, resolvedView);
@@ -2607,6 +2760,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         c.calcOffset();
         if (safeZoneRef.current) c.sendToBack(safeZoneRef.current);
         c.requestRenderAll();
+        console.info('[EditorCanvas][view-switch] complete', {
+          activeViewId: viewId,
+          canvas: summarizeDesignObjects(c.getObjects()),
+        });
         finishViewSwitch(viewId);
         if (switchToken === viewSwitchToken) pendingViewId = null;
         // Refresca el panel de textos de la sidebar para la vista cargada.
@@ -2820,10 +2977,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         let restoredObjects: any[] = [];
         if (stored) {
           try {
-            restoredObjects = await new Promise<any[]>((resolve) => {
-              // @ts-ignore Fabric.js types mismatch
-              fabric.util.enlivenObjects(JSON.parse(stored), (enlivened: any[]) => resolve(enlivened || []));
-            });
+            restoredObjects = await enlivenDesignObjects(stored, `load-view:${view.id}`);
           } catch (error) {
             console.error('[EditorCanvas] No se pudo restaurar el diseño de la vista:', view.id, error);
           }
@@ -2832,6 +2986,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           isUpdatingHistory.current = false;
           return;
         }
+        restoredObjects = removeDuplicateDesignObjects(restoredObjects, `load-view:${view.id}`);
+        canvasDataRef.current[view.id] = JSON.stringify(restoredObjects.map((object: any) =>
+          object.toObject(['id', 'label', 'layerName', 'isLock', 'panoramaDesignId']),
+        ));
         // El mockup entra con sendToBack() cuando termine de cargar, así que
         // los objetos añadidos ahora quedan siempre por encima de la imagen.
         restoredObjects.forEach((obj: any) => c.add(obj));
@@ -2872,8 +3030,25 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const c = fabricCanvasRef.current;
         if (!c || !panoramaModeRef.current || !panoramaSegments.length) return;
         const buckets: Record<string, any[]> = Object.fromEntries(baseProductViews.map((view) => [view.id, []]));
+        const seenDesignIds = new Set<string>();
         c.getObjects().forEach((object: any) => {
           if (object.isGuide || object.isGuideLine || object.isMockup || object.isDesignBackground || object.isCropOverlay) return;
+          // Un objeto con el mismo ID ya fue persistido en este ciclo. Sacarlo
+          // del canvas antes de crear los buckets impide que copias antiguas
+          // se vuelvan a multiplicar al cruzar varias vistas.
+          const designId = String(object.panoramaDesignId ?? object.id ?? crypto.randomUUID());
+          if (seenDesignIds.has(designId)) {
+            console.warn('[EditorCanvas][panorama-persist] duplicate canvas object removed', {
+              designId,
+              object: summarizeDesignObjects([object])[0],
+            });
+            c.remove(object);
+            object.dispose?.();
+            return;
+          }
+          seenDesignIds.add(designId);
+          object.id = designId;
+          object.panoramaDesignId = designId;
           const centerX = typeof object.getCenterPoint === 'function' ? object.getCenterPoint().x : Number(object.left) || 0;
           const centerSegment = panoramaSegments.find((candidate) => centerX >= candidate.destX && centerX <= candidate.destX + candidate.destWidth)
             ?? panoramaSegments.find((candidate) => candidate.viewId === object.panoramaViewId)
@@ -2886,16 +3061,20 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           };
           const objectRight = Number(bounds.left) + Number(bounds.width);
           const objectBottom = Number(bounds.top) + Number(bounds.height);
+          // Un objeto que cruza caras debe aparecer en cada una. Se conserva
+          // el mismo ID lógico para volver a unir las copias al reabrir el
+          // panorama y evitar que se multipliquen entre cambios de modo.
           const targetSegments = unrestrictedDesignRef.current
             ? panoramaSegments.filter((segment) =>
               objectRight > segment.destX && Number(bounds.left) < segment.destX + segment.destWidth
               && objectBottom > 0 && Number(bounds.top) < ADMIN_BASE_SIZE,
             )
             : (centerSegment ? [centerSegment] : []);
-          const baseJson = object.toObject(['id', 'label', 'layerName', 'isLock']);
+          const baseJson = object.toObject(['id', 'label', 'layerName', 'isLock', 'panoramaDesignId']);
           targetSegments.forEach((segment) => {
             if (!buckets[segment.viewId]) return;
             const objectJson = { ...baseJson };
+            objectJson.panoramaDesignId = object.panoramaDesignId;
             const scale = segment.scale || 1;
             objectJson.left = (Number(baseJson.left) - segment.destX) / scale + segment.sourceX;
             objectJson.top = Number(baseJson.top) / scale + segment.sourceY;
@@ -2915,6 +3094,18 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const setPanoramaMode = async (enabled: boolean) => {
         const c = fabricCanvasRef.current;
         if (!c || panoramaModeRef.current === enabled || baseProductViews.length < 2) return;
+        console.info('[EditorCanvas][panorama] transition start', {
+          enabled,
+          viewId: currentViewIdRef.current,
+          unrestricted: unrestrictedDesignRef.current,
+          canvas: summarizeDesignObjects(c.getObjects()),
+          storedCounts: Object.fromEntries(Object.entries(canvasDataRef.current).map(([id, json]) => {
+            try {
+              const objects = JSON.parse(json || '[]');
+              return [id, Array.isArray(objects) ? objects.length : 0];
+            } catch { return [id, 'invalid-json']; }
+          })),
+        });
         // Invalida cualquier loadViewObjects en curso: entrar o salir del modo
         // 360 no debe mezclarse con una carga individual pendiente, o su
         // continuación mutaría el lienzo ya reconstruido por el nuevo modo.
@@ -2938,7 +3129,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             panoramaLiveObjects[view.id] = [...liveObjects];
             const stored = canvasDataRef.current[view.id];
             panoramaSourceData[view.id] = liveObjects.length
-              ? JSON.stringify(liveObjects.map((object: any) => object.toObject(['id', 'label', 'layerName', 'isLock'])))
+              ? JSON.stringify(liveObjects.map((object: any) => object.toObject(['id', 'label', 'layerName', 'isLock', 'panoramaDesignId'])))
               : (stored ?? '[]');
             canvasDataRef.current[view.id] = panoramaSourceData[view.id];
           });
@@ -2987,20 +3178,20 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           // en el mockup, no sólo en el modelo.
           segments.forEach((segment) => ensurePanoramaBackgroundRect(segment.viewId));
 
+          const restoredDesignIds = new Set<string>();
+          const restoredImageBounds: Array<{ src: string; left: number; top: number; right: number; bottom: number }> = [];
           const restoreTasks = baseProductViews.map(async (view) => {
             const serialized = panoramaSourceData[view.id] || '[]';
             const segment = segments.find((candidate) => candidate.viewId === view.id)!;
             let objects = panoramaLiveObjects[view.id] ?? [];
-            if (!objects.length) objects = await new Promise<any[]>((resolve) => {
-              try {
-                // @ts-ignore Fabric.js overload differs between installed versions.
-                fabric.util.enlivenObjects(JSON.parse(serialized), (enlivened: any[]) => resolve(enlivened || []));
-              } catch (error) {
-                console.error('[EditorCanvas] No se pudo cargar el diseño en lienzo 360:', view.id, error);
-                resolve([]);
-              }
-            });
+            if (!objects.length) objects = await enlivenDesignObjects(serialized, `panorama:${view.id}`);
             objects.forEach((object: any) => {
+              const designId = String(object.panoramaDesignId ?? object.id ?? '');
+              if (designId && restoredDesignIds.has(designId)) {
+                object.dispose?.();
+                return;
+              }
+              if (designId) restoredDesignIds.add(designId);
               object.set({
                 left: segment.destX + (Number(object.left) - segment.sourceX) * segment.scale,
                 top: (Number(object.top) - segment.sourceY) * segment.scale,
@@ -3011,6 +3202,38 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
               object.panoramaViewId = view.id;
               applyPanoramaSegmentClip(object, segment);
               object.setCoords?.();
+
+              // Los borradores antiguos no tenían un ID compartido entre las
+              // copias por vista. Si aún existen, evita volver a apilar la
+              // misma imagen en el panorama cuando ambas copias representan
+              // prácticamente la misma posición y tamaño.
+              if (object.type === 'image' && typeof object.getSrc === 'function') {
+                const src = object.getSrc();
+                const bounds = object.getBoundingRect?.(true);
+                if (src && bounds) {
+                  const candidate = {
+                    src,
+                    left: Number(bounds.left),
+                    top: Number(bounds.top),
+                    right: Number(bounds.left) + Number(bounds.width),
+                    bottom: Number(bounds.top) + Number(bounds.height),
+                  };
+                  const duplicate = restoredImageBounds.some((previous) => {
+                    if (previous.src !== candidate.src) return false;
+                    const overlapWidth = Math.max(0, Math.min(previous.right, candidate.right) - Math.max(previous.left, candidate.left));
+                    const overlapHeight = Math.max(0, Math.min(previous.bottom, candidate.bottom) - Math.max(previous.top, candidate.top));
+                    const overlap = overlapWidth * overlapHeight;
+                    const candidateArea = Math.max(1, (candidate.right - candidate.left) * (candidate.bottom - candidate.top));
+                    const previousArea = Math.max(1, (previous.right - previous.left) * (previous.bottom - previous.top));
+                    return overlap / Math.min(candidateArea, previousArea) >= 0.8;
+                  });
+                  if (duplicate) {
+                    object.dispose?.();
+                    return;
+                  }
+                  restoredImageBounds.push(candidate);
+                }
+              }
             });
             return objects;
           });
@@ -3021,6 +3244,14 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             count: objects.length,
             segment: segments[index] && { x: segments[index].destX, width: segments[index].destWidth, scale: segments[index].scale },
           })));
+          console.info('[EditorCanvas][panorama] restore result', {
+            restoredCount: restoredByView.reduce((sum, objects) => sum + objects.length, 0),
+            restoredByView: restoredByView.map((objects, index) => ({
+              viewId: baseProductViews[index]?.id,
+              objects: summarizeDesignObjects(objects),
+            })),
+            canvas: summarizeDesignObjects(c.getObjects()),
+          });
           restoredByView.flat().forEach((object) => c.add(makeObjectInteractive(object)));
 
           segments.forEach((segment, index) => {
@@ -3047,6 +3278,15 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         }
 
         persistPanoramaViews();
+        console.info('[EditorCanvas][panorama] persisted before exit', {
+          viewCounts: Object.fromEntries(baseProductViews.map((view) => {
+            try {
+              const objects = JSON.parse(canvasDataRef.current[view.id] || '[]');
+              return [view.id, Array.isArray(objects) ? objects.length : 0];
+            } catch { return [view.id, 'invalid-json']; }
+          })),
+          canvas: summarizeDesignObjects(c.getObjects()),
+        });
         panoramaModeRef.current = false;
         // Los diseños sin límites se guardan primero en todas las vistas; al
         // regresar a una cara individual, reaplicamos inmediatamente su clip.
@@ -4279,6 +4519,15 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const customEvent = e as CustomEvent<{ dataUrl: string }>;
         const { dataUrl } = customEvent.detail || {};
         if (!dataUrl) return;
+        const addRequestId = crypto.randomUUID();
+        console.info('[EditorCanvas][add-image] requested', {
+          requestId: addRequestId,
+          viewId: currentViewIdRef.current,
+          panorama: panoramaModeRef.current,
+          unrestricted: unrestrictedDesignRef.current,
+          sourceLength: dataUrl.length,
+          sourcePrefix: dataUrl.slice(0, 40),
+        });
 
         // Crear un elemento img HTML oculto para precargar la imagen Base64
         const imgElement = document.createElement('img');
@@ -4300,6 +4549,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             transparentCorners: false,
             ...defaultObjectProps,
           }));
+          (fabricImage as any).id = addRequestId;
           // Limitar proporcionalmente el tamaño inicial para que la imagen
           // quede dentro de la zona segura sin deformarse.
           const largestSide = Math.max(fabricImage.width || 0, fabricImage.height || 0);
@@ -4310,6 +4560,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           fabricImage.setCoords();
 
           fabricCanvasRef.current.add(fabricImage);
+          console.info('[EditorCanvas][add-image] inserted', {
+            requestId: addRequestId,
+            objectId: (fabricImage as any).id,
+            viewId: currentViewIdRef.current,
+            objectCount: fabricCanvasRef.current.getObjects().filter(isDraftDesignObject).length,
+            object: summarizeDesignObjects([fabricImage])[0],
+          });
           fabricCanvasRef.current.setActiveObject(fabricImage);
           fabricCanvasRef.current.bringToFront(fabricImage);
           fabricCanvasRef.current.renderAll();
@@ -4353,6 +4610,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           // controles de escala: sin reaplicarlos, la copia volvería a tener
           // los tiradores laterales nativos y se deformaría al estirarla.
           makeObjectInteractive(clonedObj);
+          const clonedId = crypto.randomUUID();
+          clonedObj.id = clonedId;
+          clonedObj.panoramaDesignId = clonedId;
           clonedObj.set({
             left: clonedObj.left + 20,
             top: clonedObj.top + 20,
