@@ -3535,13 +3535,77 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (!c || !activeProduct.views.length || exportInProgressRef.current) return;
         exportInProgressRef.current = true;
         const originalViewId = currentViewIdRef.current;
-        canvasDataRef.current[originalViewId] = snapshotCurrentObjects();
+        const wasPanorama = panoramaModeRef.current;
+        if (!wasPanorama) canvasDataRef.current[originalViewId] = snapshotCurrentObjects();
         const printFiles: Array<{ name: string; data: Blob }> = [];
         const panoramaPngs: Blob[] = [];
         const productionNotes = ['Archivos PNG listos para impresión.', 'Cada vista se exporta recortada a su área imprimible.'];
         setIsExporting(true);
         window.dispatchEvent(new CustomEvent('editor:export-started'));
         try {
+          if (wasPanorama && panoramaSegments.length) {
+            const systemLayers = c.getObjects().filter((object: any) =>
+              object.isMockup || object.isGuide || object.isGuideLine || object.isCropOverlay,
+            );
+            const layerState = systemLayers.map((object: any) => ({ object, visible: object.visible, excludeFromExport: object.excludeFromExport }));
+            const originalBackground = c.backgroundImage;
+            const originalBackgroundColor = c.backgroundColor;
+            const originalClipPath = c.clipPath;
+            try {
+              systemLayers.forEach((object: any) => object.set({ visible: false, excludeFromExport: true }));
+              c.backgroundImage = null;
+              c.backgroundColor = '';
+              c.clipPath = undefined;
+              c.getObjects().forEach((object: any) => object.setCoords());
+              c.renderAll();
+
+              const renderPng = async (area: PrintArea, pixelsPerLogical: number) => {
+                const options = buildCropExportOptions(c, area, pixelsPerLogical);
+                const exportCanvas = c.toCanvasElement(options.multiplier, options) as HTMLCanvasElement;
+                const dimensions = { width: exportCanvas.width, height: exportCanvas.height };
+                const blob = await new Promise<Blob>((resolve, reject) => {
+                  exportCanvas.toBlob((value) => value ? resolve(value) : reject(new Error('No se pudo codificar el PNG.')), 'image/png');
+                });
+                exportCanvas.width = 0;
+                exportCanvas.height = 0;
+                return { blob, ...dimensions };
+              };
+
+              for (const segment of panoramaSegments) {
+                const view = getView(segment.viewId);
+                const area = { x: segment.destX, y: 0, width: segment.destWidth, height: ADMIN_BASE_SIZE };
+                const widthCm = activeProduct.printWidthCm ?? 20;
+                const heightCm = activeProduct.printHeightCm ?? 20;
+                const requestedScale = Math.max(1,
+                  Math.ceil(((widthCm / 2.54) * 300) / area.width),
+                  Math.ceil(((heightCm / 2.54) * 300) / area.height));
+                const pixelsPerLogical = Math.min(requestedScale, 8192 / Math.max(area.width, area.height));
+                const rendered = await renderPng(area, pixelsPerLogical);
+                const safeName = (view.name || view.label || view.id).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-|-$/g, '') || 'vista';
+                printFiles.push({ name: `impresion-${safeName}-${view.id}.png`, data: rendered.blob });
+                const dpiX = Math.round(rendered.width / (widthCm / 2.54));
+                const dpiY = Math.round(rendered.height / (heightCm / 2.54));
+                productionNotes.push(`${view.name || view.id}: ${rendered.width} x ${rendered.height} px; tamaño previsto ${widthCm} x ${heightCm} cm; resolución aprox. ${dpiX} x ${dpiY} DPI.`);
+              }
+
+              const panoramaArea = { x: 0, y: 0, ...logicalCanvasSize() };
+              const totalWidthCm = (activeProduct.printWidthCm ?? 20) * panoramaSegments.length;
+              const totalHeightCm = activeProduct.printHeightCm ?? 20;
+              const requestedPanoramaScale = Math.max(1,
+                Math.ceil(((totalWidthCm / 2.54) * 300) / panoramaArea.width),
+                Math.ceil(((totalHeightCm / 2.54) * 300) / panoramaArea.height));
+              const panoramaScale = Math.min(requestedPanoramaScale, 30000 / panoramaArea.width, 8192 / panoramaArea.height, Math.sqrt(32_000_000 / (panoramaArea.width * panoramaArea.height)));
+              const panorama = await renderPng(panoramaArea, panoramaScale);
+              printFiles.push({ name: 'diseno-sin-limites-todas-las-vistas.png', data: panorama.blob });
+              productionNotes.push(`PNG panorámico: ${panorama.width} x ${panorama.height} px; se exportó desde el lienzo original, sin guías ni separadores.`);
+            } finally {
+              c.backgroundImage = originalBackground;
+              c.backgroundColor = originalBackgroundColor;
+              c.clipPath = originalClipPath;
+              layerState.forEach(({ object, visible, excludeFromExport }: any) => object.set({ visible, excludeFromExport }));
+              c.renderAll();
+            }
+          } else {
           for (const view of activeProduct.views) {
             await loadViewObjects(view);
             const safeZone = safeZoneRef.current;
@@ -3626,6 +3690,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           } finally {
             bitmaps.forEach((bitmap) => bitmap.close());
           }
+          }
 
           printFiles.push({ name: 'LEEME-produccion.txt', data: new Blob([productionNotes.join('\n')], { type: 'text/plain;charset=utf-8' }) });
           const archive = await createStoredZip(printFiles);
@@ -3641,12 +3706,14 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           window.dispatchEvent(new CustomEvent('editor:export-error', { detail: { message: error instanceof Error ? error.message : 'No fue posible generar los archivos de impresión.' } }));
         } finally {
           try {
-            await loadViewObjects(getView(originalViewId));
-            currentViewIdRef.current = originalViewId;
-            setCurrentViewId(originalViewId);
-            historyRef.current = [snapshotCurrentObjects()];
-            redoStackRef.current = [];
-            updateHistoryButtons();
+            if (!wasPanorama) {
+              await loadViewObjects(getView(originalViewId));
+              currentViewIdRef.current = originalViewId;
+              setCurrentViewId(originalViewId);
+              historyRef.current = [snapshotCurrentObjects()];
+              redoStackRef.current = [];
+              updateHistoryButtons();
+            }
             c.requestRenderAll();
           } catch (restoreError) {
             console.error('No se pudo restaurar la vista activa después de exportar.', restoreError);
