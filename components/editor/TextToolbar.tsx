@@ -30,6 +30,7 @@ import {
   encodeDesignBackground,
   gradientPresetToBackground,
   GRADIENT_BACKGROUND_PRESETS,
+  SOLID_BACKGROUND_SWATCHES,
 } from './designBackground';
 import {
   AlignCenter,
@@ -71,6 +72,7 @@ interface ObjectStyle {
 
 export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama, allowPanorama = false, isUnrestrictedDesign = false, onToggleUnrestrictedDesign }: { isPanoramaActive?: boolean; onTogglePanorama?: () => void; allowPanorama?: boolean; isUnrestrictedDesign?: boolean; onToggleUnrestrictedDesign?: (enabled: boolean) => void }) {
   const [isVisible, setIsVisible] = useState(true);
+  const [showMoreBackgrounds, setShowMoreBackgrounds] = useState(false);
   const [isTextObject, setIsTextObject] = useState(false);
   const [isImageObject, setIsImageObject] = useState(false);
   const [isCropping, setIsCropping] = useState(false);
@@ -329,7 +331,7 @@ export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama
 
       <div className="flex items-center gap-1.5 border-l border-slate-200 pl-3">
         <span className="text-xs font-semibold text-slate-500">Fondo</span>
-        {['transparent', '#000000', '#ffffff', '#2d4a3e', '#1e3a8a', '#e11d48'].map((color) => (
+        {['transparent', ...SOLID_BACKGROUND_SWATCHES.slice(0, 6)].map((color) => (
           <button
             key={color}
             type="button"
@@ -357,6 +359,24 @@ export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama
             />
           );
         })}
+        <button type="button" aria-expanded={showMoreBackgrounds} onClick={() => setShowMoreBackgrounds((open) => !open)}
+          className="h-6 shrink-0 rounded-md border border-slate-200 px-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50">
+          {showMoreBackgrounds ? 'Menos' : 'Más'}
+        </button>
+        {showMoreBackgrounds && <>
+            {SOLID_BACKGROUND_SWATCHES.slice(6).map((color) => (
+              <button key={color} type="button" aria-label={`Fondo ${color}`} title={`Fondo ${color}`} onClick={() => changeBackground(color)}
+                className={`h-6 w-6 shrink-0 rounded-md border ${backgroundColor === color ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}
+                style={{ backgroundColor: color, borderColor: color === '#ffffff' ? '#cbd5e1' : 'transparent' }} />
+            ))}
+            {GRADIENT_BACKGROUND_PRESETS.slice(5).map((preset) => {
+              const spec = gradientPresetToBackground(preset);
+              const encoded = encodeDesignBackground(spec);
+              return <button key={preset.id} type="button" aria-label={`Fondo degradado ${preset.name}`} title={`Degradado ${preset.name}`}
+                onClick={() => changeBackground(encoded)} className={`h-6 w-6 shrink-0 rounded-md border ${backgroundColor === encoded ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}
+                style={{ background: designBackgroundToCss(spec) }} />;
+            })}
+        </>}
         <input type="color" aria-label="Elegir fondo personalizado" value={/^#[0-9a-f]{6}$/i.test(backgroundColor) ? backgroundColor : '#ffffff'} onChange={(event) => changeBackground(event.target.value)} className="h-6 w-6 cursor-pointer rounded-md border-0 p-0" />
       </div>
 

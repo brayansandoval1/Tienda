@@ -126,6 +126,21 @@ export const SOLID_BACKGROUND_SWATCHES = [
   '#1e3a8a',
   '#e11d48',
   '#7c2d12',
+  '#fff1f2', // rosa nube
+  '#ffe4e6',
+  '#fce7f3', // rosa pastel
+  '#f3e8ff', // lavanda
+  '#ede9fe',
+  '#e0f2fe', // azul cielo
+  '#dbeafe',
+  '#cffafe', // aqua
+  '#ccfbf1', // menta
+  '#dcfce7',
+  '#ecfccb', // lima suave
+  '#fef9c3', // mantequilla
+  '#fef3c7', // vainilla
+  '#ffedd5', // durazno
+  '#f5f5f4', // gris cálido
 ];
 
 export interface GradientBackgroundPreset {
@@ -152,6 +167,16 @@ export const GRADIENT_BACKGROUND_PRESETS: GradientBackgroundPreset[] = [
   { id: 'fresa', name: 'Fresa', angle: 180, colors: ['#ff9a9e', '#fecfef'] },
   { id: 'medianoche', name: 'Medianoche', angle: 180, colors: ['#30cfd0', '#330867'] },
   { id: 'foco', name: 'Foco', angle: 0, radial: true, colors: ['#fdfbff', '#d8b4fe'] },
+  { id: 'rosa-suave', name: 'Rosa suave', angle: 135, colors: ['#fff1f2', '#fbcfe8', '#e9d5ff'] },
+  { id: 'cielo-pastel', name: 'Cielo pastel', angle: 135, colors: ['#e0f2fe', '#bae6fd', '#e0e7ff'] },
+  { id: 'menta-crema', name: 'Menta y crema', angle: 180, colors: ['#d1fae5', '#ecfccb', '#fef9c3'] },
+  { id: 'durazno-crema', name: 'Durazno', angle: 135, colors: ['#ffedd5', '#fecaca', '#fce7f3'] },
+  { id: 'lila-nube', name: 'Lila nube', angle: 180, colors: ['#ede9fe', '#e9d5ff', '#f5d0fe'] },
+  { id: 'aqua-perla', name: 'Aqua perla', angle: 135, colors: ['#cffafe', '#ccfbf1', '#dbeafe'] },
+  { id: 'amanecer', name: 'Amanecer', angle: 180, colors: ['#fef3c7', '#fed7aa', '#fda4af'] },
+  { id: 'aurora', name: 'Aurora', angle: 135, colors: ['#bbf7d0', '#a5f3fc', '#c4b5fd'] },
+  { id: 'halo-rosa', name: 'Halo rosa', angle: 0, radial: true, colors: ['#fff7ed', '#fbcfe8', '#c4b5fd'] },
+  { id: 'halo-cielo', name: 'Halo cielo', angle: 0, radial: true, colors: ['#ffffff', '#bae6fd', '#c7d2fe'] },
 ];
 
 export const gradientPresetToBackground = (
@@ -168,4 +193,3 @@ export const GRADIENT_DIRECTIONS = [
   { label: '↘ Diagonal', angle: 135 },
   { label: '↗ Diagonal', angle: 45 },
 ] as const;
-

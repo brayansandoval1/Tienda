@@ -5802,7 +5802,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
                     Sólidos
                   </span>
                   <div className="grid grid-cols-7 gap-1.5">
-                  {SOLID_BACKGROUND_SWATCHES.map((hex) => (
+                  {SOLID_BACKGROUND_SWATCHES.slice(0, 7).map((hex) => (
                     <button
                       key={hex}
                       type="button"
@@ -5822,6 +5822,27 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
                     title="Elegir color personalizado"
                   />
                   </div>
+                  <details className="rounded-lg border border-gray-100 px-2 py-1.5">
+                    <summary className="cursor-pointer text-[10px] font-semibold text-gray-500">Más colores y degradados</summary>
+                    <div className="mt-2 space-y-2">
+                      <div className="grid grid-cols-7 gap-1.5">
+                        {SOLID_BACKGROUND_SWATCHES.slice(7).map((hex) => (
+                          <button key={hex} type="button" onClick={() => handleDesignBgColorChangeRef.current?.(hex)}
+                            className={`h-6 w-full rounded-md border shadow-sm transition-all ${designBackgroundColor.toLowerCase() === hex ? 'ring-2 ring-blue-600' : ''}`}
+                            style={{ backgroundColor: hex, borderColor: hex === '#ffffff' ? '#cbd5e1' : 'transparent' }} title={`Fondo ${hex}`} />
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-5 gap-1.5">
+                        {GRADIENT_BACKGROUND_PRESETS.slice(5).map((preset) => {
+                          const spec = gradientPresetToBackground(preset);
+                          const encoded = encodeDesignBackground(spec);
+                          return <button key={preset.id} type="button" onClick={() => handleDesignBgColorChangeRef.current?.(encoded)}
+                            className={`h-6 w-full rounded-md border shadow-sm ${designBackgroundColor === encoded ? 'ring-2 ring-blue-600' : ''}`}
+                            style={{ background: designBackgroundToCss(spec) }} title={`Degradado ${preset.name}`} aria-label={`Fondo degradado ${preset.name}`} />;
+                        })}
+                      </div>
+                    </div>
+                  </details>
                   {/*
                     Degradados "aesthetic": tiñen el fondo COMPLETO del mockup
                     (no sólo la zona segura) igual que los sólidos. Un clic los
@@ -5831,7 +5852,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
                     Degradados
                   </span>
                   <div className="grid grid-cols-5 gap-1.5">
-                    {GRADIENT_BACKGROUND_PRESETS.map((preset) => {
+                    {GRADIENT_BACKGROUND_PRESETS.slice(0, 5).map((preset) => {
                       const spec = gradientPresetToBackground(preset);
                       const encoded = encodeDesignBackground(spec);
                       const isSelected = designBackgroundColor === encoded;
