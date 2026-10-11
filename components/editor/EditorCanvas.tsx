@@ -15,6 +15,7 @@ import { loadGoogleFonts } from '@/lib/googleFonts';
 import { libraryFontWeights } from '@/lib/googleFontLibrary';
 import { TYPOGRAPHY_PRESETS, presetFontRequests } from '@/components/editor/typographyPresets';
 import { restackGroup } from '@/components/editor/groupStacking';
+import { createStoredZip } from '@/src/utils/zipStore';
 import {
   decodeDesignBackground,
   designBackgroundToCss,
@@ -190,6 +191,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   const isHydratingDraftRef = useRef(true);
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [isExporting, setIsExporting] = useState(false);
+  const exportInProgressRef = useRef(false);
   const switchViewRef = useRef<(viewId: string) => void>(null);
   const handleColorChangeRef = useRef<((variant: ColorVariant) => void) | null>(null);
   const handleDesignBgColorChangeRef = useRef<((color: string) => void) | null>(null);
@@ -927,7 +929,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           top: area.y * zoom + vpt[5],
           width: area.width * zoom,
           height: area.height * zoom,
-          multiplier: Math.max(0.5, Math.min(6, pxPerLogical / zoom)),
+          multiplier: Math.max(0.5, Math.min(32, pxPerLogical / zoom)),
         };
       };
 
@@ -3528,56 +3530,131 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // Exporta sólo el arte del usuario, recortado al área imprimible de la
       // cara actual. El canvas vuelve exactamente a su estado visual previo
       // incluso si la generación del PNG falla.
-      const exportToPrint = () => {
+      const exportToPrint = async () => {
         const c = fabricCanvasRef.current;
-        if (!c || !activeView) return;
-
-        // La guía es la fuente visual de verdad: tomar sus coordenadas evita
-        // diferencias entre la zona segura visible, el mockup y el zoom.
-        const safeZone = safeZoneRef.current;
-        const printArea = safeZone
-          ? {
-              x: safeZone.left ?? 0,
-              y: safeZone.top ?? 0,
-              width: safeZone.getScaledWidth?.() ?? safeZone.width ?? 0,
-              height: safeZone.getScaledHeight?.() ?? safeZone.height ?? 0,
-            }
-          : getRenderedPrintArea(activeView);
-        if (printArea.width <= 0 || printArea.height <= 0) return;
-
-        const guides = c.getObjects().filter((object: any) => object.isGuideLine);
-        const guideVisibility = guides.map((guide: any) => guide.visible);
-        const originalBackground = c.backgroundImage;
-        const originalBackgroundColor = c.backgroundColor;
-        const originalClipPath = c.clipPath;
-
+        if (!c || !activeProduct.views.length || exportInProgressRef.current) return;
+        exportInProgressRef.current = true;
+        const originalViewId = currentViewIdRef.current;
+        canvasDataRef.current[originalViewId] = snapshotCurrentObjects();
+        const printFiles: Array<{ name: string; data: Blob }> = [];
+        const panoramaPngs: Blob[] = [];
+        const productionNotes = ['Archivos PNG listos para impresión.', 'Cada vista se exporta recortada a su área imprimible.'];
+        setIsExporting(true);
+        window.dispatchEvent(new CustomEvent('editor:export-started'));
         try {
-          // La guía, el mockup y el color de fondo son sólo ayudas visuales;
-          // la imprenta recibe un PNG transparente con el diseño plano.
-          guides.forEach((guide: any) => guide.set('visible', false));
-          c.backgroundImage = null;
-          c.backgroundColor = '';
-          c.clipPath = undefined;
-          c.getObjects().forEach((object: any) => object.setCoords());
-          c.renderAll();
+          for (const view of activeProduct.views) {
+            await loadViewObjects(view);
+            const safeZone = safeZoneRef.current;
+            const printArea = safeZone
+              ? { x: safeZone.left ?? 0, y: safeZone.top ?? 0, width: safeZone.getScaledWidth?.() ?? safeZone.width ?? 0, height: safeZone.getScaledHeight?.() ?? safeZone.height ?? 0 }
+              : getRenderedPrintArea(view);
+            if (printArea.width <= 0 || printArea.height <= 0) throw new Error(`La vista ${view.name || view.id} no tiene un área de impresión válida.`);
 
-          // Recorte en el espacio de pantalla que espera Fabric 5: así el PNG
-          // de imprenta coincide exactamente con la zona segura visible,
-          // independientemente del fitZoom del contenedor (3 px por unidad
-          // lógica como antes, pero ya sin el desfase 1/zoom).
-          const highResDataUrl = c.toDataURL(buildCropExportOptions(c, printArea, 3));
+            const systemLayers = c.getObjects().filter((object: any) =>
+              object.isMockup || object.isGuide || object.isGuideLine || object.isCropOverlay || object.isDesignBackground,
+            );
+            const layerState = systemLayers.map((object: any) => ({ object, visible: object.visible, excludeFromExport: object.excludeFromExport }));
+            const originalBackground = c.backgroundImage;
+            const originalBackgroundColor = c.backgroundColor;
+            const originalClipPath = c.clipPath;
+            try {
+              systemLayers.forEach((object: any) => {
+                if (!object.isDesignBackground) object.set({ visible: false, excludeFromExport: true });
+              });
+              c.backgroundImage = null;
+              c.backgroundColor = '';
+              c.clipPath = undefined;
+              c.getObjects().forEach((object: any) => object.setCoords());
+              c.renderAll();
 
+              const widthCm = activeProduct.printWidthCm ?? 20;
+              const heightCm = activeProduct.printHeightCm ?? 20;
+              const requestedPixelsPerLogical = Math.max(1,
+                Math.ceil(((widthCm / 2.54) * 300) / printArea.width),
+                Math.ceil(((heightCm / 2.54) * 300) / printArea.height));
+              const pixelsPerLogical = Math.min(requestedPixelsPerLogical, 8192 / Math.max(printArea.width, printArea.height));
+              const exportOptions = buildCropExportOptions(c, printArea, pixelsPerLogical);
+              const exportCanvas = c.toCanvasElement(exportOptions.multiplier, exportOptions) as HTMLCanvasElement;
+              const outputWidth = exportCanvas.width;
+              const outputHeight = exportCanvas.height;
+              const png = await new Promise<Blob>((resolve, reject) => {
+                exportCanvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('No se pudo codificar el PNG.')), 'image/png');
+              });
+              exportCanvas.width = 0;
+              exportCanvas.height = 0;
+              const safeName = (view.name || view.label || view.id).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-|-$/g, '') || 'vista';
+              printFiles.push({ name: `impresion-${safeName}-${view.id}.png`, data: png });
+              panoramaPngs.push(png);
+              const dpiX = Math.round(outputWidth / (widthCm / 2.54));
+              const dpiY = Math.round(outputHeight / (heightCm / 2.54));
+              productionNotes.push(`${view.name || view.id}: ${outputWidth} x ${outputHeight} px; tamaño previsto ${widthCm} x ${heightCm} cm; resolución aprox. ${dpiX} x ${dpiY} DPI.`);
+            } finally {
+              c.backgroundImage = originalBackground;
+              c.backgroundColor = originalBackgroundColor;
+              c.clipPath = originalClipPath;
+              layerState.forEach(({ object, visible, excludeFromExport }: any) => object.set({ visible, excludeFromExport }));
+              c.renderAll();
+            }
+          }
+
+          // Une las áreas imprimibles de las vistas en una sola tira PNG,
+          // conservando la proporción de cada cara y un fondo transparente.
+          const bitmaps = await Promise.all(panoramaPngs.map((png) => createImageBitmap(png)));
+          try {
+            const sourceWidth = bitmaps.reduce((sum, bitmap) => sum + bitmap.width, 0);
+            const sourceHeight = Math.max(...bitmaps.map((bitmap) => bitmap.height));
+            const scale = Math.min(1, 30000 / sourceWidth, 8192 / sourceHeight, Math.sqrt(32_000_000 / (sourceWidth * sourceHeight)));
+            const composite = document.createElement('canvas');
+            composite.width = Math.max(1, Math.floor(sourceWidth * scale));
+            composite.height = Math.max(1, Math.floor(sourceHeight * scale));
+            const context = composite.getContext('2d');
+            if (!context) throw new Error('No se pudo crear el lienzo para la imagen panorámica.');
+            let left = 0;
+            bitmaps.forEach((bitmap) => {
+              const width = bitmap.width * scale;
+              const height = bitmap.height * scale;
+              context.drawImage(bitmap, left, (composite.height - height) / 2, width, height);
+              left += width;
+            });
+            const panoramaPng = await new Promise<Blob>((resolve, reject) => {
+              composite.toBlob((blob) => blob ? resolve(blob) : reject(new Error('No se pudo generar el PNG de todas las vistas.')), 'image/png');
+            });
+            printFiles.push({ name: 'diseno-sin-limites-todas-las-vistas.png', data: panoramaPng });
+            productionNotes.push(`Imagen panorámica conjunta: ${composite.width} x ${composite.height} px, vistas en el mismo orden que el producto.`);
+            composite.width = 0;
+            composite.height = 0;
+          } finally {
+            bitmaps.forEach((bitmap) => bitmap.close());
+          }
+
+          printFiles.push({ name: 'LEEME-produccion.txt', data: new Blob([productionNotes.join('\n')], { type: 'text/plain;charset=utf-8' }) });
+          const archive = await createStoredZip(printFiles);
           const link = document.createElement('a');
-          link.download = `diseno-impresion-${activeView.id}.png`;
-          link.href = highResDataUrl;
+          const productName = activeProduct.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-|-$/g, '') || 'producto';
+          link.download = `archivos-imprenta-${productName}.zip`;
+          link.href = URL.createObjectURL(archive);
           link.click();
+          window.setTimeout(() => URL.revokeObjectURL(link.href), 60_000);
+          window.dispatchEvent(new CustomEvent('editor:export-completed', { detail: { viewCount: activeProduct.views.length } }));
+        } catch (error) {
+          console.error('No se pudieron exportar los archivos para imprenta.', error);
+          window.dispatchEvent(new CustomEvent('editor:export-error', { detail: { message: error instanceof Error ? error.message : 'No fue posible generar los archivos de impresión.' } }));
         } finally {
-          c.backgroundImage = originalBackground;
-          c.backgroundColor = originalBackgroundColor;
-          c.clipPath = originalClipPath;
-          guides.forEach((guide: any, index: number) => guide.set('visible', guideVisibility[index]));
-          c.renderAll();
-          c.requestRenderAll();
+          try {
+            await loadViewObjects(getView(originalViewId));
+            currentViewIdRef.current = originalViewId;
+            setCurrentViewId(originalViewId);
+            historyRef.current = [snapshotCurrentObjects()];
+            redoStackRef.current = [];
+            updateHistoryButtons();
+            c.requestRenderAll();
+          } catch (restoreError) {
+            console.error('No se pudo restaurar la vista activa después de exportar.', restoreError);
+            window.dispatchEvent(new CustomEvent('editor:export-error', { detail: { message: 'Los archivos se procesaron, pero no se pudo restaurar la vista del editor.' } }));
+          } finally {
+            exportInProgressRef.current = false;
+            setIsExporting(false);
+          }
         }
       };
 

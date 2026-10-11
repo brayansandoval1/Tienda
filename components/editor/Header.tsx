@@ -9,6 +9,8 @@ export type EditorStep = 'design' | 'options' | 'review';
 export default function Header({ activeStep, onStepChange, canContinue = true }: { activeStep: EditorStep; onStepChange: (step: EditorStep) => void; canContinue?: boolean }) {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveMessage, setSaveMessage] = useState('');
+  const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'done' | 'error'>('idle');
+  const [downloadMessage, setDownloadMessage] = useState('');
 
   useEffect(() => {
     const handleSaveResult = (event: Event) => {
@@ -23,7 +25,29 @@ export default function Header({ activeStep, onStepChange, canContinue = true }:
     };
 
     window.addEventListener('editor:save-result', handleSaveResult);
-    return () => window.removeEventListener('editor:save-result', handleSaveResult);
+    const handleExportStarted = () => {
+      setDownloadState('downloading');
+      setDownloadMessage('Preparando PNG de alta resolución por vista y una imagen panorámica…');
+    };
+    const handleExportCompleted = (event: Event) => {
+      const count = (event as CustomEvent<{ viewCount?: number }>).detail?.viewCount ?? 1;
+      setDownloadState('done');
+      setDownloadMessage(`Descarga lista: ${count} ${count === 1 ? 'vista individual' : 'vistas individuales'} y un PNG panorámico en un archivo ZIP.`);
+    };
+    const handleExportError = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: string }>).detail?.message;
+      setDownloadState('error');
+      setDownloadMessage(message || 'No se pudieron preparar los archivos de imprenta.');
+    };
+    window.addEventListener('editor:export-started', handleExportStarted);
+    window.addEventListener('editor:export-completed', handleExportCompleted);
+    window.addEventListener('editor:export-error', handleExportError);
+    return () => {
+      window.removeEventListener('editor:save-result', handleSaveResult);
+      window.removeEventListener('editor:export-started', handleExportStarted);
+      window.removeEventListener('editor:export-completed', handleExportCompleted);
+      window.removeEventListener('editor:export-error', handleExportError);
+    };
   }, []);
 
   const handleSave = () => {
@@ -68,11 +92,16 @@ export default function Header({ activeStep, onStepChange, canContinue = true }:
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => window.dispatchEvent(new CustomEvent('editor:export-print'))}
-            className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+            disabled={downloadState === 'downloading'}
+            onClick={() => {
+              setDownloadState('downloading');
+              setDownloadMessage('Preparando archivos de alta resolución…');
+              window.dispatchEvent(new CustomEvent('editor:export-print'));
+            }}
+            className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-wait disabled:opacity-60"
           >
             <Download size={16} />
-            📥 Descargar para Imprenta (HD)
+            {downloadState === 'downloading' ? 'Preparando archivos…' : '📥 Descargar para Imprenta (HD)'}
           </button>
           <button type="button" disabled={nextStep === 'review' && !canContinue} onClick={() => onStepChange(nextStep)} title={nextStep === 'review' && !canContinue ? 'Completa la cantidad mínima para continuar' : undefined} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40">
             Siguiente: {stepLabel}
@@ -80,6 +109,7 @@ export default function Header({ activeStep, onStepChange, canContinue = true }:
           </button>
         </div>
       </div>
+      {downloadMessage && <p role={downloadState === 'error' ? 'alert' : 'status'} className={`mt-2 text-xs ${downloadState === 'error' ? 'text-red-600' : 'text-slate-500'}`}>{downloadMessage}</p>}
       {saveMessage && (
         <p
           role={saveState === 'error' ? 'alert' : 'status'}
