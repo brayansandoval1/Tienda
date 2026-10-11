@@ -117,7 +117,9 @@ export default function SmartInputPanel() {
       setActiveIds(activeIdSet(canvas));
     };
 
-    const events = ['object:added', 'object:removed', 'object:modified', 'selection:created', 'selection:updated', 'selection:cleared'];
+    // IText emite text:changed mientras se edita directamente en el lienzo.
+    // Escucharlo mantiene el campo de Edición rápida sincronizado carácter a carácter.
+    const events = ['object:added', 'object:removed', 'object:modified', 'text:changed', 'selection:created', 'selection:updated', 'selection:cleared'];
     events.forEach((event) => canvas.on(event, refresh));
     refresh();
     return () => events.forEach((event) => canvas.off(event, refresh));
@@ -228,7 +230,7 @@ export default function SmartInputPanel() {
               </label>
 
               {item.kind === 'text' ? (
-                item.object.type === 'textbox' ? (
+                ['textbox', 'i-text'].includes(item.object.type) ? (
                   <textarea
                     value={item.value}
                     rows={2}

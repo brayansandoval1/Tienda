@@ -33,6 +33,7 @@ import {
 } from './designBackground';
 import {
   AlignCenter,
+  AlignJustify,
   AlignCenterHorizontal,
   AlignCenterVertical,
   AlignLeft,
@@ -65,6 +66,7 @@ interface ObjectStyle {
   fontStyle?: string;
   underline?: boolean;
   linethrough?: boolean;
+  textAlign?: string;
 }
 
 export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama, allowPanorama = false, isUnrestrictedDesign = false, onToggleUnrestrictedDesign }: { isPanoramaActive?: boolean; onTogglePanorama?: () => void; allowPanorama?: boolean; isUnrestrictedDesign?: boolean; onToggleUnrestrictedDesign?: (enabled: boolean) => void }) {
@@ -117,6 +119,7 @@ export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama
       // y EditorCanvas los aplica a cada línea del grupo.
       const isText =
         selectedObject.type === 'i-text' ||
+        selectedObject.type === 'textbox' ||
         selectedObject.type === 'text' ||
         Boolean(selectedObject.containsText);
       const isImage = selectedObject.type === 'image';
@@ -133,6 +136,7 @@ export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama
         fontStyle: selectedObject.fontStyle ?? 'normal',
         underline: Boolean(selectedObject.underline),
         linethrough: Boolean(selectedObject.linethrough),
+        textAlign: selectedObject.textAlign ?? 'left',
         isText: isText,
         isImage: isImage,
       });
@@ -249,6 +253,20 @@ export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama
       </div>
       {isTextObject ? (
         <>
+          <div className="flex shrink-0 items-center gap-0.5 border-r border-slate-200 pr-2" role="group" aria-label="Alineación del texto">
+            {[
+              { value: 'left', icon: AlignLeft, title: 'Alinear texto a la izquierda' },
+              { value: 'center', icon: AlignCenterHorizontal, title: 'Centrar texto en la caja' },
+              { value: 'right', icon: AlignRight, title: 'Alinear texto a la derecha' },
+              { value: 'justify', icon: AlignJustify, title: 'Justificar texto' },
+            ].map(({ value, icon: Icon, title }) => (
+              <button key={value} type="button" title={title} aria-label={title} aria-pressed={style.textAlign === value}
+                onClick={() => changeTextFormat('textAlign', value)}
+                className={`inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 ${style.textAlign === value ? 'bg-slate-200' : ''}`}>
+                <Icon size={17} />
+              </button>
+            ))}
+          </div>
           <div className="flex shrink-0 items-center gap-1 border-r border-slate-200 pr-3">
             <button type="button" title="Negrita" aria-label="Negrita" aria-pressed={style.fontWeight === 'bold' || Number(style.fontWeight) >= 600} onClick={() => changeTextFormat('fontWeight', style.fontWeight === 'bold' || Number(style.fontWeight) >= 600 ? 'normal' : 'bold')} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 ${style.fontWeight === 'bold' || Number(style.fontWeight) >= 600 ? 'bg-slate-200' : ''}`}><Bold size={17} /></button>
             <button type="button" title="Cursiva" aria-label="Cursiva" aria-pressed={style.fontStyle === 'italic'} onClick={() => changeTextFormat('fontStyle', style.fontStyle === 'italic' ? 'normal' : 'italic')} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 ${style.fontStyle === 'italic' ? 'bg-slate-200' : ''}`}><Italic size={17} /></button>

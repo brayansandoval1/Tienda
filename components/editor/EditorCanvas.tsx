@@ -752,10 +752,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // formato se apliquen a los combos igual que a un texto normal.
       const textTargetsOf = (object: any): any[] => {
         if (!object) return [];
-        if (object.type === 'i-text' || object.type === 'text') return [object];
+        if (object.type === 'i-text' || object.type === 'textbox' || object.type === 'text') return [object];
         if (object.type === 'group') {
           return (object.getObjects?.() ?? []).filter(
-            (child: any) => child?.type === 'i-text' || child?.type === 'text',
+            (child: any) => child?.type === 'i-text' || child?.type === 'textbox' || child?.type === 'text',
           );
         }
         return [];
@@ -3825,43 +3825,31 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             }
           : getRenderedPrintArea(activeView);
 
-        // Forzar que el objeto conserve los permisos de arrastre del ratón
-        obj.set({
-          selectable: true,
-          evented: true,
-          lockMovementX: false,
-          lockMovementY: false,
-          lockRotation: false,
-          lockScalingX: false,
-          lockScalingY: false,
-        });
-
-        // `true` calcula en coordenadas lógicas de Fabric y no en píxeles de
-        // pantalla; con zoom manual el resultado sin este flag se desfasaba.
+        // Alinear usando el bounding box transformado. En textos, el punto
+        // `left/top` depende del origen (y puede estar rotado o escalado), por
+        // eso asignarlo directamente al borde de la zona produce desfases.
         const objBounds = obj.getBoundingRect(true);
-        const objWidth = objBounds.width;
-        const objHeight = objBounds.height;
-        const originOffsetX = obj.left - objBounds.left;
-        const originOffsetY = obj.top - objBounds.top;
-
-        const centerX = printArea.x + printArea.width / 2;
-        const centerY = printArea.y + printArea.height / 2;
-
+        let targetLeft = objBounds.left;
+        let targetTop = objBounds.top;
         if (alignment === 'center-h' || alignment === 'center-both') {
-          obj.set('left', centerX - objWidth / 2 + originOffsetX);
+          targetLeft = printArea.x + (printArea.width - objBounds.width) / 2;
+        } else if (alignment === 'left') {
+          targetLeft = printArea.x;
+        } else if (alignment === 'right') {
+          targetLeft = printArea.x + printArea.width - objBounds.width;
         }
         if (alignment === 'center-v' || alignment === 'center-both') {
-          obj.set('top', centerY - objHeight / 2 + originOffsetY);
-        }
-        if (alignment === 'left') {
-          obj.set('left', printArea.x);
-        } else if (alignment === 'right') {
-          obj.set('left', printArea.x + printArea.width - objWidth + originOffsetX);
+          targetTop = printArea.y + (printArea.height - objBounds.height) / 2;
         } else if (alignment === 'top') {
-          obj.set('top', printArea.y);
+          targetTop = printArea.y;
         } else if (alignment === 'bottom') {
-          obj.set('top', printArea.y + printArea.height - objHeight + originOffsetY);
+          targetTop = printArea.y + printArea.height - objBounds.height;
         }
+
+        obj.set({
+          left: obj.left + targetLeft - objBounds.left,
+          top: obj.top + targetTop - objBounds.top,
+        });
 
         obj.setCoords();
         canvas.setActiveObject(obj);
@@ -4048,7 +4036,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             }
           } else if (detail.property) {
             const formatting = { [detail.property]: detail.value };
-            if (target.isEditing && typeof target.setSelectionStyles === 'function') {
+            // textAlign es una propiedad del cuadro de texto, no un estilo de
+            // caracteres. Pasarlo a setSelectionStyles en Fabric puede dejar
+            // el array interno de estilos inválido durante la edición.
+            if (detail.property !== 'textAlign' && target.isEditing && typeof target.setSelectionStyles === 'function') {
               target.setSelectionStyles(formatting);
             } else {
               target.set(formatting);
@@ -4334,9 +4325,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const { text, fontSize, fontWeight, fontFamily } = customEvent.detail || {};
         // Estas dimensiones son las coordenadas lógicas reales del mockup.
         // Fabric aplica el multiplicador HDPI solamente a su buffer interno.
-        const newText = makeObjectInteractive(new fabric.IText(text || 'Texto', {
+        const newText = makeObjectInteractive(new fabric.Textbox(text || 'Texto', {
           originX: 'center',
           originY: 'center',
+          width: 320,
           fontSize: fontSize || 24,
           fontWeight: fontWeight || 'normal',
           fill: '#1e293b',
@@ -4353,7 +4345,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           fabricCanvasRef.current.add(newText);
           // Centrar SIEMPRE en el punto medio visible del área de trabajo
           // (nunca en coordenadas fijas de esquina).
-          if (panoramaModeRef.current) { const center = getCurrentPanoramaCenter(); const mapped = mapPointToCurrentPanorama(ADMIN_BASE_SIZE / 2, ADMIN_BASE_SIZE / 2); newText.set({ left: center.x, top: center.y, fontSize: (fontSize || 24) * mapped.scale }); }
+          if (panoramaModeRef.current) { const center = getCurrentPanoramaCenter(); const mapped = mapPointToCurrentPanorama(ADMIN_BASE_SIZE / 2, ADMIN_BASE_SIZE / 2); newText.set({ left: center.x, top: center.y, width: 320 * mapped.scale, fontSize: (fontSize || 24) * mapped.scale }); }
           else fabricCanvasRef.current.centerObject(newText);
           newText.setCoords();
           fabricCanvasRef.current.setActiveObject(newText);
