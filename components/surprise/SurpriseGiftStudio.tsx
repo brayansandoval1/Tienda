@@ -8,95 +8,16 @@ import CartDrawer from '@/components/editor/CartDrawer';
 import { useProductStore } from '@/src/store/useProductStore';
 import type { Product } from '@/src/config/products';
 import { getDraft } from '@/src/utils/designDraftStorage';
-
-const occasions = [
-  { id: 'cumpleanos', name: 'Cumpleaños', emoji: '🎂' },
-  { id: 'boda', name: 'Boda', emoji: '💍' },
-  { id: 'aniversario', name: 'Aniversario', emoji: '💝' },
-  { id: 'sorpresa', name: 'Solo porque sí', emoji: '✨' },
-];
-
-const giftItems = [
-  { id: 'peluche', name: 'Oso de peluche', detail: 'Suave y abrazable', emoji: '🧸', price: 320 },
-  { id: 'producto-personalizado', name: 'Producto personalizado', detail: 'Elige entre tus diseños guardados', emoji: '🎨', price: 0 },
-  { id: 'fotos', name: 'Fotos favoritas', detail: 'Set de 6 impresiones', emoji: '📸', price: 90 },
-  { id: 'dulces', name: 'Dulces y chocolates', detail: 'Un toque delicioso', emoji: '🍫', price: 140 },
-  { id: 'carta', name: 'Carta especial', detail: 'Escrita para esa persona', emoji: '💌', price: 60 },
-  { id: 'flores', name: 'Flores preservadas', detail: 'Un detalle que perdura', emoji: '🌷', price: 230 },
-];
-
-const boxStyles = [
-  { id: 'rosa', name: 'Rosa pastel', color: '#f5b8cf', ribbon: '#c64e83' },
-  { id: 'lavanda', name: 'Lavanda', color: '#c9b9ee', ribbon: '#7657b8' },
-  { id: 'crema', name: 'Crema', color: '#ead9ba', ribbon: '#a47a46' },
-  { id: 'menta', name: 'Menta', color: '#b4ddd0', ribbon: '#4e9b83' },
-];
-
-const itemVolumes: Record<string, number> = { peluche: 34, 'producto-personalizado': 23, fotos: 8, dulces: 20, carta: 4, flores: 25 };
-const catalogOptions: Record<string, Record<string, Array<{ id: string; name: string; detail: string; emoji: string; price: number; volume: number }>>> = {
-  cumpleanos: {
-    peluche: [
-      { id: 'oso-cumple-clasico', name: 'Oso abrazable', detail: 'Peluche suave con moño', emoji: '🧸', price: 320, volume: 34 },
-      { id: 'oso-cumple-fiesta', name: 'Oso cumpleañero', detail: 'Con gorrito de fiesta', emoji: '🐻', price: 390, volume: 38 },
-      { id: 'oso-cumple-mini', name: 'Osito mini', detail: 'Pequeño y adorable', emoji: '🐻‍❄️', price: 220, volume: 22 },
-    ],
-    dulces: [
-      { id: 'dulces-cumple-caja', name: 'Caja de chocolates', detail: 'Selección para celebrar', emoji: '🍫', price: 140, volume: 20 },
-      { id: 'dulces-cumple-color', name: 'Dulces de colores', detail: 'Mezcla alegre para compartir', emoji: '🍬', price: 110, volume: 18 },
-      { id: 'dulces-cumple-premium', name: 'Trufas premium', detail: 'Presentación especial', emoji: '🍬', price: 210, volume: 17 },
-    ],
-    flores: [
-      { id: 'flores-cumple-rosa', name: 'Ramo de rosas', detail: 'Tonos suaves de cumpleaños', emoji: '🌹', price: 230, volume: 25 },
-      { id: 'flores-cumple-mixto', name: 'Mini ramo mixto', detail: 'Flores de temporada', emoji: '💐', price: 190, volume: 23 },
-    ],
-  },
-  boda: {
-    peluche: [
-      { id: 'oso-boda-pareja', name: 'Ositos de pareja', detail: 'Dos peluches con detalle nupcial', emoji: '🧸', price: 450, volume: 40 },
-      { id: 'oso-boda-blanco', name: 'Oso blanco', detail: 'Con moño elegante', emoji: '🐻‍❄️', price: 360, volume: 34 },
-    ],
-    dulces: [
-      { id: 'dulces-boda-trufas', name: 'Trufas para brindar', detail: 'Caja de chocolates finos', emoji: '🍫', price: 220, volume: 20 },
-      { id: 'dulces-boda-corazon', name: 'Chocolates corazón', detail: 'Selección romántica', emoji: '💝', price: 180, volume: 18 },
-    ],
-    flores: [
-      { id: 'flores-boda-blancas', name: 'Ramo blanco', detail: 'Arreglo en tonos marfil', emoji: '💐', price: 320, volume: 28 },
-      { id: 'flores-boda-rosas', name: 'Rosas románticas', detail: 'Rosas con follaje delicado', emoji: '🌹', price: 280, volume: 25 },
-    ],
-  },
-  aniversario: {
-    peluche: [
-      { id: 'oso-aniversario-corazon', name: 'Oso con corazón', detail: 'Un detalle para compartir', emoji: '🧸', price: 350, volume: 35 },
-      { id: 'oso-aniversario-mini', name: 'Osito de bolsillo', detail: 'Suave y compacto', emoji: '🐻', price: 240, volume: 24 },
-    ],
-    dulces: [
-      { id: 'dulces-aniversario-premium', name: 'Bombones de chocolate', detail: 'Caja para una ocasión especial', emoji: '🍫', price: 190, volume: 19 },
-      { id: 'dulces-aniversario-fresas', name: 'Fresas cubiertas', detail: 'Chocolate y toque romántico', emoji: '🍓', price: 260, volume: 22 },
-    ],
-    flores: [
-      { id: 'flores-aniversario-rosas', name: 'Rosas rojas', detail: 'Clásicas y románticas', emoji: '🌹', price: 290, volume: 26 },
-      { id: 'flores-aniversario-mix', name: 'Ramo de temporada', detail: 'Colores cálidos y delicados', emoji: '💐', price: 250, volume: 25 },
-    ],
-  },
-  sorpresa: {
-    peluche: [
-      { id: 'oso-sorpresa-clasico', name: 'Oso clásico', detail: 'Un abrazo inesperado', emoji: '🧸', price: 320, volume: 34 },
-      { id: 'oso-sorpresa-mini', name: 'Osito mini', detail: 'Pequeño detalle sorpresa', emoji: '🐻', price: 220, volume: 22 },
-    ],
-    dulces: [
-      { id: 'dulces-sorpresa-mix', name: 'Mix de dulces', detail: 'Una selección para alegrar el día', emoji: '🍬', price: 130, volume: 20 },
-      { id: 'dulces-sorpresa-choco', name: 'Chocolates favoritos', detail: 'Un clásico para compartir', emoji: '🍫', price: 160, volume: 19 },
-    ],
-    flores: [
-      { id: 'flores-sorpresa-mix', name: 'Flores de temporada', detail: 'Un ramo espontáneo', emoji: '💐', price: 230, volume: 24 },
-      { id: 'flores-sorpresa-tulipan', name: 'Tulipanes', detail: 'Color y frescura', emoji: '🌷', price: 260, volume: 24 },
-    ],
-  },
-};
-const catalogItemIds = ['peluche', 'dulces', 'flores'];
+import { DEFAULT_SURPRISE_GIFT_CONFIG } from '@/src/config/surpriseGiftConfig';
+import { surpriseGiftConfigRepository } from '@/src/services/surpriseGiftConfigRepository';
+import SurpriseGiftIcon from '@/components/surprise/SurpriseGiftIcon';
 type PhotoSlot = { src: string; zoom: number; x: number } | null;
 
 export default function SurpriseGiftStudio() {
+  const [config, setConfig] = useState(DEFAULT_SURPRISE_GIFT_CONFIG);
+  const { occasions, giftItems, boxStyles, itemVolumes, catalogOptions, catalogItemIds } = config;
+  const { genders, ages, styles } = config.recipientOptions;
+  const { pricing } = config;
   const [occasion, setOccasion] = useState('cumpleanos');
   const [customOccasionName, setCustomOccasionName] = useState('');
   const [recipientGender, setRecipientGender] = useState('sin-especificar');
@@ -134,50 +55,45 @@ export default function SurpriseGiftStudio() {
 
   const activeOccasion = occasion === 'otra'
     ? { id: 'otra', name: customOccasionName.trim() || 'Otra ocasión', emoji: '✨' }
-    : occasions.find((item) => item.id === occasion) ?? occasions[0];
-  const activeBox = boxStyles.find((item) => item.id === boxStyleId) ?? boxStyles[0];
+    : occasions.find((item) => item.id === occasion) ?? occasions[0] ?? DEFAULT_SURPRISE_GIFT_CONFIG.occasions[0];
+  const activeBox = boxStyles.find((item) => item.id === boxStyleId) ?? boxStyles[0] ?? DEFAULT_SURPRISE_GIFT_CONFIG.boxStyles[0];
   const chosenItems = giftItems.filter((item) => selectedItems.includes(item.id));
-  const getCatalogChoice = (categoryId: string, choiceId = selectedCatalogChoices[categoryId]) => Object.values(catalogOptions).flatMap((occasionOptions) => occasionOptions[categoryId] ?? []).find((option) => option.id === choiceId);
+  const getCatalogChoice = (categoryId: string, choiceId = selectedCatalogChoices[categoryId]) => {
+    const options = (catalogOptions[occasion] ?? catalogOptions.sorpresa ?? DEFAULT_SURPRISE_GIFT_CONFIG.catalogOptions.sorpresa)?.[categoryId] ?? [];
+    return options.find((option) => option.id === choiceId) ?? options[0];
+  };
   const itemsTotal = chosenItems.reduce((sum, item) => sum + (catalogItemIds.includes(item.id) ? (getCatalogChoice(item.id)?.price ?? 0) : item.price), 0) + products.filter((product) => selectedProducts.includes(product.id)).reduce((sum, product) => sum + product.price, 0);
   const usedVolume = selectedItems.reduce((sum, id) => sum + (catalogItemIds.includes(id) ? (getCatalogChoice(id)?.volume ?? itemVolumes[id] ?? 0) : (itemVolumes[id] ?? 0)), 0);
-  const capacity = boxSize === 'premium' ? 140 : 100;
+  const capacity = boxSize === 'premium' ? pricing.premiumCapacity : pricing.standardCapacity;
   const capacityPercent = Math.round((usedVolume / capacity) * 100);
-  const estimate = 490 + itemsTotal + (boxSize === 'premium' ? 80 : 0);
+  const estimate = pricing.boxBasePrice + itemsTotal + (boxSize === 'premium' ? pricing.premiumBoxSurcharge : 0);
   const selectedProductNames = [
     ...chosenItems.map((item) => getCatalogChoice(item.id)?.name ?? item.name),
     ...products.filter((product) => selectedProducts.includes(product.id)).map((product) => product.name),
   ];
-  const ideaSuggestions: Record<string, string[]> = {
-    cumpleanos: ['Usa colores alegres y una presentación festiva.', 'Agrega un detalle que represente sus gustos.', 'Coloca el mensaje en la parte superior de la caja.'],
-    boda: ['Mantén una paleta elegante en tonos claros.', 'Acomoda los detalles con un estilo romántico.', 'Cuida que la presentación se vea delicada y especial.'],
-    aniversario: ['Usa tonos cálidos y románticos.', 'Incluye un detalle que recuerde un momento juntos.', 'Presenta las flores y chocolates como protagonistas.'],
-    sorpresa: ['Usa sus colores favoritos.', 'Esconde un pequeño detalle para descubrir al abrir la caja.', 'Combina los artículos para que se sienta personal.'],
-  };
-  const currentIdeaSuggestions = [...(ideaSuggestions[occasion] ?? ideaSuggestions.sorpresa), ...(selectedProducts.length ? [`Integra con cuidado ${products.filter((product) => selectedProducts.includes(product.id)).map((product) => product.name).join(', ')}.`] : [])];
+  const currentIdeaSuggestions = [...(config.ideaSuggestions[occasion] ?? config.ideaSuggestions.sorpresa ?? []), ...(selectedProducts.length ? [`Integra con cuidado ${products.filter((product) => selectedProducts.includes(product.id)).map((product) => product.name).join(', ')}.`] : [])];
   const recipientContext = [
-    recipientGender !== 'sin-especificar' ? ({ mujer: 'mujer', hombre: 'hombre', otro: 'otra identidad' } as Record<string, string>)[recipientGender] : '',
-    recipientAge !== 'sin-especificar' ? ({ nino: 'niño/a', adolescente: 'adolescente', joven: 'persona joven', adulto: 'persona adulta', mayor: 'persona adulta mayor' } as Record<string, string>)[recipientAge] : '',
+    recipientGender !== 'sin-especificar' ? genders.find((item) => item.id === recipientGender)?.label ?? recipientGender : '',
+    recipientAge !== 'sin-especificar' ? ages.find((item) => item.id === recipientAge)?.label ?? recipientAge : '',
   ].filter(Boolean).join(' · ') || 'sin especificar';
   const getRecommendedCatalogOptions = (categoryId: string) => {
     const options = (catalogOptions[occasion] ?? catalogOptions.sorpresa)?.[categoryId] ?? [];
-    const termsByAge: Record<string, string[]> = {
-      nino: ['mini', 'oso', 'dulce', 'color', 'fiesta', 'mix'],
-      adolescente: ['mix', 'favoritos', 'color', 'mini', 'trufas'],
-      joven: ['premium', 'pareja', 'rosas', 'tulipanes', 'trufas'],
-      adulto: ['clásico', 'blanco', 'premium', 'rosas', 'ramo'],
-      mayor: ['clásico', 'blanco', 'ramo', 'bombones', 'rosas'],
-    };
-    const termsByStyle: Record<string, string[]> = {
-      colorido: ['colores', 'color', 'mix', 'temporada', 'fiesta', 'tulipanes'],
-      romantico: ['romántic', 'corazón', 'rosa', 'pareja', 'trufas'],
-      elegante: ['premium', 'blanco', 'fino', 'marfil', 'rosa', 'trufas'],
-      divertido: ['mini', 'fiesta', 'dulce', 'color', 'mix', 'oso'],
-    };
-    const preferredTerms = [...(termsByAge[recipientAge] ?? []), ...(termsByStyle[recipientStyle] ?? [])];
+    const preferredTerms = [...(config.recommendationTerms.ages[recipientAge] ?? []), ...(config.recommendationTerms.styles[recipientStyle] ?? [])];
     return options.map((option, index) => ({ option, index, score: preferredTerms.reduce((score, term) => score + (`${option.name} ${option.detail}`.toLocaleLowerCase('es-MX').includes(term) ? 1 : 0), 0) }))
       .sort((a, b) => b.score - a.score || a.index - b.index)
       .map(({ option }, index) => ({ ...option, recommended: index === 0 && preferredTerms.length > 0 }));
   };
+
+  useEffect(() => {
+    const refreshConfig = () => setConfig(surpriseGiftConfigRepository.read());
+    refreshConfig();
+    window.addEventListener('storage', refreshConfig);
+    window.addEventListener('surprise-gift-config-updated', refreshConfig);
+    return () => {
+      window.removeEventListener('storage', refreshConfig);
+      window.removeEventListener('surprise-gift-config-updated', refreshConfig);
+    };
+  }, []);
 
   useEffect(() => {
     const refreshSavedProducts = () => setSavedProducts(products.filter((product) => Boolean(getDraft(product.id))));
@@ -234,12 +150,12 @@ export default function SurpriseGiftStudio() {
       return;
     }
     const nextVolume = usedVolume + (itemVolumes[id] ?? 0);
-    if (nextVolume > 140) {
+    if (nextVolume > pricing.premiumCapacity) {
       setCapacityWarning('La caja premium también está llena. Quita algún elemento para continuar.');
       return;
     }
     setSelectedItems((current) => [...current, id]);
-    setCapacityWarning(nextVolume > 100 && boxSize === 'standard' ? 'Hay más elementos que espacio en la caja actual.' : '');
+    setCapacityWarning(nextVolume > pricing.standardCapacity && boxSize === 'standard' ? 'Hay más elementos que espacio en la caja actual.' : '');
     if (id === 'carta') setLetterOpen(true);
   };
 
@@ -250,7 +166,7 @@ export default function SurpriseGiftStudio() {
       ? getCatalogChoice(catalogModalCategory)?.volume ?? itemVolumes[catalogModalCategory] ?? 0
       : 0;
     const nextVolume = usedVolume - currentVolume + (option?.volume ?? 0);
-    if (nextVolume > 140) {
+    if (nextVolume > pricing.premiumCapacity) {
       setCapacityWarning('La caja premium también está llena. Quita algún elemento para continuar.');
       return;
     }
@@ -275,13 +191,13 @@ export default function SurpriseGiftStudio() {
     const maximum = boxSize === 'premium' ? 3 : 1;
     if (selectedProducts.length >= maximum) return;
     const nextVolume = usedVolume + (itemVolumes['producto-personalizado'] ?? 0);
-    if (nextVolume > 140) {
+    if (nextVolume > pricing.premiumCapacity) {
       setCapacityWarning('La caja premium también está llena. Quita algún elemento para continuar.');
       return;
     }
     setSelectedProducts((current) => [...current, productId]);
     setSelectedItems((current) => current.includes('producto-personalizado') ? current : [...current, 'producto-personalizado']);
-    setCapacityWarning(nextVolume > 100 && boxSize === 'standard' ? 'Hay más elementos que espacio en la caja actual.' : '');
+    setCapacityWarning(nextVolume > pricing.standardCapacity && boxSize === 'standard' ? 'Hay más elementos que espacio en la caja actual.' : '');
   };
 
   const draftLetter = () => {
@@ -362,16 +278,16 @@ export default function SurpriseGiftStudio() {
                   <div><h2 className="font-semibold text-slate-800">¿Qué celebramos?</h2><p className="text-xs text-slate-400">La ocasión inspira cada detalle.</p></div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {occasions.map((item) => <button key={item.id} type="button" onClick={() => setOccasion(item.id)} aria-pressed={occasion === item.id} className={`flex items-center gap-2 rounded-xl border px-3 py-3 text-left transition ${occasion === item.id ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 bg-white hover:border-violet-200 hover:bg-violet-50/50'}`}><span className="text-xl">{item.emoji}</span><span className="text-xs font-semibold text-slate-700">{item.name}</span></button>)}
+                  {occasions.map((item) => <button key={item.id} type="button" onClick={() => setOccasion(item.id)} aria-pressed={occasion === item.id} className={`flex items-center gap-2 rounded-xl border px-3 py-3 text-left transition ${occasion === item.id ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 bg-white hover:border-violet-200 hover:bg-violet-50/50'}`}><SurpriseGiftIcon emoji={item.emoji} imageUrl={item.imageUrl} className="h-7 w-7 text-xl" /><span className="text-xs font-semibold text-slate-700">{item.name}</span></button>)}
                   <button type="button" onClick={() => setOccasion('otra')} aria-pressed={occasion === 'otra'} className={`flex items-center gap-2 rounded-xl border px-3 py-3 text-left transition ${occasion === 'otra' ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 bg-white hover:border-violet-200 hover:bg-violet-50/50'}`}><span className="text-xl">✨</span><span className="text-xs font-semibold text-slate-700">Otra ocasión</span></button>
                 </div>
                 {occasion === 'otra' && <label className="mt-3 block text-xs font-semibold text-slate-700">¿Qué celebramos?<input autoFocus value={customOccasionName} onChange={(event) => setCustomOccasionName(event.target.value.slice(0, 40))} maxLength={40} placeholder="Ej. Graduación, Día de las Madres…" className="mt-1.5 w-full rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-sm font-normal outline-none transition placeholder:text-slate-400 focus:border-violet-400 focus:ring-4 focus:ring-violet-100" /><span className="mt-1 block text-right text-[10px] font-normal text-slate-400">{customOccasionName.length}/40</span></label>}
                 <div className="mt-5 border-t border-slate-100 pt-4">
                   <div className="mb-3"><h3 className="text-xs font-semibold text-slate-800">¿Para quién es?</h3><p className="mt-1 text-[10px] text-slate-500">Estos datos afinan las sugerencias. Son opcionales y puedes dejar alguno sin especificar.</p></div>
                   <div className="grid gap-2 sm:grid-cols-3">
-                    <label className="text-[10px] font-semibold text-slate-600">Género (opcional)<select value={recipientGender} onChange={(event) => setRecipientGender(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-violet-400"><option value="sin-especificar">Sin especificar</option><option value="mujer">Mujer</option><option value="hombre">Hombre</option><option value="otro">Otra identidad</option></select></label>
-                    <label className="text-[10px] font-semibold text-slate-600">Edad (opcional)<select value={recipientAge} onChange={(event) => setRecipientAge(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-violet-400"><option value="sin-especificar">Sin especificar</option><option value="nino">Niño/a · 3–12</option><option value="adolescente">Adolescente · 13–17</option><option value="joven">Joven · 18–29</option><option value="adulto">Adulto/a · 30–59</option><option value="mayor">Adulto/a mayor · 60+</option></select></label>
-                    <label className="text-[10px] font-semibold text-slate-600">Estilo preferido<select value={recipientStyle} onChange={(event) => setRecipientStyle(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-violet-400"><option value="automatico">Sugerir por ocasión</option><option value="colorido">Colorido</option><option value="romantico">Romántico</option><option value="elegante">Elegante</option><option value="divertido">Divertido</option></select></label>
+                    <label className="text-[10px] font-semibold text-slate-600">Género (opcional)<select value={recipientGender} onChange={(event) => setRecipientGender(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-violet-400">{genders.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+                    <label className="text-[10px] font-semibold text-slate-600">Edad (opcional)<select value={recipientAge} onChange={(event) => setRecipientAge(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-violet-400">{ages.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+                    <label className="text-[10px] font-semibold text-slate-600">Estilo preferido<select value={recipientStyle} onChange={(event) => setRecipientStyle(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-violet-400">{styles.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
                   </div>
                   <p className="mt-2 rounded-lg bg-violet-50 px-3 py-2 text-[10px] leading-4 text-violet-800">{recipientAge === 'sin-especificar' && recipientStyle === 'automatico' ? 'Las opciones se ordenan según la ocasión; puedes elegir el estilo y la edad para afinarlas.' : `Sugerencias adaptadas a ${recipientContext}${recipientStyle !== 'automatico' ? ` · estilo ${recipientStyle}` : ''}. El género no limita los productos.`}</p>
                 </div>
@@ -386,7 +302,7 @@ export default function SurpriseGiftStudio() {
                   {giftItems.map((item) => {
                     const checked = selectedItems.includes(item.id);
                     return <button key={item.id} type="button" onClick={() => toggleItem(item.id)} aria-pressed={checked} className={`group relative flex min-w-0 items-center gap-3 rounded-xl border p-3 text-left transition ${checked ? 'border-violet-300 bg-violet-50/70' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white text-2xl shadow-sm">{item.emoji}</span>
+                      <SurpriseGiftIcon emoji={item.emoji} imageUrl={item.imageUrl} className="h-11 w-11 rounded-xl bg-white text-2xl shadow-sm" />
                       <span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-slate-800">{item.name}</span><span className="mt-0.5 block truncate text-[10px] text-slate-400">{catalogItemIds.includes(item.id) ? (getCatalogChoice(item.id)?.name ?? 'Elige una opción') : item.detail}</span><span className="mt-1 block text-[10px] font-bold text-violet-700">{item.id === 'producto-personalizado' ? 'Precio según diseño' : catalogItemIds.includes(item.id) ? (getCatalogChoice(item.id) ? `+$${getCatalogChoice(item.id)?.price} MXN · Cambiar` : 'Elegir producto') : `+$${item.price} MXN`}</span></span>
                       <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border ${checked ? 'border-violet-600 bg-violet-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}><Check size={12} /></span>
                       {item.id === 'fotos' && photos.some(Boolean) && <span className="pointer-events-none absolute left-0 top-[calc(100%+6px)] z-40 w-full rounded-xl border border-rose-100 bg-white p-3 opacity-0 shadow-xl transition duration-200 group-hover:opacity-100 group-focus-visible:opacity-100"><span className="mb-2 block text-[10px] font-semibold text-slate-600">Vista previa de tus fotos · {photos.filter(Boolean).length}/6</span><span className="grid grid-cols-3 gap-1.5">{photos.map((photo, photoIndex) => <span key={photoIndex} className="aspect-square overflow-hidden rounded-md bg-rose-50">{photo ? <img src={photo.src} alt={`Vista previa foto ${photoIndex + 1}`} className="h-full w-full object-cover" /> : <span className="grid h-full place-items-center text-[9px] text-rose-300">{photoIndex + 1}</span>}</span>)}</span></span>}
@@ -398,7 +314,7 @@ export default function SurpriseGiftStudio() {
                   <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold text-slate-700">Espacio de la caja</p><p className="mt-1 text-[11px] text-slate-500">Tu caja está al {capacityPercent}% de su capacidad</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-violet-700">{boxSize === 'premium' ? 'Grande premium' : 'Estándar'}</span></div>
                   <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white"><div className={`h-full rounded-full transition-all ${capacityPercent > 100 ? 'bg-rose-500' : 'bg-gradient-to-r from-violet-500 to-rose-400'}`} style={{ width: `${Math.min(capacityPercent, 100)}%` }} /></div>
                   {capacityWarning && <p role="status" className="mt-3 text-xs font-medium text-rose-700">{capacityWarning}</p>}
-                  {usedVolume > 100 && boxSize === 'standard' && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white p-3"><p className="text-[11px] text-slate-600">Te conviene más espacio para acomodar todo.</p><button type="button" onClick={() => { setBoxSize('premium'); setCapacityWarning(''); }} className="rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-violet-800">Usar Caja Grande Premium +$80</button></div>}
+                  {usedVolume > pricing.standardCapacity && boxSize === 'standard' && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white p-3"><p className="text-[11px] text-slate-600">Te conviene más espacio para acomodar todo.</p><button type="button" onClick={() => { setBoxSize('premium'); setCapacityWarning(''); }} className="rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-violet-800">Usar Caja Grande Premium +${pricing.premiumBoxSurcharge}</button></div>}
                   {boxSize === 'premium' && usedVolume <= 100 && selectedProducts.length <= 1 && <button type="button" onClick={() => setBoxSize('standard')} className="mt-2 text-[10px] font-medium text-violet-700 underline">Volver a caja estándar</button>}
                 </div>
                 {selectedItems.includes('fotos') && <div className="mt-5 rounded-2xl border border-rose-100 bg-rose-50/40 p-4">
@@ -439,7 +355,7 @@ export default function SurpriseGiftStudio() {
                     </div>
                     <div className="relative z-10 -mt-1 grid min-h-40 grid-cols-3 items-center justify-items-center gap-1 overflow-hidden rounded-[1.35rem] border-[9px] border-t-[6px] border-white/80 px-3 py-3 shadow-[0_22px_26px_rgba(94,65,120,.18)]" style={{ backgroundColor: activeBox.color, transform: 'translateZ(8px)', transition: 'background-color 350ms' }}>
                       <div className="pointer-events-none absolute inset-x-2 bottom-1 z-0 h-10 rounded-b-xl opacity-70" style={{ background: `repeating-linear-gradient(35deg, ${activeBox.ribbon}88 0 3px, transparent 3px 8px), repeating-linear-gradient(-24deg, #fff9 0 2px, transparent 2px 7px)` }} />
-                      {chosenItems.length ? chosenItems.slice(0, 6).flatMap((item) => item.id === 'producto-personalizado' ? selectedProducts.slice(0, 3).map((productId) => ({ id: `product-${productId}`, emoji: '🎨' })) : catalogItemIds.includes(item.id) ? [{ id: item.id, emoji: getCatalogChoice(item.id)?.emoji ?? item.emoji }] : [item]).map((item, index) => <span key={item.id} className={`relative z-10 grid h-[4.4rem] w-[4.4rem] place-items-center overflow-hidden text-4xl transition-all duration-700 ${boxClosed ? 'translate-y-8 scale-75 opacity-0' : 'opacity-100'} ${index % 2 ? 'rotate-3' : '-rotate-3'}`} style={{ filter: 'drop-shadow(0 12px 5px rgba(79,42,75,.32))', transform: `translateZ(${20 + index * 3}px) ${boxClosed ? 'translateY(38px) scale(.7)' : ''}`, transitionDelay: `${index * 35}ms` }}>{item.id === 'fotos' && photos.some(Boolean) ? <span className="grid h-full w-full grid-cols-2 gap-0.5 rounded-sm bg-white p-1">{photos.filter(Boolean).slice(0, 4).map((photo, photoIndex) => photo && <img key={photoIndex} src={photo.src} alt="" className="h-full w-full object-cover" />)}</span> : item.emoji}</span>) : <div className="relative z-10 col-span-3 py-8 text-center text-xs font-medium text-slate-500">Agrega detalles para llenar la sorpresa</div>}
+                      {chosenItems.length ? chosenItems.slice(0, 6).flatMap((item) => item.id === 'producto-personalizado' ? selectedProducts.slice(0, 3).map((productId) => ({ id: `product-${productId}`, emoji: '🎨', imageUrl: '' })) : catalogItemIds.includes(item.id) ? [{ id: item.id, emoji: getCatalogChoice(item.id)?.emoji ?? item.emoji, imageUrl: getCatalogChoice(item.id)?.imageUrl ?? item.imageUrl ?? '' }] : [{ id: item.id, emoji: item.emoji, imageUrl: item.imageUrl ?? '' }]).map((item, index) => <span key={item.id} className={`relative z-10 grid h-[4.4rem] w-[4.4rem] place-items-center overflow-hidden text-4xl transition-all duration-700 ${boxClosed ? 'translate-y-8 scale-75 opacity-0' : 'opacity-100'} ${index % 2 ? 'rotate-3' : '-rotate-3'}`} style={{ filter: 'drop-shadow(0 12px 5px rgba(79,42,75,.32))', transform: `translateZ(${20 + index * 3}px) ${boxClosed ? 'translateY(38px) scale(.7)' : ''}`, transitionDelay: `${index * 35}ms` }}>{item.id === 'fotos' && photos.some(Boolean) ? <span className="grid h-full w-full grid-cols-2 gap-0.5 rounded-sm bg-white p-1">{photos.filter(Boolean).slice(0, 4).map((photo, photoIndex) => photo && <img key={photoIndex} src={photo.src} alt="" className="h-full w-full object-cover" />)}</span> : <SurpriseGiftIcon emoji={item.emoji} imageUrl={item.imageUrl} className="h-full w-full text-4xl" />}</span>) : <div className="relative z-10 col-span-3 py-8 text-center text-xs font-medium text-slate-500">Agrega detalles para llenar la sorpresa</div>}
                       {ribbonEnabled && <div className="pointer-events-none absolute inset-y-0 left-1/2 w-4 -translate-x-1/2 opacity-80" style={{ backgroundColor: activeBox.ribbon }} />}
                     </div>
                     {ribbonEnabled && <div className="absolute left-1/2 z-30 -translate-x-1/2 text-5xl drop-shadow-md" style={{ top: boxClosed ? '3.8rem' : '-1.25rem', transform: `translateX(-50%) translateZ(45px) scale(${boxClosed ? 1.1 : 1})`, transition: 'top 850ms cubic-bezier(.2,.8,.2,1), transform 850ms cubic-bezier(.2,.8,.2,1)' }}>🎀</div>}
@@ -450,10 +366,10 @@ export default function SurpriseGiftStudio() {
 
                 <div className="space-y-4 p-5">
                   <div className="flex items-center justify-between"><div><p className="text-xs font-semibold text-slate-700">{chosenItems.length} detalles seleccionados</p><p className="mt-0.5 text-[10px] text-slate-400">{activeOccasion.name} · Para: {recipientContext}</p></div><span className="grid h-9 w-9 place-items-center rounded-xl bg-violet-50 text-violet-600"><Package size={17} /></span></div>
-                  <div className="flex flex-wrap gap-1.5">{chosenItems.map((item) => item.id === 'producto-personalizado' ? selectedProducts.map((productId) => { const product = products.find((candidate) => candidate.id === productId); return product && <span key={product.id} className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-600">🎨 {product.name}</span>; }) : <span key={item.id} className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-600">{getCatalogChoice(item.id)?.emoji ?? item.emoji} {getCatalogChoice(item.id)?.name ?? item.name}</span>)}</div>
+                  <div className="flex flex-wrap gap-1.5">{chosenItems.map((item) => item.id === 'producto-personalizado' ? selectedProducts.map((productId) => { const product = products.find((candidate) => candidate.id === productId); return product && <span key={product.id} className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-600">🎨 {product.name}</span>; }) : <span key={item.id} className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-600"><SurpriseGiftIcon emoji={getCatalogChoice(item.id)?.emoji ?? item.emoji} imageUrl={getCatalogChoice(item.id)?.imageUrl ?? item.imageUrl} className="mr-1 inline-grid h-4 w-4 align-middle" />{getCatalogChoice(item.id)?.name ?? item.name}</span>)}</div>
                   <div className="space-y-1.5 border-t border-slate-100 pt-3 text-[11px] text-slate-500">
-                    <div className="flex justify-between"><span>Caja y armado</span><span>$490 MXN</span></div>
-                    {boxSize === 'premium' && <div className="flex justify-between"><span>Caja Grande Premium</span><span>+$80 MXN</span></div>}
+                    <div className="flex justify-between"><span>Caja y armado</span><span>${pricing.boxBasePrice.toLocaleString('es-MX')} MXN</span></div>
+                    {boxSize === 'premium' && <div className="flex justify-between"><span>Caja Grande Premium</span><span>+${pricing.premiumBoxSurcharge.toLocaleString('es-MX')} MXN</span></div>}
                     <div className="flex justify-between"><span>Detalles seleccionados</span><span>${itemsTotal.toLocaleString('es-MX')} MXN</span></div>
                   </div>
                   <div className="rounded-xl bg-violet-50 px-3 py-2.5"><div className="flex justify-between text-[10px] font-medium text-violet-800"><span>Capacidad {boxSize === 'premium' ? 'premium' : 'de la caja'}</span><span>{capacityPercent}%</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-rose-400" style={{ width: `${Math.min(capacityPercent, 100)}%` }} /></div></div>
@@ -472,7 +388,7 @@ export default function SurpriseGiftStudio() {
       </section>
       {letterOpen && <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setLetterOpen(false); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="letter-title" className="my-auto w-full max-w-xl rounded-3xl bg-white p-5 shadow-2xl sm:p-7">
-          <div className="flex items-start justify-between gap-4"><div><span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-semibold text-rose-700"><Heart size={12} /> Carta especial · +$60 MXN</span><h2 id="letter-title" className="mt-3 text-xl font-semibold text-slate-800">Redacta tu carta</h2><p className="mt-1 text-xs leading-5 text-slate-500">Crea un primer borrador y edítalo para que suene a ti.</p></div><button type="button" aria-label="Cerrar" onClick={() => setLetterOpen(false)} className="rounded-full p-2 text-slate-400 hover:bg-slate-100"><X size={18} /></button></div>
+          <div className="flex items-start justify-between gap-4"><div><span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-semibold text-rose-700"><Heart size={12} /> Carta especial · +${giftItems.find((item) => item.id === 'carta')?.price ?? 0} MXN</span><h2 id="letter-title" className="mt-3 text-xl font-semibold text-slate-800">Redacta tu carta</h2><p className="mt-1 text-xs leading-5 text-slate-500">Crea un primer borrador y edítalo para que suene a ti.</p></div><button type="button" aria-label="Cerrar" onClick={() => setLetterOpen(false)} className="rounded-full p-2 text-slate-400 hover:bg-slate-100"><X size={18} /></button></div>
           <label className="mt-5 block text-xs font-semibold text-slate-700">¿Para quién es?<input value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder="Nombre o apodo" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-100" /></label>
           <div className="mt-4 flex items-center justify-between gap-3"><span className="text-xs font-semibold text-slate-700">Tu mensaje</span><button type="button" onClick={draftLetter} className="inline-flex items-center gap-1.5 rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-violet-800"><Sparkles size={13} />Redactar</button></div>
           <textarea value={letterDraft} onChange={(event) => setLetterDraft(event.target.value)} maxLength={1200} rows={9} placeholder="Pulsa Redactar para obtener una sugerencia o empieza a escribir tu carta…" className="mt-2 w-full resize-y rounded-xl border border-slate-200 px-3 py-3 text-sm leading-6 text-slate-700 outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-100" />
@@ -483,7 +399,7 @@ export default function SurpriseGiftStudio() {
       {catalogModalCategory && <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setCatalogModalCategory(null); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="gift-catalog-title" className="my-auto w-full max-w-xl rounded-3xl bg-white p-5 shadow-2xl sm:p-7">
           <div className="mt-1 rounded-lg bg-violet-50 px-3 py-2 text-[10px] text-violet-800">Recomendaciones para {activeOccasion.name.toLowerCase()} · {recipientContext}{recipientStyle !== 'automatico' ? ` · estilo ${recipientStyle}` : ''}</div>
-          <div className="mt-4 space-y-2">{getRecommendedCatalogOptions(catalogModalCategory).map((option) => { const selected = catalogDraftId === option.id; return <button key={option.id} type="button" onClick={() => setCatalogDraftId(option.id)} aria-pressed={selected} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition ${selected ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 hover:border-violet-200 hover:bg-violet-50/40'}`}><span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-white text-3xl shadow-sm">{option.emoji}</span><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-slate-800">{option.name}</span><span className="mt-1 block text-[10px] text-slate-500">{option.detail}</span><span className="mt-1 block text-[10px] font-bold text-violet-700">+${option.price} MXN</span></span>{option.recommended && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-1 text-[9px] font-bold text-emerald-800">Recomendado</span>}<span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border ${selected ? 'border-violet-600 bg-violet-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}><Check size={12} /></span></button>; })}</div>
+          <div className="mt-4 space-y-2">{getRecommendedCatalogOptions(catalogModalCategory).map((option) => { const selected = catalogDraftId === option.id; return <button key={option.id} type="button" onClick={() => setCatalogDraftId(option.id)} aria-pressed={selected} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition ${selected ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 hover:border-violet-200 hover:bg-violet-50/40'}`}><SurpriseGiftIcon emoji={option.emoji} imageUrl={option.imageUrl} className="h-12 w-12 rounded-xl bg-white text-3xl shadow-sm" /><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-slate-800">{option.name}</span><span className="mt-1 block text-[10px] text-slate-500">{option.detail}</span><span className="mt-1 block text-[10px] font-bold text-violet-700">+${option.price} MXN</span></span>{option.recommended && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-1 text-[9px] font-bold text-emerald-800">Recomendado</span>}<span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border ${selected ? 'border-violet-600 bg-violet-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}><Check size={12} /></span></button>; })}</div>
           {catalogModalCategory && selectedItems.includes(catalogModalCategory) && <button type="button" onClick={() => setCatalogDraftId('')} className={`mt-3 rounded-lg px-2 py-1.5 text-[11px] font-medium ${catalogDraftId === '' ? 'text-rose-700' : 'text-slate-500 hover:bg-slate-50'}`}>Quitar este producto de la caja</button>}
           <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setCatalogModalCategory(null)} className="rounded-xl px-4 py-2.5 text-xs font-semibold text-slate-500 hover:bg-slate-50">Cancelar</button><button type="button" onClick={saveCatalogSelection} disabled={!catalogDraftId && !selectedItems.includes(catalogModalCategory)} className="rounded-xl bg-slate-800 px-4 py-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{catalogDraftId ? 'Agregar a la caja' : 'Quitar de la caja'}</button></div>
         </section>

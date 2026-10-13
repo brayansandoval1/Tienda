@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Box, LayoutDashboard, Package, Sparkles } from 'lucide-react';
+import { Box, Gift, LayoutDashboard, Package, Sparkles } from 'lucide-react';
 
 const links = [
   { href: '/admin', label: 'Panel', icon: LayoutDashboard, exact: true },
   { href: '/admin/products', label: 'Productos', icon: Package },
   { href: '/admin/addons', label: 'Acabados y Extras', icon: Sparkles },
+  { href: '/admin/surprise-gifts', label: 'Regalos sorpresa', icon: Gift },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
