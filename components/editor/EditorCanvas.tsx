@@ -4056,7 +4056,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
       const applyCharacterStyle = (target: any, formatting: Record<string, unknown>) => {
         const remembered = textSelectionRef.current;
-        const range = remembered?.target === target && remembered.end > remembered.start
+        const range = remembered && remembered.target === target && remembered.end > remembered.start
           ? remembered
           : target.isEditing && Number(target.selectionEnd) > Number(target.selectionStart)
             ? { target, start: Number(target.selectionStart), end: Number(target.selectionEnd) }

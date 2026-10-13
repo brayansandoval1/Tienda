@@ -232,8 +232,8 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
   const visibleOptions = (product.options ?? []).filter((option) => valuesForOption(option).length >= 1);
   const showStyleSection = visibleOptions.length > 0;
 
-  // Render final "comprimido" para la pestaña Vista Previa: usa el mockup
-  // resuelto (color/opciones) sin interrumpir el lienzo de edición.
+  // Imagen compacta del producto para dar contexto a los controles de
+  // personalización sin quitar espacio al lienzo de diseño.
   const previewMockup = getEffectiveMockup(
     product,
     activeViewId,
@@ -241,6 +241,47 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
     selectedColorId || product.colors?.[0]?.id || activeBaseView?.colorVariants?.[0]?.id,
   );
   const previewImageUrl = previewMockup.mockupUrl || activeBaseView?.mockupUrl || '';
+
+  const customizationControls = (
+    <div className="space-y-4">
+      <ComponentColorsPanel
+        parts={(product.customizableParts ?? []).filter((part) => part.enabled !== false)}
+        colors={componentColors}
+        enabledMeshNames={enabledComponentMeshes}
+        onToggle={onComponentToggle}
+        onColorChange={onComponentColorChange}
+      />
+      {availableAddons.length > 0 && <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Acabados y extras</p>
+          <p className="mt-1 text-[11px] leading-4 text-slate-500">Agrega personalizaciones opcionales al producto.</p>
+        </div>
+        <div className="space-y-2">
+          {availableAddons.map((addon) => {
+            const checked = selectedAddonIds.includes(addon.id);
+            return <div key={addon.id} className={`rounded-xl border p-3 transition ${checked ? 'border-violet-400 bg-violet-50/60' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+              <label className="flex cursor-pointer items-start gap-3">
+                <input type="checkbox" checked={checked} onChange={() => setSelectedAddonIds((current) => checked ? current.filter((id) => id !== addon.id) : [...current, addon.id])} className="mt-0.5 h-4 w-4 rounded accent-violet-600" />
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-slate-800">{addon.name}</span>
+                    <span className="text-xs font-semibold text-violet-700">+${addon.price.toFixed(2)}{addon.perSide ? ' / cara' : ''}</span>
+                  </span>
+                  {addon.badge && <span className="mt-1 inline-flex rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">{addon.badge}</span>}
+                  {addon.description && <span className="mt-1 block text-xs leading-5 text-slate-500">{addon.description}</span>}
+                </span>
+              </label>
+              {checked && addon.requiresInput && <label className="mt-3 block pl-7 text-xs font-medium text-slate-700">
+                {addon.inputConfig?.label || 'Texto personalizado'}
+                <textarea value={addonTexts[addon.id] ?? ''} maxLength={addon.inputConfig?.maxLength ?? 300} onChange={(event) => setAddonTexts((current) => ({ ...current, [addon.id]: event.target.value }))} placeholder={addon.inputConfig?.placeholder || 'Escribe tu texto'} rows={2} className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" />
+                <span className="mt-1 block text-right font-normal text-slate-400">{(addonTexts[addon.id] ?? '').length}/{addon.inputConfig?.maxLength ?? 300}</span>
+              </label>}
+            </div>;
+          })}
+        </div>
+      </section>}
+    </div>
+  );
 
   // Depuración: verifica cuántas variantes reales recibe el frontend por grupo.
   (product.options ?? []).forEach((option) => {
@@ -252,7 +293,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
       {/* Pestañas estilo e-commerce */}
       {workflowStep === 'design' && <div className="grid shrink-0 grid-cols-2 gap-1 border-b border-slate-200 p-2">
         <button type="button" onClick={() => setActivePanel('options')} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${activePanel === 'options' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>Opciones</button>
-        <button type="button" onClick={() => setActivePanel('preview')} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${activePanel === 'preview' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>Vista Previa</button>
+        <button type="button" onClick={() => setActivePanel('preview')} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${activePanel === 'preview' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>Personalizar</button>
       </div>}
 
       <div className={`min-h-0 flex-1 overflow-y-auto ${isOptionsStage ? 'p-8 lg:p-10' : 'p-4'}`}>
@@ -367,13 +408,6 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
               })}
             </div>
           </div>}
-          <ComponentColorsPanel
-            parts={(product.customizableParts ?? []).filter((part) => part.enabled !== false)}
-            colors={componentColors}
-            enabledMeshNames={enabledComponentMeshes}
-            onToggle={onComponentToggle}
-            onColorChange={onComponentColorChange}
-          />
           {showStyleSection && <section className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Modelo / Estilo</p>
             <div className="space-y-2">
@@ -396,7 +430,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
         </div>
           </section>}
 
-          {availableAddons.length > 0 && <section className="space-y-3 border-t border-slate-100 pt-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Acabados y extras</p><p className="mt-1 text-xs text-slate-500">Personaliza tu producto con opciones adicionales.</p></div><div className="space-y-2">{availableAddons.map((addon) => { const checked = selectedAddonIds.includes(addon.id); return <div key={addon.id} className={`rounded-xl border p-3 transition ${checked ? 'border-violet-400 bg-violet-50/60' : 'border-slate-200 bg-white hover:border-slate-300'}`}><label className="flex cursor-pointer items-start gap-3"><input type="checkbox" checked={checked} onChange={() => setSelectedAddonIds((current) => checked ? current.filter((id) => id !== addon.id) : [...current, addon.id])} className="mt-0.5 h-4 w-4 rounded accent-violet-600" /><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold text-slate-800">{addon.name}</span><span className="text-xs font-semibold text-violet-700">+${addon.price.toFixed(2)}{addon.perSide ? ' / cara' : ''}</span></span>{addon.badge && <span className="mt-1 inline-flex rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">{addon.badge}</span>}{addon.description && <span className="mt-1 block text-xs leading-5 text-slate-500">{addon.description}</span>}</span></label>{checked && addon.requiresInput && <label className="mt-3 block pl-7 text-xs font-medium text-slate-700">{addon.inputConfig?.label || 'Texto personalizado'}<textarea value={addonTexts[addon.id] ?? ''} maxLength={addon.inputConfig?.maxLength ?? 300} onChange={(event) => setAddonTexts((current) => ({ ...current, [addon.id]: event.target.value }))} placeholder={addon.inputConfig?.placeholder || 'Escribe tu texto'} rows={2} className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" /><span className="mt-1 block text-right font-normal text-slate-400">{(addonTexts[addon.id] ?? '').length}/{addon.inputConfig?.maxLength ?? 300}</span></label>}</div>; })}</div></section>}
+          {isOptionsStage && customizationControls}
 
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-xs text-slate-500">Precio total</p>
@@ -419,12 +453,16 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
         </div>
       ) : (
         <div className="space-y-4">
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Vista Previa</p>
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100">
-            <img src={previewImageUrl} alt={product.name} crossOrigin="anonymous" className="h-full w-full object-cover" />
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-slate-700">Personaliza tu producto</h2>
+            <p className="mt-1 text-[11px] leading-4 text-slate-500">Ajusta los componentes 3D y agrega acabados opcionales.</p>
           </div>
+          <div className="flex h-36 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+            <img src={previewImageUrl} alt={product.name} crossOrigin="anonymous" className="h-full w-full object-contain" />
+          </div>
+          {customizationControls}
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center">
-            <p className="text-xs text-slate-500">Total estimado del pedido</p>
+            <p className="text-xs text-slate-500">Total estimado</p>
             <p className="text-2xl font-bold text-slate-900">${grandTotal.toFixed(2)}</p>
           </div>
         </div>

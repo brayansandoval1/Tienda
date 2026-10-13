@@ -244,8 +244,8 @@ export default function SmartInputPanel() {
                     value={item.value}
                     rows={2}
                     onFocus={() => selectObject(item)}
-                    onSelect={(event) => publishTextSelection(item.object, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
-                    onChange={(event) => updateText(item, event.target.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
+                    onSelect={(event) => publishTextSelection(item.object, event.currentTarget.selectionStart ?? 0, event.currentTarget.selectionEnd ?? 0)}
+                    onChange={(event) => updateText(item, event.target.value, event.currentTarget.selectionStart ?? 0, event.currentTarget.selectionEnd ?? 0)}
                     className="min-h-16 w-full resize-y rounded-lg border border-slate-200 px-2.5 py-2 text-xs text-slate-900 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-900"
                   />
                 ) : (
@@ -253,8 +253,8 @@ export default function SmartInputPanel() {
                     type="text"
                     value={item.value}
                     onFocus={() => selectObject(item)}
-                    onSelect={(event) => publishTextSelection(item.object, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
-                    onChange={(event) => updateText(item, event.target.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
+                    onSelect={(event) => publishTextSelection(item.object, event.currentTarget.selectionStart ?? 0, event.currentTarget.selectionEnd ?? 0)}
+                    onChange={(event) => updateText(item, event.target.value, event.currentTarget.selectionStart ?? 0, event.currentTarget.selectionEnd ?? 0)}
                     className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs text-slate-900 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-900"
                   />
                 )
