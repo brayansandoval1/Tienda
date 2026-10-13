@@ -98,6 +98,7 @@ type PhotoSlot = { src: string; zoom: number; x: number } | null;
 
 export default function SurpriseGiftStudio() {
   const [occasion, setOccasion] = useState('cumpleanos');
+  const [customOccasionName, setCustomOccasionName] = useState('');
   const [selectedItems, setSelectedItems] = useState<string[]>(['peluche', 'fotos', 'dulces']);
   const [selectedCatalogChoices, setSelectedCatalogChoices] = useState<Record<string, string>>({ peluche: 'oso-cumple-clasico', dulces: 'dulces-cumple-caja' });
   const [catalogModalCategory, setCatalogModalCategory] = useState<string | null>(null);
@@ -128,7 +129,9 @@ export default function SurpriseGiftStudio() {
   const [tiltEnabled, setTiltEnabled] = useState(false);
   const [tilt, setTilt] = useState({ x: 0, y: 0 });
 
-  const activeOccasion = occasions.find((item) => item.id === occasion) ?? occasions[0];
+  const activeOccasion = occasion === 'otra'
+    ? { id: 'otra', name: customOccasionName.trim() || 'Otra ocasión', emoji: '✨' }
+    : occasions.find((item) => item.id === occasion) ?? occasions[0];
   const activeBox = boxStyles.find((item) => item.id === boxStyleId) ?? boxStyles[0];
   const chosenItems = giftItems.filter((item) => selectedItems.includes(item.id));
   const getCatalogChoice = (categoryId: string, choiceId = selectedCatalogChoices[categoryId]) => Object.values(catalogOptions).flatMap((occasionOptions) => occasionOptions[categoryId] ?? []).find((option) => option.id === choiceId);
@@ -192,7 +195,7 @@ export default function SurpriseGiftStudio() {
       return;
     }
     if (catalogItemIds.includes(id)) {
-      const options = catalogOptions[occasion]?.[id] ?? [];
+      const options = (catalogOptions[occasion] ?? catalogOptions.sorpresa)?.[id] ?? [];
       setCatalogDraftId(selectedCatalogChoices[id] && options.some((option) => option.id === selectedCatalogChoices[id]) ? selectedCatalogChoices[id] : options[0]?.id ?? '');
       setCatalogModalCategory(id);
       return;
@@ -332,7 +335,9 @@ export default function SurpriseGiftStudio() {
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {occasions.map((item) => <button key={item.id} type="button" onClick={() => setOccasion(item.id)} aria-pressed={occasion === item.id} className={`flex items-center gap-2 rounded-xl border px-3 py-3 text-left transition ${occasion === item.id ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 bg-white hover:border-violet-200 hover:bg-violet-50/50'}`}><span className="text-xl">{item.emoji}</span><span className="text-xs font-semibold text-slate-700">{item.name}</span></button>)}
+                  <button type="button" onClick={() => setOccasion('otra')} aria-pressed={occasion === 'otra'} className={`flex items-center gap-2 rounded-xl border px-3 py-3 text-left transition ${occasion === 'otra' ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 bg-white hover:border-violet-200 hover:bg-violet-50/50'}`}><span className="text-xl">✨</span><span className="text-xs font-semibold text-slate-700">Otra ocasión</span></button>
                 </div>
+                {occasion === 'otra' && <label className="mt-3 block text-xs font-semibold text-slate-700">¿Qué celebramos?<input autoFocus value={customOccasionName} onChange={(event) => setCustomOccasionName(event.target.value.slice(0, 40))} maxLength={40} placeholder="Ej. Graduación, Día de las Madres…" className="mt-1.5 w-full rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-sm font-normal outline-none transition placeholder:text-slate-400 focus:border-violet-400 focus:ring-4 focus:ring-violet-100" /><span className="mt-1 block text-right text-[10px] font-normal text-slate-400">{customOccasionName.length}/40</span></label>}
               </section>
 
               <section className="rounded-[1.6rem] border border-white bg-white/85 p-5 shadow-[0_18px_50px_rgba(109,88,150,.08)] backdrop-blur sm:p-6">
@@ -441,7 +446,7 @@ export default function SurpriseGiftStudio() {
       {catalogModalCategory && <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setCatalogModalCategory(null); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="gift-catalog-title" className="my-auto w-full max-w-xl rounded-3xl bg-white p-5 shadow-2xl sm:p-7">
           <div className="flex items-start justify-between gap-4"><div><span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-semibold text-amber-800">{activeOccasion.emoji} {activeOccasion.name}</span><h2 id="gift-catalog-title" className="mt-3 text-xl font-semibold text-slate-800">Elige {catalogModalCategory === 'peluche' ? 'un oso de peluche' : catalogModalCategory === 'dulces' ? 'chocolates y dulces' : 'un arreglo de flores'}</h2><p className="mt-1 text-xs leading-5 text-slate-500">Opciones preparadas para esta ocasión. Elige la que quieres agregar a la caja.</p></div><button type="button" aria-label="Cerrar" onClick={() => setCatalogModalCategory(null)} className="rounded-full p-2 text-slate-400 hover:bg-slate-100"><X size={18} /></button></div>
-          <div className="mt-5 space-y-2">{(catalogOptions[occasion]?.[catalogModalCategory] ?? []).map((option) => { const selected = catalogDraftId === option.id; return <button key={option.id} type="button" onClick={() => setCatalogDraftId(option.id)} aria-pressed={selected} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition ${selected ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 hover:border-violet-200 hover:bg-violet-50/40'}`}><span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-white text-3xl shadow-sm">{option.emoji}</span><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-slate-800">{option.name}</span><span className="mt-1 block text-[10px] text-slate-500">{option.detail}</span><span className="mt-1 block text-[10px] font-bold text-violet-700">+${option.price} MXN</span></span><span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border ${selected ? 'border-violet-600 bg-violet-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}><Check size={12} /></span></button>; })}</div>
+          <div className="mt-5 space-y-2">{((catalogOptions[occasion] ?? catalogOptions.sorpresa)?.[catalogModalCategory] ?? []).map((option) => { const selected = catalogDraftId === option.id; return <button key={option.id} type="button" onClick={() => setCatalogDraftId(option.id)} aria-pressed={selected} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition ${selected ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 hover:border-violet-200 hover:bg-violet-50/40'}`}><span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-white text-3xl shadow-sm">{option.emoji}</span><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-slate-800">{option.name}</span><span className="mt-1 block text-[10px] text-slate-500">{option.detail}</span><span className="mt-1 block text-[10px] font-bold text-violet-700">+${option.price} MXN</span></span><span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border ${selected ? 'border-violet-600 bg-violet-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}><Check size={12} /></span></button>; })}</div>
           {catalogModalCategory && selectedItems.includes(catalogModalCategory) && <button type="button" onClick={() => setCatalogDraftId('')} className={`mt-3 rounded-lg px-2 py-1.5 text-[11px] font-medium ${catalogDraftId === '' ? 'text-rose-700' : 'text-slate-500 hover:bg-slate-50'}`}>Quitar este producto de la caja</button>}
           <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setCatalogModalCategory(null)} className="rounded-xl px-4 py-2.5 text-xs font-semibold text-slate-500 hover:bg-slate-50">Cancelar</button><button type="button" onClick={saveCatalogSelection} disabled={!catalogDraftId && !selectedItems.includes(catalogModalCategory)} className="rounded-xl bg-slate-800 px-4 py-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{catalogDraftId ? 'Agregar a la caja' : 'Quitar de la caja'}</button></div>
         </section>
