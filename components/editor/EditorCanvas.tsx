@@ -65,6 +65,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   // "zoom to fit" de forma proporcional al área disponible del editor.
   const canvasAreaRef = useRef<HTMLDivElement>(null);
   const fabricCanvasRef = useRef<any>(null);
+  const previewRefreshFrameRef = useRef<number>(0);
+  // Fabric deja de editar IText cuando el usuario enfoca un control del toolbar.
+  // Conservamos el último rango seleccionado para que fuente/tamaño se apliquen
+  // a esos caracteres aunque el evento del toolbar llegue después del blur.
+  const textSelectionRef = useRef<{ target: any; start: number; end: number } | null>(null);
   const [usageCanvas, setUsageCanvas] = useState<any>(null);
   const safeZoneRef = useRef<any>(null);
   // Vector gemelo de la guía punteada que recibe el color de la barra
@@ -254,6 +259,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       handleFontChange: (e: Event) => void,
       handleFontSizeChange: (e: Event) => void,
       handleTextFormat: (e: Event) => void,
+      handleQuickTextSelection: (e: Event) => void,
       handleDrawingTool: (e: Event) => void,
       handleDrawingStyle: (e: Event) => void,
       handleAddImage: (e: Event) => void,
@@ -2415,13 +2421,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           const resolvedView = resolveCurrentViewData(baseProductViews, viewIndex, activeOptionSelections);
           const configured3D = resolvedView.printArea3D ?? view.printArea3D;
           const fallback2D = resolvedView.printArea ?? view.printArea;
-          const hasVariantArea3D = Object.values(activeOptionSelections).some((variant) =>
-            variant.views?.some((variantView) =>
-              (variantView.viewId === view.id || variantView.name.trim().toLowerCase() === view.name.trim().toLowerCase())
-              && Boolean(variantView.printArea3D),
-            ),
-          );
-          const projectionSource = configured3D ? (hasVariantArea3D ? 'variante.printArea3D' : 'producto.printArea3D') : fallback2D ? 'printArea2D (fallback)' : 'sin área';
           const fallbackScale = view.printAreaUnit === 'percent' ? 1 : 100 / ADMIN_BASE_SIZE;
           const configuredArea = configured3D ?? (fallback2D ? {
             ...fallback2D,
@@ -2442,17 +2441,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             radius: configuredArea.radius,
             polygon: configured3D ? configured3D.nodes ?? configured3D.polygon : configuredArea.polygon,
           } : undefined;
-          console.log('[EditorCanvas] Área que se publica para textura 3D:', JSON.stringify({
-            viewId: view.id,
-            viewName: view.name,
-            viewIndex,
-            currentViewId,
-            source2D: { left: area.left, top: area.top, width: area.width, height: area.height, canvasWidth: area.canvasWidth, canvasHeight: area.canvasHeight },
-            configuredPrintArea3D: configured3D ? { x: configured3D.x, y: configured3D.y, left: configured3D.left, top: configured3D.top, width: configured3D.width, height: configured3D.height, nodes: configured3D.nodes ?? configured3D.polygon } : null,
-            projectionSource,
-            projectionArea,
-            selectedVariants: Object.values(activeOptionSelections).map((variant) => ({ id: variant.id, label: variant.label })),
-          }));
           return {
             viewId: view.id,
             viewName: view.name,
@@ -2512,6 +2500,19 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           thumbnailTimerRef.current = null;
           capture();
         }, 120);
+      };
+
+      // Refresca la miniatura del mockup y la textura publicada para el 3D en
+      // el siguiente frame. El guardado del borrador mantiene su debounce de
+      // 1 s, pero no debe retrasar la vista previa del diseño.
+      const schedulePreviewRefresh = () => {
+        if (previewRefreshFrameRef.current) return;
+        previewRefreshFrameRef.current = window.requestAnimationFrame(() => {
+          previewRefreshFrameRef.current = 0;
+          if (!fabricCanvasRef.current) return;
+          captureViewThumbnail(currentViewIdRef.current, true);
+          publish3DViewSnapshots();
+        });
       };
 
       // Garantiza que ningún objeto quede bloqueado para arrastrar/escalar
@@ -4053,6 +4054,26 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // que cada familia sirve (el antiguo inline pedía wght@400;700 siempre
       // y devolvía 400 en monopeso como Anton o Bungee).
 
+      const applyCharacterStyle = (target: any, formatting: Record<string, unknown>) => {
+        const remembered = textSelectionRef.current;
+        const range = remembered?.target === target && remembered.end > remembered.start
+          ? remembered
+          : target.isEditing && Number(target.selectionEnd) > Number(target.selectionStart)
+            ? { target, start: Number(target.selectionStart), end: Number(target.selectionEnd) }
+            : null;
+        if (range && typeof target.setSelectionStyles === 'function') {
+          target.setSelectionStyles(formatting, range.start, range.end);
+          // Cambiar la fuente/tamaño puede modificar el wrapping de un Textbox.
+          target.initDimensions?.();
+          target.setCoords?.();
+          return true;
+        }
+        target.set(formatting);
+        target.initDimensions?.();
+        target.setCoords?.();
+        return false;
+      };
+
       // --- Listeners para emitir eventos de selección ---
       const emitSelection = () => {
         // Refrescar bordes y controles de la selección inmediatamente.
@@ -4102,9 +4123,72 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         }));
       };
 
+      const rememberTextSelection = (event: any) => {
+        const target = event?.target;
+        if (!target || !textTargetsOf(target).length) return;
+        // Fabric dispara `text:selection:changed` ANTES de actualizar los
+        // índices internos. Leerlos en la microtarea siguiente evita guardar
+        // el rango anterior (normalmente colapsado en el cursor).
+        queueMicrotask(() => {
+          if (fabricCanvasRef.current?.getActiveObject?.() !== target) return;
+          const start = Number(target.selectionStart ?? 0);
+          const end = Number(target.selectionEnd ?? start);
+          if (end > start) textSelectionRef.current = { target, start, end };
+          else if (textSelectionRef.current?.target === target) textSelectionRef.current = null;
+          const selectedStyles = end > start && typeof target.getSelectionStyles === 'function'
+            ? target.getSelectionStyles(start, end)
+            : [];
+          const firstStyle = selectedStyles[0] ?? {};
+          window.dispatchEvent(new CustomEvent('editor:selection-changed', {
+            detail: { selectedObject: {
+              type: target.type,
+              fill: firstStyle.fill ?? target.fill ?? '#000000',
+              fontFamily: firstStyle.fontFamily ?? target.fontFamily,
+              fontSize: firstStyle.fontSize ?? target.fontSize,
+              fontWeight: firstStyle.fontWeight ?? target.fontWeight,
+              fontStyle: firstStyle.fontStyle ?? target.fontStyle,
+              underline: firstStyle.underline ?? target.underline,
+              linethrough: firstStyle.linethrough ?? target.linethrough,
+              textAlign: target.textAlign,
+              isTextEditing: Boolean(target.isEditing),
+              hasTextSelection: end > start,
+            } },
+          }));
+        });
+      };
+
+      handleQuickTextSelection = (event: Event) => {
+        const detail = (event as CustomEvent<{ target?: any; start?: number; end?: number }>).detail;
+        const target = detail?.target;
+        const start = Number(detail?.start);
+        const end = Number(detail?.end);
+        if (!target || !textTargetsOf(target).length || !Number.isFinite(start) || !Number.isFinite(end)) return;
+        textSelectionRef.current = end > start ? { target, start, end } : null;
+        const selectedStyles = end > start && typeof target.getSelectionStyles === 'function'
+          ? target.getSelectionStyles(start, end)
+          : [];
+        const firstStyle = selectedStyles[0] ?? {};
+        window.dispatchEvent(new CustomEvent('editor:selection-changed', {
+          detail: { selectedObject: {
+            type: target.type,
+            fill: firstStyle.fill ?? target.fill ?? '#000000',
+            fontFamily: firstStyle.fontFamily ?? target.fontFamily,
+            fontSize: firstStyle.fontSize ?? target.fontSize,
+            fontWeight: firstStyle.fontWeight ?? target.fontWeight,
+            fontStyle: firstStyle.fontStyle ?? target.fontStyle,
+            underline: firstStyle.underline ?? target.underline,
+            linethrough: firstStyle.linethrough ?? target.linethrough,
+            textAlign: target.textAlign,
+            hasTextSelection: end > start,
+          } },
+        }));
+      };
+
       canvas.on('selection:created', emitSelection);
       canvas.on('selection:updated', emitSelection);
+      canvas.on('text:selection:changed', rememberTextSelection);
       canvas.on('selection:cleared', () => {
+        textSelectionRef.current = null;
         setIsImageSelected(false);
         window.dispatchEvent(new CustomEvent('editor:selection-changed', {
           detail: { selectedObject: null }
@@ -4123,6 +4207,21 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
         activeObjects.forEach((activeObject: any) => {
           if (!activeObject || !activeObject.set) return;
+
+          const selectedTextTarget = textSelectionRef.current?.target;
+          const selectedRange = textSelectionRef.current;
+          if (
+            selectedTextTarget && selectedRange && selectedRange.end > selectedRange.start &&
+            textTargetsOf(activeObject).includes(selectedTextTarget)
+          ) {
+            applyCharacterStyle(selectedTextTarget, { fill: newColor });
+            return;
+          }
+
+          if (textTargetsOf(activeObject).length === 1 && activeObject.type !== 'group') {
+            applyCharacterStyle(activeObject, { fill: newColor });
+            return;
+          }
 
           // Si el objeto seleccionado es un Grupo (como un SVG importado)
           if (activeObject.type === 'group' || activeObject._objects) {
@@ -4149,6 +4248,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         });
 
         canvas.requestRenderAll();
+        schedulePreviewRefresh();
         saveState();
       };
 
@@ -4164,10 +4264,17 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const targets = textTargetsOf(activeObject);
         if (!targets.length) return;
 
+        const targetWithSelection = textSelectionRef.current?.target;
+        const selection = targetWithSelection && targets.includes(targetWithSelection)
+          ? { target: targetWithSelection, start: textSelectionRef.current!.start, end: textSelectionRef.current!.end }
+          : null;
+
         const applyFont = () => {
-          targets.forEach((target: any) => target.set('fontFamily', fontFamily));
+          if (selection) applyCharacterStyle(selection.target, { fontFamily });
+          else targets.forEach((target: any) => applyCharacterStyle(target, { fontFamily }));
           if (activeObject?.type === 'group') restackGroup(canvas, activeObject);
           canvas.renderAll();
+          schedulePreviewRefresh();
           saveState();
         };
         // Esperar a que el navegador cargue la fuente (con los pesos reales
@@ -4193,10 +4300,16 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const activeObject = canvas?.getActiveObject();
         const targets = textTargetsOf(activeObject);
         if (!canvas || !targets.length) return;
-        targets.forEach((target: any) => target.set('fontSize', fontSize));
+        const targetWithSelection = textSelectionRef.current?.target;
+        if (targetWithSelection && targets.includes(targetWithSelection) && textSelectionRef.current!.end > textSelectionRef.current!.start) {
+          applyCharacterStyle(targetWithSelection, { fontSize });
+        } else {
+          targets.forEach((target: any) => applyCharacterStyle(target, { fontSize }));
+        }
         // El alto de las líneas cambió: re-apilar el combo para que no se encimien.
         if (activeObject.type === 'group') restackGroup(canvas, activeObject);
         canvas.renderAll();
+        schedulePreviewRefresh();
         saveState();
       };
 
@@ -4211,10 +4324,18 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           fontFamily: 'Arial', fontWeight: 'normal', fontStyle: 'normal',
           underline: false, linethrough: false, textBackgroundColor: '',
         };
-        targets.forEach((target: any) => {
+        const selectedTextTarget = textSelectionRef.current?.target;
+        const hasSelectedRange = Boolean(
+          textSelectionRef.current && textSelectionRef.current.end > textSelectionRef.current.start &&
+          targets.includes(selectedTextTarget),
+        );
+        const formattingTargets = hasSelectedRange && detail.property !== 'textAlign'
+          ? [selectedTextTarget]
+          : targets;
+        formattingTargets.forEach((target: any) => {
           if (detail.property === 'clear') {
-            if (target.isEditing && typeof target.setSelectionStyles === 'function') {
-              target.setSelectionStyles(reset);
+            if (target.isEditing || textSelectionRef.current?.target === target) {
+              applyCharacterStyle(target, reset);
             } else {
               target.set(reset);
             }
@@ -4223,8 +4344,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             // textAlign es una propiedad del cuadro de texto, no un estilo de
             // caracteres. Pasarlo a setSelectionStyles en Fabric puede dejar
             // el array interno de estilos inválido durante la edición.
-            if (detail.property !== 'textAlign' && target.isEditing && typeof target.setSelectionStyles === 'function') {
-              target.setSelectionStyles(formatting);
+            if (detail.property !== 'textAlign' && target.type !== 'text' && (target.isEditing || textSelectionRef.current?.target === target)) {
+              applyCharacterStyle(target, formatting);
             } else {
               target.set(formatting);
             }
@@ -4234,6 +4355,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // Anchos/altos de las líneas pueden cambiar: re-apilar el combo.
         if (activeObject.type === 'group') restackGroup(canvas, activeObject);
         canvas.requestRenderAll();
+        schedulePreviewRefresh();
         saveState();
       };
 
@@ -5154,7 +5276,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           if (type === 'rect') {
             shape = new fabric.Rect({ ...defaultProps, width: 100, height: 100 });
           } else if (type === 'roundedRect') {
-            shape = new fabric.Rect({ ...defaultProps, width: 130, height: 82, rx: 18, ry: 18 });
+            // Mantiene una proporción horizontal compacta y radios moderados;
+            // el radio grande anterior hacía que pareciera una cápsula y
+            // sobresaliera de tamaño respecto a las demás formas.
+            shape = new fabric.Rect({ ...defaultProps, width: 108, height: 68, rx: 12, ry: 12 });
           } else if (type === 'circle') {
             shape = new fabric.Circle({ ...defaultProps, radius: 50 });
           } else if (type === 'ellipse') {
@@ -5598,6 +5723,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       window.addEventListener('editor:change-font', handleFontChange);
       window.addEventListener('editor:change-fontSize', handleFontSizeChange);
       window.addEventListener('editor:text-format', handleTextFormat);
+      window.addEventListener('editor:quick-text-selection', handleQuickTextSelection);
       window.addEventListener('editor:drawing-tool', handleDrawingTool);
       window.addEventListener('editor:drawing-style', handleDrawingStyle);
       window.addEventListener('editor:add-image', handleAddImage);
@@ -5677,13 +5803,15 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       canvas.on('object:moving', () => captureViewThumbnail());
       canvas.on('object:scaling', () => captureViewThumbnail());
       canvas.on('object:rotating', () => captureViewThumbnail());
-      canvas.on('object:modified', () => captureViewThumbnail());
-      canvas.on('text:changed', () => captureViewThumbnail());
+      canvas.on('object:modified', schedulePreviewRefresh);
+      canvas.on('text:changed', schedulePreviewRefresh);
       canvas.on('path:created', () => captureViewThumbnail());
     });
 
     return () => {
       isMounted = false;
+      if (previewRefreshFrameRef.current) window.cancelAnimationFrame(previewRefreshFrameRef.current);
+      previewRefreshFrameRef.current = 0;
       panoramaModeRef.current = false;
       (window as any).__editorPanoramaMode = false;
       panoramaToggleRef.current = null;
@@ -5713,6 +5841,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         window.removeEventListener('editor:change-fontSize', handleFontSizeChange);
       }
       if (handleTextFormat) window.removeEventListener('editor:text-format', handleTextFormat);
+      if (handleQuickTextSelection) window.removeEventListener('editor:quick-text-selection', handleQuickTextSelection);
       if (handleDrawingTool) window.removeEventListener('editor:drawing-tool', handleDrawingTool);
       if (handleDrawingStyle) window.removeEventListener('editor:drawing-style', handleDrawingStyle);
       if (drawingEraseHandler && fabricCanvasRef.current) {

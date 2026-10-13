@@ -136,7 +136,13 @@ export default function SmartInputPanel() {
     setActiveIds(activeIdSet(canvas));
   };
 
-  const updateText = (item: SmartItem, value: string) => {
+  const publishTextSelection = (object: FabricObject, start: number, end: number) => {
+    window.dispatchEvent(new CustomEvent('editor:quick-text-selection', {
+      detail: { target: object, start, end },
+    }));
+  };
+
+  const updateText = (item: SmartItem, value: string, start?: number, end?: number) => {
     if (!canvas) return;
     item.object.set('text', value);
     item.object.setCoords?.();
@@ -150,6 +156,9 @@ export default function SmartInputPanel() {
     // El combo es el target para que los handlers que leen coordenadas de
     // lienzo (clip por segmento del 360) reciban datos válidos.
     canvas.fire('object:modified', { target: parent ?? item.object });
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      publishTextSelection(item.object, Number(start), Number(end));
+    }
   };
 
   const replaceImage = (item: SmartItem, file: File) => {
@@ -235,7 +244,8 @@ export default function SmartInputPanel() {
                     value={item.value}
                     rows={2}
                     onFocus={() => selectObject(item)}
-                    onChange={(event) => updateText(item, event.target.value)}
+                    onSelect={(event) => publishTextSelection(item.object, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
+                    onChange={(event) => updateText(item, event.target.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
                     className="min-h-16 w-full resize-y rounded-lg border border-slate-200 px-2.5 py-2 text-xs text-slate-900 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-900"
                   />
                 ) : (
@@ -243,7 +253,8 @@ export default function SmartInputPanel() {
                     type="text"
                     value={item.value}
                     onFocus={() => selectObject(item)}
-                    onChange={(event) => updateText(item, event.target.value)}
+                    onSelect={(event) => publishTextSelection(item.object, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
+                    onChange={(event) => updateText(item, event.target.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
                     className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs text-slate-900 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-900"
                   />
                 )

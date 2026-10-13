@@ -96,7 +96,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   }, []);
 
   return (
-    <div className="flex h-screen w-screen min-h-0 flex-col overflow-hidden bg-slate-50 text-slate-900">
+    <div className="flex h-screen w-screen min-h-0 flex-col overflow-hidden bg-[#f8f5fb] text-slate-900">
       <CartDrawer />
       <header className="z-40 h-14 shrink-0 px-5 lg:px-7">
         <Header activeStep={activeStep} onStepChange={handleStepChange} canContinue={quantityValid} />
@@ -109,12 +109,12 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
 
       <div className="flex-1 flex flex-row overflow-hidden relative">
         {/* Panel Izquierdo: herramientas de diseño */}
-        <div className={`${activeStep === 'design' ? 'w-[clamp(250px,16vw,320px)]' : 'w-0 border-r-0'} h-full min-w-0 shrink-0 bg-white border-r border-slate-200 flex flex-col z-10 overflow-hidden transition-[width] duration-200`} aria-hidden={activeStep !== 'design'}>
+        <div className={`${activeStep === 'design' ? 'w-[clamp(250px,16vw,320px)]' : 'w-0 border-r-0'} h-full min-w-0 shrink-0 bg-[#fcfaff] border-r border-slate-200 flex flex-col z-10 overflow-hidden transition-[width] duration-200`} aria-hidden={activeStep !== 'design'}>
           <SidebarPanel product={currentProduct} />
         </div>
 
         {/* Canvas Central (Lienzo) */}
-        <main className={`relative h-full min-w-0 flex-1 overflow-hidden bg-slate-100/50 p-2 xl:p-3 ${activeStep === 'design' ? 'grid grid-cols-1 gap-2 xl:grid-cols-[minmax(0,0.6fr)_minmax(0,1.4fr)] xl:gap-3' : 'flex items-center justify-center'}`}>
+        <main className={`relative h-full min-w-0 flex-1 overflow-hidden bg-[#f1edf7] p-2 xl:p-3 ${activeStep === 'design' ? 'grid grid-cols-1 gap-2 xl:grid-cols-[minmax(0,0.6fr)_minmax(0,1.4fr)] xl:gap-3' : 'flex items-center justify-center'}`}>
           {activeStep === 'design' && <div key={currentProduct.id} className="hidden min-h-0 min-w-0 xl:block"><Product3DViewer key={currentProduct.id} product={currentProduct} componentColors={componentColors} enabledMeshNames={enabledComponentMeshes} /></div>}
           <section className={`relative min-h-0 min-w-0 overflow-hidden ${activeStep === 'design' ? '' : 'h-full w-full'}`}>
           <EditorCanvas
@@ -128,7 +128,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
           {/* Revisar: visor de renders sobre el lienzo. El canvas sigue montado
               debajo porque ReviewStage le pide los diseños por eventos. */}
           {activeStep === 'review' && (
-            <div className="absolute inset-0 z-20 bg-slate-50">
+              <div className="absolute inset-0 z-20 bg-[#f8f5fb]">
               <ReviewStage product={currentProduct} />
             </div>
           )}
@@ -136,7 +136,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
         </main>
 
         {/* Panel Derecho: producto / compra */}
-        <div className={`${activeStep === 'design' ? 'w-[clamp(250px,16vw,320px)]' : 'w-[42%] min-w-[400px] max-w-[600px]'} h-full min-w-0 shrink-0 bg-white border-l border-slate-200 flex flex-col z-10 overflow-hidden transition-[width] duration-200`}>
+        <div className={`${activeStep === 'design' ? 'w-[clamp(250px,16vw,320px)]' : 'w-[42%] min-w-[400px] max-w-[600px]'} h-full min-w-0 shrink-0 bg-[#fcfaff] border-l border-slate-200 flex flex-col z-10 overflow-hidden transition-[width] duration-200`}>
           <ViewSelector
             product={currentProduct}
             panel={activeStep === 'review' ? 'preview' : 'options'}
