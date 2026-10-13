@@ -1,0 +1,2014 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full bg-slate-950 text-slate-100">
+<head>
+  <meta charset="UTF-8">
+  <link rel="icon" href="data:,">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Studio Generator - Universal Product Studio & AI Vision</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- Three.js & Exporters -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#ecfeff',
+              500: '#06b6d4',
+              600: '#0891b2',
+              900: '#164e63',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    .slider-thumb::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #06b6d4;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body class="h-full flex flex-col font-sans overflow-hidden bg-slate-950 text-slate-200">
+
+  <header class="h-14 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md px-5 flex items-center justify-between z-20 shrink-0">
+    <div class="flex items-center space-x-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/20">
+        <i class="fa-solid font-bold fa-cube text-base"></i>
+      </div>
+      <div>
+        <h1 class="font-bold text-sm tracking-wide text-white flex items-center gap-2">
+          3D Studio Universal Generator
+      <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">Generador paramétrico + Gemini Vision</span>
+        </h1>
+      <p class="text-[11px] text-slate-400">Referencias desde varias fotos, medidas reales y exportación GLB para la tienda</p>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="flex items-center gap-3">
+      <div class="hidden md:flex items-center gap-4 text-xs text-slate-400 border-r border-slate-800 pr-4">
+        <span>Forma: <strong class="text-cyan-400" id="stat-type">Revolución Personalizable</strong></span>
+        <span>Escala: <strong class="text-slate-200">1:1 Real</strong></span>
+      </div>
+      <button id="btn-export-glb" class="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition flex items-center gap-2 border border-slate-700">
+        <i class="fa-solid fa-file-export text-cyan-400"></i> Exportar .GLB
+      </button>
+      <button id="btn-copy-script" class="px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs transition flex items-center gap-2 shadow-lg shadow-cyan-500/20">
+        <i class="fa-solid fa-code"></i> Copiar Script Blender
+      </button>
+      <button id="btn-save-profile" title="Guardar configuración del modelo" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700"><i class="fa-solid fa-floppy-disk"></i></button>
+      <button id="btn-load-profile" title="Abrir configuración guardada" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700"><i class="fa-solid fa-folder-open"></i></button>
+      <input id="profile-file-input" type="file" accept="application/json,.json" class="hidden">
+    </div>
+  </header>
+
+  <div class="flex-1 flex overflow-hidden">
+    
+    <aside class="w-96 border-r border-slate-800 bg-slate-900/50 flex flex-col overflow-y-auto shrink-0 divide-y divide-slate-800/80">
+      
+      <!-- Engine Selector: Parametric vs AI Image-To-3D -->
+      <div class="p-4 bg-slate-900/90">
+        <label class="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wider">Método de Creación</label>
+        <div class="grid grid-cols-2 gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800">
+          <button id="mode-parametric-btn" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-950 text-cyan-400 border border-cyan-800 flex items-center justify-center gap-2">
+            <i class="fa-solid fa-ruler-combined"></i> Modelador Universal
+          </button>
+          <button id="mode-ai-btn" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 flex items-center justify-center gap-2">
+            <i class="fa-solid fa-wand-magic-sparkles text-purple-400"></i> Foto a 3D (IA)
+          </button>
+        </div>
+      </div>
+
+      <!-- PARAMETRIC PANEL -->
+      <div id="panel-parametric" class="divide-y divide-slate-800/80">
+        <!-- Preset Selection -->
+        <div class="p-4">
+          <label class="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wider">Selecciona o Personaliza Producto</label>
+          <div class="grid grid-cols-2 gap-2">
+            <button data-preset="mug" class="preset-btn active px-2.5 py-2 rounded-lg text-xs font-medium border text-left flex items-center gap-2 bg-cyan-950/40 border-cyan-500/50 text-cyan-300">
+              <i class="fa-solid fa-mug-hot"></i> Taza Cilíndrica
+            </button>
+            <button data-preset="thermos" class="preset-btn px-2.5 py-2 rounded-lg text-xs font-medium border border-slate-800 text-left flex items-center gap-2 bg-slate-950 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200">
+              <i class="fa-solid fa-bottle-water"></i> Termo / Botella
+            </button>
+            <button data-preset="can" class="preset-btn px-2.5 py-2 rounded-lg text-xs font-medium border border-slate-800 text-left flex items-center gap-2 bg-slate-950 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200">
+              <i class="fa-solid fa-wine-bottle"></i> Lata / Refresco
+            </button>
+            <button data-preset="jar" class="preset-btn px-2.5 py-2 rounded-lg text-xs font-medium border border-slate-800 text-left flex items-center gap-2 bg-slate-950 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200">
+              <i class="fa-solid fa-jar"></i> Frasco / Perfume
+            </button>
+            <button data-preset="tube" class="preset-btn px-2.5 py-2 rounded-lg text-xs font-medium border border-slate-800 text-left flex items-center gap-2 bg-slate-950 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200">
+              <i class="fa-solid fa-pump-soap"></i> Tubo Cosmético
+            </button>
+            <button data-preset="notebook" class="preset-btn px-2.5 py-2 rounded-lg text-xs font-medium border border-slate-800 text-left flex items-center gap-2 bg-slate-950 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200">
+              <i class="fa-solid fa-box border-b border-slate-600"></i> Caja / Empaque
+            </button>
+            <button data-preset="pouch" class="preset-btn px-2.5 py-2 rounded-lg text-xs font-medium border border-slate-800 text-left flex items-center gap-2 bg-slate-950 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200">
+              <i class="fa-solid fa-bag-shopping"></i> Bolsa Stand-Up
+            </button>
+            <button data-preset="backpack" class="preset-btn px-2.5 py-2 rounded-lg text-xs font-medium border border-slate-800 text-left flex items-center gap-2 bg-slate-950 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200">
+              <i class="fa-solid fa-backpack"></i> Mochila por piezas
+            </button>
+            <button data-preset="cap" class="preset-btn px-2.5 py-2 rounded-lg text-xs font-medium border border-slate-800 text-left flex items-center gap-2 bg-slate-950 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200">
+              <i class="fa-solid fa-hat-cowboy"></i> Gorra con visera
+            </button>
+            <button data-preset="custom_lathe" class="preset-btn col-span-2 px-2.5 py-2 rounded-lg text-xs font-medium border border-slate-800 text-center flex items-center justify-center gap-2 bg-gradient-to-r from-slate-900 via-cyan-950 to-slate-900 text-cyan-400 hover:border-cyan-500">
+              <i class="fa-solid fa-bezier-curve text-cyan-400"></i> Perfil Personalizado 360° (Cualquier Forma)
+            </button>
+          </div>
+        </div>
+
+        <!-- Reference Photo Overlay for Parametric -->
+        <div class="p-4">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-xs font-medium text-slate-400 uppercase tracking-wider">Foto Guía (Alineación)</label>
+            <span class="text-[10px] text-slate-500">Varias imágenes · opcional</span>
+          </div>
+          
+          <div id="drop-zone" class="relative group cursor-pointer border-2 border-dashed border-slate-800 hover:border-cyan-500/50 rounded-xl p-2.5 text-center transition bg-slate-950/50">
+            <input type="file" id="file-input" accept="image/*" multiple class="absolute inset-0 opacity-0 cursor-pointer z-10" />
+            <div id="photo-preview-container" class="hidden relative w-full rounded-lg overflow-hidden mb-1">
+              <div id="photo-gallery" class="grid grid-cols-2 gap-2 p-2"></div>
+              <button id="btn-remove-photo" class="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-slate-900/80 text-white flex items-center justify-center text-xs hover:bg-red-500 transition z-20">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+            <div id="photo-upload-placeholder" class="py-1">
+              <i class="fa-solid fa-camera-retro text-xl text-slate-600 group-hover:text-cyan-400 transition mb-1"></i>
+              <p class="text-xs font-medium text-slate-300">Sube varias fotos de referencia</p>
+              <p class="text-[10px] text-slate-500">Frente, lado, espalda y detalles. Solo se muestran como guía visual.</p>
+            </div>
+          </div>
+          <div class="mt-3 space-y-2">
+            <label class="block text-[10px] font-medium text-slate-400 uppercase tracking-wider" for="universal-api-key">Analizar estas fotos con Gemini (opcional)</label>
+            <input type="password" id="universal-api-key" autocomplete="off" placeholder="Pega tu clave de Google AI Studio" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none" />
+            <p class="text-[10px] text-slate-500">La clave se usa solo en esta página y no se guarda. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" class="text-cyan-300 underline">Obtener clave</a></p>
+            <button id="btn-analyze-guide" type="button" class="w-full py-2 rounded-lg bg-cyan-950 hover:bg-cyan-900 border border-cyan-800 text-cyan-200 text-xs font-semibold transition flex items-center justify-center gap-2">
+              <i class="fa-solid fa-wand-magic-sparkles"></i> Analizar fotos y ajustar modelo
+            </button>
+            <p id="guide-ai-status" class="hidden rounded-lg border border-slate-800 bg-slate-950 p-2 text-[10px] leading-relaxed text-slate-300"></p>
+          </div>
+        </div>
+
+        <!-- Controls for Revolute / Lathe Products (Mugs, Bottles, Jars, Cans, Custom) -->
+        <div id="controls-lathe" class="p-4 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xs font-semibold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+              <i class="fa-solid fa-sliders text-cyan-400"></i> Dimensiones Principales (mm)
+            </h2>
+            <span class="text-[10px] font-mono text-cyan-400 bg-cyan-950 px-2 py-0.5 rounded border border-cyan-800">Escala 1:1</span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1">Altura Total (mm)</label>
+              <input type="number" id="input-height" value="120" min="10" max="600" step="0.1" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-cyan-300 focus:border-cyan-500 focus:outline-none" />
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1">Grosor Pared (mm)</label>
+              <input type="number" id="input-wall" value="3" min="0.5" max="30" step="0.1" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-cyan-300 focus:border-cyan-500 focus:outline-none" />
+            </div>
+          </div>
+
+          <!-- Interactive Multi-Point Contour Editor -->
+          <div class="pt-3 border-t border-slate-800/80 space-y-3">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-medium text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+                <i class="fa-solid fa-chart-line"></i> Contorno / Diámetros por Altura
+              </label>
+              <span class="text-[10px] text-slate-400">Cualquier curva 3D</span>
+            </div>
+
+            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-3">
+              <div>
+                <div class="flex items-center justify-between gap-2 text-[11px] text-slate-400 mb-1">
+                  <span>1. Boquilla / Borde Superior (100% Altura)</span>
+                  <label class="flex items-center gap-1 text-cyan-300"><input id="input-d-top" type="number" min="5" max="600" value="70" class="w-16 rounded bg-slate-900 px-1.5 py-1 text-right font-mono text-cyan-300 outline-none focus:ring-1 focus:ring-cyan-500" aria-label="Diámetro superior en milímetros"><span>mm</span></label>
+                </div>
+                <input type="range" id="slider-d-top" min="5" max="600" value="70" class="w-full accent-cyan-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer">
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between gap-2 text-[11px] text-slate-400 mb-1">
+                  <span>2. Cuello / Zona Superior (75% Altura)</span>
+                  <label class="flex items-center gap-1 text-cyan-300"><input id="input-d-upper" type="number" min="5" max="600" value="50" class="w-16 rounded bg-slate-900 px-1.5 py-1 text-right font-mono text-cyan-300 outline-none focus:ring-1 focus:ring-cyan-500" aria-label="Diámetro a 75 por ciento de altura en milímetros"><span>mm</span></label>
+                </div>
+                <input type="range" id="slider-d-upper" min="5" max="600" value="50" class="w-full accent-cyan-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer">
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between gap-2 text-[11px] text-slate-400 mb-1">
+                  <span>3. Cuerpo Medio (50% Altura)</span>
+                  <label class="flex items-center gap-1 text-cyan-300"><input id="input-d-mid" type="number" min="5" max="600" value="80" class="w-16 rounded bg-slate-900 px-1.5 py-1 text-right font-mono text-cyan-300 outline-none focus:ring-1 focus:ring-cyan-500" aria-label="Diámetro medio en milímetros"><span>mm</span></label>
+                </div>
+                <input type="range" id="slider-d-mid" min="5" max="600" value="80" class="w-full accent-cyan-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer">
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between gap-2 text-[11px] text-slate-400 mb-1">
+                  <span>4. Base Inferior (25% Altura)</span>
+                  <label class="flex items-center gap-1 text-cyan-300"><input id="input-d-lower" type="number" min="5" max="600" value="80" class="w-16 rounded bg-slate-900 px-1.5 py-1 text-right font-mono text-cyan-300 outline-none focus:ring-1 focus:ring-cyan-500" aria-label="Diámetro a 25 por ciento de altura en milímetros"><span>mm</span></label>
+                </div>
+                <input type="range" id="slider-d-lower" min="5" max="600" value="80" class="w-full accent-cyan-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer">
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between gap-2 text-[11px] text-slate-400 mb-1">
+                  <span>5. Fondo / Suelo (0% Altura)</span>
+                  <label class="flex items-center gap-1 text-cyan-300"><input id="input-d-bottom" type="number" min="5" max="600" value="75" class="w-16 rounded bg-slate-900 px-1.5 py-1 text-right font-mono text-cyan-300 outline-none focus:ring-1 focus:ring-cyan-500" aria-label="Diámetro inferior en milímetros"><span>mm</span></label>
+                </div>
+                <input type="range" id="slider-d-bottom" min="5" max="600" value="75" class="w-full accent-cyan-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer">
+                </div>
+              <div class="grid grid-cols-[1fr_auto] items-end gap-2 border-t border-slate-800 pt-3">
+                <label class="text-[10px] text-slate-400">Ajustar diámetro máximo conservando proporción (mm)<input id="input-target-diameter" type="number" min="5" max="600" placeholder="Ej. 82" class="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-2 font-mono text-xs text-cyan-300 outline-none focus:border-cyan-500"></label>
+                <button id="btn-scale-profile" type="button" class="rounded-lg border border-cyan-800 bg-cyan-950 px-3 py-2 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-900">Escalar perfil</button>
+              </div>
+            </div>
+            <p id="geometry-warning" class="hidden rounded-lg border border-amber-800/70 bg-amber-950/30 p-2 text-[10px] leading-relaxed text-amber-300" aria-live="polite"></p>
+          </div>
+        </div>
+
+        <!-- Controls for Box / Rectangular / Pouch Products -->
+        <div id="controls-box" class="p-4 space-y-3 hidden">
+          <h2 class="text-xs font-semibold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+            <i class="fa-solid fa-cube text-cyan-400"></i> Medidas Prismáticas (mm)
+          </h2>
+          <div class="grid grid-cols-3 gap-2">
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1">Ancho (mm)</label>
+              <input type="number" id="input-box-width" value="148" min="10" max="600" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-cyan-300 focus:border-cyan-500 focus:outline-none" />
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1">Alto (mm)</label>
+              <input type="number" id="input-box-height" value="210" min="10" max="600" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-cyan-300 focus:border-cyan-500 focus:outline-none" />
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1">Profundidad (mm)</label>
+              <input type="number" id="input-box-depth" value="30" min="2" max="300" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-cyan-300 focus:border-cyan-500 focus:outline-none" />
+            </div>
+          </div>
+        </div>
+
+        <div id="controls-backpack" class="hidden p-4 space-y-3">
+          <div>
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-cyan-300"><i class="fa-solid fa-backpack mr-1.5"></i> Mochila modular · medidas en mm</h2>
+            <p class="mt-1 text-[10px] text-slate-500">Las piezas se generan por separado. Ajusta las dimensiones a tu producto real.</p>
+          </div>
+          <div class="grid grid-cols-3 gap-2">
+            <label class="text-[10px] text-slate-400">Ancho<input id="bp-body-width" type="number" min="80" max="900" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-cyan-300"></label>
+            <label class="text-[10px] text-slate-400">Alto<input id="bp-body-height" type="number" min="100" max="1200" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-cyan-300"></label>
+            <label class="text-[10px] text-slate-400">Fondo<input id="bp-body-depth" type="number" min="30" max="500" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-cyan-300"></label>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="flex items-center justify-between rounded border border-slate-800 bg-slate-950 px-2 py-1.5 text-[10px] text-slate-400">Color de tela<input id="bp-fabric-color" type="color" class="h-6 w-8 cursor-pointer rounded border-0 bg-transparent"></label>
+            <label class="flex items-center justify-between rounded border border-slate-800 bg-slate-950 px-2 py-1.5 text-[10px] text-slate-400">Color de piezas<input id="bp-trim-color" type="color" class="h-6 w-8 cursor-pointer rounded border-0 bg-transparent"></label>
+          </div>
+          <div class="space-y-2 rounded-lg border border-slate-800 bg-slate-950 p-2.5">
+            <label class="flex items-center justify-between text-[11px] text-slate-300">Bolsillo frontal <input id="bp-front-enabled" type="checkbox" checked class="accent-cyan-500"></label>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="text-[10px] text-slate-500">Ancho<input id="bp-front-width" type="number" min="30" max="700" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 font-mono text-cyan-300"></label>
+              <label class="text-[10px] text-slate-500">Alto<input id="bp-front-height" type="number" min="30" max="700" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 font-mono text-cyan-300"></label>
+              <label class="text-[10px] text-slate-500">Fondo<input id="bp-front-depth" type="number" min="5" max="160" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 font-mono text-cyan-300"></label>
+              <label class="text-[10px] text-slate-500">Separación desde abajo<input id="bp-front-bottom" type="number" min="0" max="800" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 font-mono text-cyan-300"></label>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 rounded-lg border border-slate-800 bg-slate-950 p-2.5">
+            <label class="col-span-2 flex items-center justify-between text-[11px] text-slate-300">Bolsillos laterales (par) <input id="bp-side-enabled" type="checkbox" checked class="accent-cyan-500"></label>
+            <label class="text-[10px] text-slate-500">Ancho sobre el costado<input id="bp-side-width" type="number" min="20" max="300" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 font-mono text-cyan-300"></label>
+            <label class="text-[10px] text-slate-500">Alto<input id="bp-side-height" type="number" min="20" max="600" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 font-mono text-cyan-300"></label>
+            <label class="text-[10px] text-slate-500">Saliente<input id="bp-side-depth" type="number" min="5" max="120" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 font-mono text-cyan-300"></label>
+            <span></span>
+          </div>
+          <div class="grid grid-cols-2 gap-2 rounded-lg border border-slate-800 bg-slate-950 p-2.5">
+            <label class="col-span-2 flex items-center justify-between text-[11px] text-slate-300">Tirantes traseros <input id="bp-straps-enabled" type="checkbox" checked class="accent-cyan-500"></label>
+            <label class="text-[10px] text-slate-500">Ancho<input id="bp-strap-width" type="number" min="15" max="180" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 font-mono text-cyan-300"></label>
+            <label class="text-[10px] text-slate-500">Grosor<input id="bp-strap-thickness" type="number" min="3" max="40" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 font-mono text-cyan-300"></label>
+          </div>
+          <div class="grid grid-cols-2 gap-2 rounded-lg border border-slate-800 bg-slate-950 p-2.5">
+            <label class="col-span-2 flex items-center justify-between text-[11px] text-slate-300">Asa superior <input id="bp-handle-enabled" type="checkbox" checked class="accent-cyan-500"></label>
+            <label class="text-[10px] text-slate-500">Altura del arco<input id="bp-handle-height" type="number" min="15" max="200" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 font-mono text-cyan-300"></label>
+            <label class="text-[10px] text-slate-500">Grosor<input id="bp-handle-thickness" type="number" min="4" max="40" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 font-mono text-cyan-300"></label>
+          </div>
+        </div>
+
+        <div id="controls-cap" class="hidden p-4 space-y-3">
+          <div>
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-cyan-300"><i class="fa-solid fa-hat-cowboy mr-1.5"></i> Gorra · medidas en mm</h2>
+            <p class="mt-1 text-[10px] text-slate-500">Ajusta la copa y la visera. La parte frontal apunta hacia la cámara.</p>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="text-[10px] text-slate-400">Ancho de copa<input id="cap-width" type="number" min="100" max="400" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-cyan-300"></label>
+            <label class="text-[10px] text-slate-400">Fondo de copa<input id="cap-depth" type="number" min="100" max="400" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-cyan-300"></label>
+            <label class="text-[10px] text-slate-400">Altura de copa<input id="cap-height" type="number" min="40" max="250" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-cyan-300"></label>
+            <label class="text-[10px] text-slate-400">Largo de visera<input id="cap-brim-length" type="number" min="20" max="180" step="1" class="mt-1 w-full rounded border border-slate-800 bg-slate-950 px-2 py-1.5 font-mono text-cyan-300"></label>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="flex items-center justify-between rounded border border-slate-800 bg-slate-950 px-2 py-1.5 text-[10px] text-slate-400">Color de tela<input id="cap-fabric-color" type="color" class="h-6 w-8 cursor-pointer rounded border-0 bg-transparent"></label>
+            <label class="flex items-center justify-between rounded border border-slate-800 bg-slate-950 px-2 py-1.5 text-[10px] text-slate-400">Color de visera<input id="cap-visor-color" type="color" class="h-6 w-8 cursor-pointer rounded border-0 bg-transparent"></label>
+          </div>
+        </div>
+
+        <!-- Handle Configuration (for Mugs/Glasses/Jars) -->
+        <div id="handle-section" class="p-4 pt-2">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-xs font-medium text-slate-300 flex items-center gap-2">
+              <i class="fa-solid fa-circle-notch text-slate-400"></i> Añadir Asa / Agarradera
+            </span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="toggle-handle" class="sr-only peer" checked>
+              <div class="w-8 h-4 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-cyan-500"></div>
+            </label>
+          </div>
+
+          <div id="handle-options" class="space-y-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[10px] text-slate-400 mb-1">Altura Asa (mm)</label>
+                <input type="number" id="input-handle-height" value="68" min="10" max="300" class="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-xs font-mono text-slate-200" />
+              </div>
+              <div>
+                <label class="block text-[10px] text-slate-400 mb-1">Ancho Afuera (mm)</label>
+                <input type="number" id="input-handle-width" value="36" min="5" max="150" class="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-xs font-mono text-slate-200" />
+              </div>
+            </div>
+            <div>
+              <label class="block text-[10px] text-slate-400 mb-1">Grosor Tubo Asa (mm)</label>
+              <input type="number" id="input-handle-thickness" value="12" min="3" max="30" class="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-xs font-mono text-slate-200" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Material & Finish -->
+        <div class="p-4 space-y-2">
+          <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider">Material & Acabado Visual</label>
+          <div class="grid grid-cols-3 gap-2">
+            <button data-mat="ceramic" class="mat-btn active px-2 py-1.5 rounded text-[11px] border border-cyan-500 bg-cyan-950/30 text-cyan-300">Cerámica/Plástico</button>
+            <button data-mat="metal" class="mat-btn px-2 py-1.5 rounded text-[11px] border border-slate-800 bg-slate-950 text-slate-400">Metal / Vidrio</button>
+            <button data-mat="paper" class="mat-btn px-2 py-1.5 rounded text-[11px] border border-slate-800 bg-slate-950 text-slate-400">Mate / Papel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI IMAGE ANALYSIS PANEL -->
+      <div id="panel-ai" class="p-4 space-y-4 hidden">
+        <div class="p-3 bg-purple-950/30 border border-purple-800/50 rounded-xl space-y-2">
+          <div class="flex items-center gap-2 text-purple-300 font-semibold text-xs">
+            <i class="fa-solid fa-wand-magic-sparkles text-purple-400"></i> IA Vision Image-to-3D Generator
+          </div>
+          <p class="text-[11px] text-slate-300 leading-relaxed">
+            Sube varias vistas y escribe las dimensiones medidas. Gemini analizará las imágenes y propondrá una forma paramétrica para ajustar en el visor. El resultado no es una reconstrucción automática de malla orgánica: se genera con los perfiles y formas disponibles.
+          </p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wider">1. Clave de Gemini</label>
+          <input type="password" id="ai-api-key" autocomplete="off" placeholder="Pega tu clave de Google AI Studio" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-purple-500 focus:outline-none" />
+          <p class="mt-1 text-[10px] text-slate-500">Se usa solo en esta página y no se guarda. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" class="text-purple-300 underline">Obtener clave</a></p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wider" for="ai-product-type">Tipo de producto</label>
+          <select id="ai-product-type" class="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-purple-500 focus:outline-none">
+            <option value="auto">Detectar automáticamente</option>
+            <option value="cap">Gorra con visera</option>
+          </select>
+          <p class="mt-1 text-[10px] text-slate-500">Si estás modelando una gorra, selecciónala para usar la copa y la visera paramétricas.</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wider">2. Fotos y orientación de cada vista</label>
+          <p class="mb-2 text-[10px] leading-relaxed text-slate-500">Después de subirlas, etiqueta cada foto: frente, espalda, izquierda, derecha o arriba. Usa una etiqueta distinta por vista cuando sea posible.</p>
+          <div id="ai-drop-zone" class="relative border-2 border-dashed border-purple-800/60 hover:border-purple-400 rounded-xl p-4 text-center bg-slate-950 cursor-pointer transition">
+            <input type="file" id="ai-file-input" accept="image/*" multiple class="absolute inset-0 opacity-0 cursor-pointer z-10" />
+            
+            <div id="ai-photo-preview-container" class="hidden relative w-full max-h-64 rounded-lg overflow-y-auto mb-2">
+              <div id="ai-photo-gallery" class="grid grid-cols-2 gap-2 w-full p-2"></div>
+              <button id="ai-btn-remove-photo" class="absolute top-2 right-2 w-7 h-7 rounded-full bg-slate-900/90 text-white flex items-center justify-center text-xs hover:bg-red-500 transition z-30">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+
+            <div id="ai-photo-placeholder" class="py-3">
+              <i class="fa-solid fa-cloud-arrow-up text-3xl text-purple-400 mb-2"></i>
+              <p class="text-xs font-semibold text-slate-200">Selecciona varias fotos del mismo producto</p>
+              <p class="text-[10px] text-slate-400 mt-1">JPG, PNG o WEBP · hasta 6 imágenes</p>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wider">3. Medidas exactas del producto (mm)</label>
+          <div class="grid grid-cols-3 gap-2">
+            <input type="number" id="ai-measure-width" min="1" step="0.1" placeholder="Ancho" aria-label="Ancho real en milímetros" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-xs text-slate-200 focus:border-purple-500 focus:outline-none" />
+            <input type="number" id="ai-measure-height" min="1" step="0.1" placeholder="Alto" aria-label="Alto real en milímetros" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-xs text-slate-200 focus:border-purple-500 focus:outline-none" />
+            <input type="number" id="ai-measure-depth" min="1" step="0.1" placeholder="Fondo" aria-label="Profundidad real en milímetros" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-xs text-slate-200 focus:border-purple-500 focus:outline-none" />
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wider">4. Indicaciones adicionales</label>
+          <input type="text" id="ai-prompt-input" placeholder="Ej. Haz el cuello más estilizado o dale aspecto de vidrio..." class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-purple-500 focus:outline-none" />
+        </div>
+
+        <button id="btn-run-ai" class="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 hover:opacity-90 text-white font-bold text-xs transition shadow-lg shadow-purple-500/25 flex items-center justify-center gap-2">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> Analizar fotos y generar perfil 3D
+        </button>
+
+        <div id="ai-status-box" class="hidden p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-1">
+          <div class="flex items-center gap-2 font-medium text-purple-400" id="ai-status-title">
+            <i class="fa-solid fa-spinner animate-spin"></i> Procesando imagen con Gemini AI...
+          </div>
+          <p class="text-[11px] text-slate-400" id="ai-status-detail">Extrayendo contorno y malla 3D...</p>
+        </div>
+
+      </div>
+
+    </aside>
+
+    <main class="flex-1 flex flex-col bg-slate-950 relative overflow-hidden">
+      
+      <!-- Tab Headers -->
+      <div class="h-10 border-b border-slate-800 bg-slate-900/60 px-4 flex items-center justify-between shrink-0">
+        <div class="flex items-center space-x-1">
+          <button id="tab-3d" class="tab-btn active px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-cyan-400 border border-slate-700 flex items-center gap-2">
+            <i class="fa-solid fa-eye"></i> Visor 3D Interactivo
+          </button>
+          <button id="tab-code" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 flex items-center gap-2">
+            <i class="fa-solid fa-code"></i> Script Python Blender (.py)
+          </button>
+        </div>
+
+        <div class="flex items-center gap-2 text-xs text-slate-400">
+          <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>Sincronizado 1:1</span>
+        </div>
+      </div>
+
+      <!-- VIEWPORT 3D CONTAINER -->
+      <div id="view-3d" class="relative flex-1 w-full h-full bg-radial from-slate-900 to-slate-950">
+        <!-- Overlay Info -->
+        <div class="absolute top-4 left-4 z-10 pointer-events-none space-y-1 bg-slate-900/80 backdrop-blur p-3 rounded-xl border border-slate-800 text-xs text-slate-300">
+          <p class="font-medium text-white flex items-center gap-2">
+            <i class="fa-solid fa-arrows-spin text-cyan-400"></i> Previsualizador WebGL 3D
+          </p>
+          <p class="text-[11px] text-slate-400">Clic Izquierdo: Rotar | Clic Derecho: Desplazar | Rueda: Zoom</p>
+        </div>
+
+        <!-- Canvas 3D Host -->
+        <div id="canvas-container" class="w-full h-full"></div>
+      </div>
+
+      <!-- CODE CONTAINER -->
+      <div id="view-code" class="hidden flex-1 w-full h-full bg-slate-950 overflow-hidden flex flex-col p-4">
+        <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-red-500"></span>
+            <span class="w-3 h-3 rounded-full bg-yellow-500"></span>
+            <span class="w-3 h-3 rounded-full bg-green-500"></span>
+            <span class="text-xs font-mono text-slate-400 ml-2">blender_product_generator.py</span>
+          </div>
+          <button id="btn-copy-code-inline" class="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center gap-1.5">
+            <i class="fa-regular fa-copy"></i> Copiar Código Python
+          </button>
+        </div>
+        <pre class="flex-1 overflow-auto font-mono text-xs text-slate-300 bg-slate-900/80 p-4 rounded-xl border border-slate-800/80 leading-relaxed"><code id="code-output"># Generando script para Blender...</code></pre>
+      </div>
+
+    </main>
+  </div>
+
+  <script>
+    const state = {
+      mode: 'parametric',      // parametric, ai
+      preset: 'mug',           // mug, thermos, can, jar, tube, notebook, pouch, backpack, cap, custom_lathe
+      height: 120,             // mm
+      wallThickness: 3,        // mm
+      
+      // Multi-point Revolute Contour (diameters in mm at 100%, 75%, 50%, 25%, 0% height)
+      dTop: 70,
+      dUpper: 50,
+      dMid: 80,
+      dLower: 80,
+      dBottom: 75,
+
+      // Box / Pouch / Tube dimensions
+      boxWidth: 148,
+      boxHeight: 210,
+      boxDepth: 30,
+
+      // Handle config
+      hasHandle: true,
+      handleHeight: 68,
+      handleWidth: 36,
+      handleThickness: 12,
+
+      backpack: {
+        bodyWidth: 300, bodyHeight: 420, bodyDepth: 160, fabricColor: '#40516a', trimColor: '#202a3a',
+        frontEnabled: true, frontWidth: 220, frontHeight: 150, frontDepth: 35, frontBottom: 80,
+        sidesEnabled: true, sideWidth: 70, sideHeight: 180, sideDepth: 45,
+        strapsEnabled: true, strapWidth: 65, strapThickness: 14,
+        handleEnabled: true, handleHeight: 55, handleThickness: 12,
+      },
+      cap: { width: 190, depth: 175, crownHeight: 105, brimLength: 70, fabricColor: '#27364b', visorColor: '#202a3a' },
+
+      // Material
+      material: 'ceramic',     // ceramic, metal, paper
+      segments: 64,
+
+      // Imágenes optimizadas en el navegador antes de enviarlas a Gemini.
+      aiImages: [],
+      referenceImages: [],
+      referenceFiles: []
+    };
+
+    // DOM Elements
+    const elements = {
+      modeParametricBtn: document.getElementById('mode-parametric-btn'),
+      modeAiBtn: document.getElementById('mode-ai-btn'),
+      panelParametric: document.getElementById('panel-parametric'),
+      panelAi: document.getElementById('panel-ai'),
+      controlsLathe: document.getElementById('controls-lathe'),
+      controlsBox: document.getElementById('controls-box'),
+      controlsBackpack: document.getElementById('controls-backpack'),
+      controlsCap: document.getElementById('controls-cap'),
+      capInputs: {
+        width: document.getElementById('cap-width'), depth: document.getElementById('cap-depth'),
+        crownHeight: document.getElementById('cap-height'), brimLength: document.getElementById('cap-brim-length'),
+        fabricColor: document.getElementById('cap-fabric-color'), visorColor: document.getElementById('cap-visor-color'),
+      },
+      backpackInputs: {
+        bodyWidth: document.getElementById('bp-body-width'), bodyHeight: document.getElementById('bp-body-height'), bodyDepth: document.getElementById('bp-body-depth'), fabricColor: document.getElementById('bp-fabric-color'), trimColor: document.getElementById('bp-trim-color'),
+        frontEnabled: document.getElementById('bp-front-enabled'), frontWidth: document.getElementById('bp-front-width'), frontHeight: document.getElementById('bp-front-height'), frontDepth: document.getElementById('bp-front-depth'), frontBottom: document.getElementById('bp-front-bottom'),
+        sidesEnabled: document.getElementById('bp-side-enabled'), sideWidth: document.getElementById('bp-side-width'), sideHeight: document.getElementById('bp-side-height'), sideDepth: document.getElementById('bp-side-depth'),
+        strapsEnabled: document.getElementById('bp-straps-enabled'), strapWidth: document.getElementById('bp-strap-width'), strapThickness: document.getElementById('bp-strap-thickness'),
+        handleEnabled: document.getElementById('bp-handle-enabled'), handleHeight: document.getElementById('bp-handle-height'), handleThickness: document.getElementById('bp-handle-thickness'),
+      },
+      handleSection: document.getElementById('handle-section'),
+      
+      inputHeight: document.getElementById('input-height'),
+      inputWall: document.getElementById('input-wall'),
+      
+      sliderDTop: document.getElementById('slider-d-top'),
+      sliderDUpper: document.getElementById('slider-d-upper'),
+      sliderDMid: document.getElementById('slider-d-mid'),
+      sliderDLower: document.getElementById('slider-d-lower'),
+      sliderDBottom: document.getElementById('slider-d-bottom'),
+
+      labelDTop: document.getElementById('input-d-top'),
+      labelDUpper: document.getElementById('input-d-upper'),
+      labelDMid: document.getElementById('input-d-mid'),
+      labelDLower: document.getElementById('input-d-lower'),
+      labelDBottom: document.getElementById('input-d-bottom'),
+      targetDiameter: document.getElementById('input-target-diameter'),
+      scaleProfileButton: document.getElementById('btn-scale-profile'),
+      geometryWarning: document.getElementById('geometry-warning'),
+      saveProfileButton: document.getElementById('btn-save-profile'),
+      loadProfileButton: document.getElementById('btn-load-profile'),
+      profileFileInput: document.getElementById('profile-file-input'),
+
+      inputBoxWidth: document.getElementById('input-box-width'),
+      inputBoxHeight: document.getElementById('input-box-height'),
+      inputBoxDepth: document.getElementById('input-box-depth'),
+      
+      toggleHandle: document.getElementById('toggle-handle'),
+      handleOptions: document.getElementById('handle-options'),
+      inputHandleHeight: document.getElementById('input-handle-height'),
+      inputHandleWidth: document.getElementById('input-handle-width'),
+      inputHandleThickness: document.getElementById('input-handle-thickness'),
+      
+      statType: document.getElementById('stat-type'),
+      codeOutput: document.getElementById('code-output'),
+      view3d: document.getElementById('view-3d'),
+      viewCode: document.getElementById('view-code'),
+      tab3d: document.getElementById('tab-3d'),
+      tabCode: document.getElementById('tab-code'),
+      
+      // Parametric image preview
+      fileInput: document.getElementById('file-input'),
+      photoPreviewContainer: document.getElementById('photo-preview-container'),
+      photoGallery: document.getElementById('photo-gallery'),
+      photoUploadPlaceholder: document.getElementById('photo-upload-placeholder'),
+      btnRemovePhoto: document.getElementById('btn-remove-photo'),
+      universalApiKey: document.getElementById('universal-api-key'),
+      btnAnalyzeGuide: document.getElementById('btn-analyze-guide'),
+      guideAiStatus: document.getElementById('guide-ai-status'),
+
+      // AI Image-to-3D upload controls
+      aiFileInput: document.getElementById('ai-file-input'),
+      aiPhotoPreviewContainer: document.getElementById('ai-photo-preview-container'),
+      aiPhotoGallery: document.getElementById('ai-photo-gallery'),
+      aiPhotoPlaceholder: document.getElementById('ai-photo-placeholder'),
+      aiBtnRemovePhoto: document.getElementById('ai-btn-remove-photo'),
+      aiApiKey: document.getElementById('ai-api-key'),
+      aiProductType: document.getElementById('ai-product-type'),
+      aiMeasureWidth: document.getElementById('ai-measure-width'),
+      aiMeasureHeight: document.getElementById('ai-measure-height'),
+      aiMeasureDepth: document.getElementById('ai-measure-depth'),
+      aiPromptInput: document.getElementById('ai-prompt-input'),
+      btnRunAi: document.getElementById('btn-run-ai'),
+      aiStatusBox: document.getElementById('ai-status-box'),
+      aiStatusTitle: document.getElementById('ai-status-title'),
+      aiStatusDetail: document.getElementById('ai-status-detail')
+    };
+
+    let scene, camera, renderer, controls;
+    let productMeshGroup = new THREE.Group();
+
+    function init3D() {
+      const container = document.getElementById('canvas-container');
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0a0f1d);
+
+      camera = new THREE.PerspectiveCamera(40, width / height, 0.01, 10);
+      camera.position.set(0, 0.18, 0.38);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      container.appendChild(renderer.domElement);
+
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.maxPolarAngle = Math.PI / 2 + 0.1;
+      controls.target.set(0, 0.05, 0);
+
+      // Lighting Setup
+      const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+      scene.add(ambientLight);
+
+      const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.8);
+      dirLight1.position.set(2, 4, 3);
+      scene.add(dirLight1);
+
+      const dirLight2 = new THREE.DirectionalLight(0x38bdf8, 0.8);
+      dirLight2.position.set(-3, 2, -2);
+      scene.add(dirLight2);
+
+      // Floor Grid
+      const gridHelper = new THREE.GridHelper(0.5, 20, 0x0891b2, 0x1e293b);
+      gridHelper.position.y = 0;
+      scene.add(gridHelper);
+
+      scene.add(productMeshGroup);
+
+      window.addEventListener('resize', onWindowResize);
+      update3DModel();
+      animate();
+    }
+
+    function onWindowResize() {
+      const container = document.getElementById('canvas-container');
+      if (!container) return;
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    function createRoundedPrism(width, height, depth, radius, material, name, position) {
+      const w = Math.max(0.005, width), h = Math.max(0.005, height), d = Math.max(0.003, depth);
+      const r = Math.min(Math.max(0.001, radius), w / 2 - 0.001, h / 2 - 0.001);
+      const shape = new THREE.Shape();
+      shape.moveTo(-w / 2 + r, -h / 2);
+      shape.lineTo(w / 2 - r, -h / 2); shape.quadraticCurveTo(w / 2, -h / 2, w / 2, -h / 2 + r);
+      shape.lineTo(w / 2, h / 2 - r); shape.quadraticCurveTo(w / 2, h / 2, w / 2 - r, h / 2);
+      shape.lineTo(-w / 2 + r, h / 2); shape.quadraticCurveTo(-w / 2, h / 2, -w / 2, h / 2 - r);
+      shape.lineTo(-w / 2, -h / 2 + r); shape.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2);
+      const geometry = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: false, curveSegments: 8, steps: 1 });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = name;
+      mesh.position.set(position.x, position.y, position.z - d / 2);
+      return mesh;
+    }
+
+    function addBackpackModel() {
+      const config = state.backpack;
+      const m = (value) => value / 1000;
+      const w = m(config.bodyWidth), h = m(config.bodyHeight), d = m(config.bodyDepth);
+      const fabric = () => new THREE.MeshStandardMaterial({ color: config.fabricColor, roughness: 0.88, metalness: 0.02 });
+      const trim = () => new THREE.MeshStandardMaterial({ color: config.trimColor, roughness: 0.9, metalness: 0.01 });
+      const pocketMat = () => new THREE.MeshStandardMaterial({ color: config.fabricColor, roughness: 0.86, metalness: 0.02 });
+      const body = createRoundedPrism(w, h, d, m(28), fabric(), 'printable', { x: 0, y: h / 2, z: 0 });
+      productMeshGroup.add(body);
+
+      if (config.frontEnabled) {
+        const pw = Math.min(m(config.frontWidth), w * 0.94);
+        const ph = Math.min(m(config.frontHeight), h * 0.82);
+        const pd = m(config.frontDepth);
+        const py = Math.min(Math.max(m(config.frontBottom) + ph / 2, ph / 2 + 0.005), h - ph / 2 - 0.005);
+        productMeshGroup.add(createRoundedPrism(pw, ph, pd, Math.min(m(18), ph * 0.16), pocketMat(), 'front_pocket', { x: 0, y: py, z: d / 2 + pd / 2 - m(1) }));
+        const zip = createRoundedPrism(pw * 0.72, m(3), m(2), m(1), trim(), 'front_pocket_zipper', { x: 0, y: py + ph * 0.32, z: d / 2 + pd - m(1.5) });
+        productMeshGroup.add(zip);
+      }
+
+      if (config.sidesEnabled) {
+        const sw = Math.min(m(config.sideWidth), d * 0.92);
+        const sh = Math.min(m(config.sideHeight), h * 0.88);
+        const sd = m(config.sideDepth);
+        const sy = Math.min(Math.max(sh / 2 + m(35), sh / 2), h - sh / 2);
+        for (const side of [-1, 1]) {
+          const pocket = createRoundedPrism(sd, sh, sw, Math.min(m(12), sh * 0.12), pocketMat(), side < 0 ? 'side_pocket_left' : 'side_pocket_right', { x: side * (w / 2 + sd / 2 - m(1)), y: sy, z: 0 });
+          productMeshGroup.add(pocket);
+        }
+      }
+
+      if (config.strapsEnabled) {
+        const strapW = m(config.strapWidth), strapT = m(config.strapThickness), strapH = h * 0.72;
+        for (const side of [-1, 1]) {
+          const strap = createRoundedPrism(strapW, strapH, strapT, strapW * 0.42, trim(), side < 0 ? 'shoulder_strap_left' : 'shoulder_strap_right', { x: side * w * 0.29, y: h * 0.48, z: -d / 2 - strapT / 2 });
+          strap.rotation.z = side * -0.1;
+          productMeshGroup.add(strap);
+        }
+      }
+
+      if (config.handleEnabled) {
+        const handleH = m(config.handleHeight), handleT = m(config.handleThickness) / 2;
+        const points = [
+          new THREE.Vector3(-w * 0.13, h - m(2), 0),
+          new THREE.Vector3(-w * 0.13, h + handleH * 0.62, 0),
+          new THREE.Vector3(-w * 0.08, h + handleH, 0),
+          new THREE.Vector3(w * 0.08, h + handleH, 0),
+          new THREE.Vector3(w * 0.13, h + handleH * 0.62, 0),
+          new THREE.Vector3(w * 0.13, h - m(2), 0),
+        ];
+        const curve = new THREE.CatmullRomCurve3(points);
+        const handle = new THREE.Mesh(new THREE.TubeGeometry(curve, 32, handleT, 10, false), trim());
+        handle.name = 'top_carry_handle';
+        productMeshGroup.add(handle);
+      }
+    }
+
+    function addCapModel() {
+      const cfg = state.cap;
+      const mm = (value) => value / 1000;
+      const rx = mm(cfg.width) / 2;
+      const rz = mm(cfg.depth) / 2;
+      const crownH = mm(cfg.crownHeight);
+      const bandH = Math.max(mm(12), crownH * 0.13);
+      const brimLength = mm(cfg.brimLength);
+      const fabric = new THREE.MeshStandardMaterial({ color: cfg.fabricColor, roughness: 0.88, metalness: 0.01, side: THREE.DoubleSide });
+      const visor = new THREE.MeshStandardMaterial({ color: cfg.visorColor, roughness: 0.84, metalness: 0.01, side: THREE.DoubleSide });
+      const seamMaterial = new THREE.MeshStandardMaterial({ color: cfg.visorColor, roughness: 0.9 });
+
+      // Copa semiesférica elíptica abierta por debajo, para conservar la silueta textil.
+      const thetaSteps = 20, phiSteps = 48;
+      const domeVertices = [], domeIndices = [];
+      for (let row = 0; row <= thetaSteps; row += 1) {
+        const theta = (row / thetaSteps) * Math.PI / 2;
+        for (let col = 0; col <= phiSteps; col += 1) {
+          const phi = (col / phiSteps) * Math.PI * 2;
+          domeVertices.push(rx * Math.sin(theta) * Math.cos(phi), bandH + crownH * Math.cos(theta), rz * Math.sin(theta) * Math.sin(phi));
+        }
+      }
+      for (let row = 0; row < thetaSteps; row += 1) {
+        for (let col = 0; col < phiSteps; col += 1) {
+          const a = row * (phiSteps + 1) + col, b = a + phiSteps + 1;
+          domeIndices.push(a, b, a + 1, a + 1, b, b + 1);
+        }
+      }
+      const domeGeometry = new THREE.BufferGeometry();
+      domeGeometry.setAttribute('position', new THREE.Float32BufferAttribute(domeVertices, 3));
+      domeGeometry.setIndex(domeIndices);
+      domeGeometry.computeVertexNormals();
+      const dome = new THREE.Mesh(domeGeometry, fabric);
+      dome.name = 'printable_cap_crown';
+      productMeshGroup.add(dome);
+
+      // Visera curva en forma de media luna; la punta se extiende hacia +Z.
+      const acrossSteps = 32, depthSteps = 12, brimVertices = [], brimIndices = [];
+      for (let layer = 0; layer < 2; layer += 1) {
+        for (let row = 0; row <= depthSteps; row += 1) {
+          const v = row / depthSteps;
+          for (let col = 0; col <= acrossSteps; col += 1) {
+            const s = col / acrossSteps * 2 - 1;
+            const x = s * rx * 1.08;
+            const rootZ = rz * Math.sqrt(Math.max(0, 1 - Math.min(1, (x / rx) ** 2)));
+            const extension = brimLength * Math.sqrt(Math.max(0, 1 - s * s));
+            const z = rootZ + extension * v;
+            const y = bandH - v * mm(5) - (1 - s * s) * mm(3) - layer * mm(2.2);
+            brimVertices.push(x, y, z);
+          }
+        }
+      }
+      const rowSize = acrossSteps + 1, layerSize = (depthSteps + 1) * rowSize;
+      for (let layer = 0; layer < 2; layer += 1) {
+        const base = layer * layerSize;
+        for (let row = 0; row < depthSteps; row += 1) {
+          for (let col = 0; col < acrossSteps; col += 1) {
+            const a = base + row * rowSize + col, b = a + rowSize;
+            brimIndices.push(a, a + 1, b, a + 1, b + 1, b);
+          }
+        }
+      }
+      const brimGeometry = new THREE.BufferGeometry();
+      brimGeometry.setAttribute('position', new THREE.Float32BufferAttribute(brimVertices, 3));
+      brimGeometry.setIndex(brimIndices);
+      brimGeometry.computeVertexNormals();
+      const brim = new THREE.Mesh(brimGeometry, visor);
+      brim.name = 'printable_cap_brim';
+      productMeshGroup.add(brim);
+
+      const ringPoints = [];
+      for (let i = 0; i <= 64; i += 1) {
+        const angle = i / 64 * Math.PI * 2;
+        ringPoints.push(new THREE.Vector3(rx * Math.cos(angle), bandH, rz * Math.sin(angle)));
+      }
+      const bandCurve = new THREE.CatmullRomCurve3(ringPoints);
+      const band = new THREE.Mesh(new THREE.TubeGeometry(bandCurve, 64, mm(2), 6, true), seamMaterial);
+      band.name = 'cap_lower_seam';
+      productMeshGroup.add(band);
+
+      // Costuras que dividen la copa en paneles y botón superior.
+      for (let panel = 0; panel < 4; panel += 1) {
+        const phi = panel * Math.PI / 2 + Math.PI / 4;
+        const points = [];
+        for (let i = 0; i <= 16; i += 1) {
+          const theta = i / 16 * Math.PI / 2;
+          points.push(new THREE.Vector3(rx * Math.sin(theta) * Math.cos(phi), bandH + crownH * Math.cos(theta), rz * Math.sin(theta) * Math.sin(phi)));
+        }
+        const seam = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 24, mm(0.8), 4, false), seamMaterial);
+        seam.name = `cap_panel_seam_${panel + 1}`;
+        productMeshGroup.add(seam);
+      }
+      const button = new THREE.Mesh(new THREE.SphereGeometry(mm(5), 12, 8), seamMaterial);
+      button.position.y = bandH + crownH - mm(2);
+      button.name = 'cap_top_button';
+      productMeshGroup.add(button);
+      elements.statType.textContent = 'Gorra · copa y visera';
+    }
+
+    function update3DModel() {
+      while (productMeshGroup.children.length > 0) {
+        const obj = productMeshGroup.children[0];
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) obj.material.dispose();
+        productMeshGroup.remove(obj);
+      }
+
+      // Material Config
+      let material;
+      if (state.material === 'metal') {
+        material = new THREE.MeshStandardMaterial({ color: 0xd1d5db, roughness: 0.2, metalness: 0.85 });
+      } else if (state.material === 'paper') {
+        material = new THREE.MeshStandardMaterial({ color: 0xf3f4f6, roughness: 0.8, metalness: 0.05 });
+      } else {
+        material = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.15, metalness: 0.05 });
+      }
+
+      if (state.preset === 'cap') {
+        addCapModel();
+      } else if (state.preset === 'backpack') {
+        elements.statType.textContent = 'Mochila modular por piezas';
+        addBackpackModel();
+      } else if (state.preset === 'notebook') {
+        // Box / Book / Packaging Mesh
+        const w = state.boxWidth / 1000;
+        const h = state.boxHeight / 1000;
+        const d = state.boxDepth / 1000;
+
+        const boxGeo = new THREE.BoxGeometry(w, h, d);
+        const boxMesh = new THREE.Mesh(boxGeo, material);
+        boxMesh.name = 'printable';
+        boxMesh.position.set(0, h / 2, 0);
+        productMeshGroup.add(boxMesh);
+
+        elements.statType.textContent = 'Prismático / Caja';
+      } else if (state.preset === 'pouch') {
+        // Flexible Stand-Up Pouch Mesh
+        const w = state.boxWidth / 1000;
+        const h = state.boxHeight / 1000;
+        const d = state.boxDepth / 1000;
+
+        const shape = new THREE.Shape();
+        shape.moveTo(-w/2, 0);
+        shape.lineTo(w/2, 0);
+        shape.lineTo(w/2 * 0.9, h);
+        shape.lineTo(-w/2 * 0.9, h);
+        shape.closePath();
+
+        const extrudeSettings = { depth: d, bevelEnabled: true, bevelSegments: 3, steps: 1, bevelSize: d/3, bevelThickness: d/3 };
+        const pouchGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        pouchGeo.center();
+        const pouchMesh = new THREE.Mesh(pouchGeo, material);
+        pouchMesh.name = 'printable';
+        pouchMesh.position.set(0, h / 2, 0);
+        productMeshGroup.add(pouchMesh);
+
+        elements.statType.textContent = 'Bolsa Flexible / Stand-Up Pouch';
+      } else {
+        // Revolute Lathe 360° Geometry (Custom Multi-point contour)
+        elements.statType.textContent = 'Revolución 360° Personalizada';
+
+        const h = state.height / 1000;
+        const rTop = (state.dTop / 2) / 1000;
+        const rUpper = (state.dUpper / 2) / 1000;
+        const rMid = (state.dMid / 2) / 1000;
+        const rLower = (state.dLower / 2) / 1000;
+        const rBottom = (state.dBottom / 2) / 1000;
+
+        const wall = (state.wallThickness) / 1000;
+        const floor = 0.004;
+
+        // Spline / Contour Curve for Smooth Revolution
+        const curvePoints = [
+          new THREE.Vector2(Math.max(rBottom, 0.002), 0.002),
+          new THREE.Vector2(Math.max(rLower, 0.002), h * 0.25),
+          new THREE.Vector2(Math.max(rMid, 0.002), h * 0.50),
+          new THREE.Vector2(Math.max(rUpper, 0.002), h * 0.75),
+          new THREE.Vector2(Math.max(rTop, 0.002), h)
+        ];
+
+        const spline = new THREE.SplineCurve(curvePoints);
+        const outerProfile = spline.getPoints(30);
+
+        const lathePoints = [];
+        lathePoints.push(new THREE.Vector2(0, 0));
+        lathePoints.push(new THREE.Vector2(Math.max(rBottom - 0.002, 0.001), 0));
+
+        // Add Outer profile
+        outerProfile.forEach(p => lathePoints.push(p));
+
+        // Add Rim top & Wall interior
+        lathePoints.push(new THREE.Vector2(Math.max(rTop - wall, 0.001), h));
+        lathePoints.push(new THREE.Vector2(Math.max(rBottom - wall, 0.001), floor));
+        lathePoints.push(new THREE.Vector2(0, floor));
+
+        const latheGeo = new THREE.LatheGeometry(lathePoints, state.segments);
+        const bodyMesh = new THREE.Mesh(latheGeo, material);
+        bodyMesh.name = 'printable';
+        productMeshGroup.add(bodyMesh);
+
+        // Handle Geometry if enabled
+        if (state.hasHandle) {
+          const handleH = (state.handleHeight) / 1000;
+          const handleW = (state.handleWidth) / 1000;
+          const handleT = (state.handleThickness / 2) / 1000;
+
+          const zTop = h * 0.75;
+          const zBottom = Math.max(zTop - handleH, 0.01);
+          const attachR = (rUpper + rMid) / 2;
+
+          const handleCurve = new THREE.CubicBezierCurve3(
+            new THREE.Vector3(-attachR + 0.002, zTop, 0),
+            new THREE.Vector3(-(attachR + handleW), zTop - 0.005, 0),
+            new THREE.Vector3(-(attachR + handleW), zBottom + 0.005, 0),
+            new THREE.Vector3(-attachR + 0.002, zBottom, 0)
+          );
+
+          const handleGeo = new THREE.TubeGeometry(handleCurve, 32, handleT, 16, false);
+          const handleMesh = new THREE.Mesh(handleGeo, material);
+          handleMesh.name = 'handle';
+          productMeshGroup.add(handleMesh);
+        }
+      }
+
+      updateGeometryWarnings();
+      generateBlenderScript();
+    }
+
+    function generateBlenderScript() {
+      let pyCode = '';
+
+      if (state.preset === 'backpack') {
+        const b = state.backpack;
+        const hexRgb = (hex) => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255);
+        const fabricRgb = hexRgb(b.fabricColor);
+        const trimRgb = hexRgb(b.trimColor);
+        pyCode = `import bpy
+import math
+
+# Mochila modular con cuerpo, bolsillo(s), tirantes y asa como objetos separados.
+# Todas las dimensiones se expresan en metros (las entradas del modelador están en mm).
+W, H, D = ${ (b.bodyWidth / 1000).toFixed(4) }, ${ (b.bodyHeight / 1000).toFixed(4) }, ${ (b.bodyDepth / 1000).toFixed(4) }
+MAT = bpy.data.materials.new('Backpack Fabric')
+MAT.diffuse_color = (${fabricRgb.map((value) => value.toFixed(3)).join(', ')}, 1.0)
+MAT.use_nodes = True
+MAT.node_tree.nodes.get('Principled BSDF').inputs['Roughness'].default_value = 0.86
+TRIM = bpy.data.materials.new('Backpack Trim')
+TRIM.diffuse_color = (${trimRgb.map((value) => value.toFixed(3)).join(', ')}, 1.0)
+TRIM.use_nodes = True
+
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.object.delete(use_global=False)
+
+def add_rounded_box(name, dimensions, location, bevel, material=MAT):
+    bpy.ops.mesh.primitive_cube_add(size=1, location=location)
+    obj = bpy.context.object
+    obj.name = name
+    obj.dimensions = dimensions
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    if bevel > 0:
+        modifier = obj.modifiers.new('Soft sewn edges', 'BEVEL')
+        modifier.width = min(bevel, min(dimensions) * 0.42)
+        modifier.segments = 4
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+    obj.data.materials.append(material)
+    bpy.ops.object.select_all(action='DESELECT')
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.uv.cube_project()
+    bpy.ops.object.mode_set(mode='OBJECT')
+    return obj
+
+body = add_rounded_box('printable', (W, D, H), (0, 0, H / 2), 0.025)
+${b.frontEnabled ? `POCKET_W = min(${ (b.frontWidth / 1000).toFixed(4) }, W * 0.94)
+POCKET_H = min(${ (b.frontHeight / 1000).toFixed(4) }, H * 0.82)
+POCKET_D = ${ (b.frontDepth / 1000).toFixed(4) }
+POCKET_Z = min(max(${ (b.frontBottom / 1000).toFixed(4) } + POCKET_H / 2, POCKET_H / 2 + 0.005), H - POCKET_H / 2 - 0.005)
+add_rounded_box('front_pocket', (POCKET_W, POCKET_D, POCKET_H), (0, -D / 2 - POCKET_D / 2 + 0.001, POCKET_Z), 0.012, MAT)
+add_rounded_box('front_pocket_zipper', (POCKET_W * 0.72, 0.003, 0.002), (0, -D / 2 - POCKET_D + 0.0015, POCKET_Z + POCKET_H * 0.32), 0.001, TRIM)` : ''}
+${b.sidesEnabled ? `SIDE_W = min(${ (b.sideWidth / 1000).toFixed(4) }, D * 0.92)
+SIDE_H = min(${ (b.sideHeight / 1000).toFixed(4) }, H * 0.88)
+SIDE_D = ${ (b.sideDepth / 1000).toFixed(4) }
+for side, name in [(-1, 'side_pocket_left'), (1, 'side_pocket_right')]:
+    add_rounded_box(name, (SIDE_D, SIDE_W, SIDE_H), (side * (W / 2 + SIDE_D / 2 - 0.001), 0, min(H - SIDE_H / 2, SIDE_H / 2 + 0.035)), 0.01, MAT)` : ''}
+${b.strapsEnabled ? `STRAP_W = ${ (b.strapWidth / 1000).toFixed(4) }
+STRAP_T = ${ (b.strapThickness / 1000).toFixed(4) }
+for side, name in [(-1, 'shoulder_strap_left'), (1, 'shoulder_strap_right')]:
+    strap = add_rounded_box(name, (STRAP_W, STRAP_T, H * 0.72), (side * W * 0.29, D / 2 + STRAP_T / 2, H * 0.48), STRAP_W * 0.4, TRIM)
+    strap.rotation_euler[1] = side * -0.10` : ''}
+${b.handleEnabled ? `HANDLE_H = ${ (b.handleHeight / 1000).toFixed(4) }
+HANDLE_T = ${ (b.handleThickness / 2000).toFixed(4) }
+curve = bpy.data.curves.new('top_carry_handle_curve', 'CURVE')
+curve.dimensions = '3D'
+curve.resolution_u = 24
+curve.bevel_depth = HANDLE_T
+curve.bevel_resolution = 3
+spline = curve.splines.new('POLY')
+spline.points.add(8)
+for index, point in enumerate(spline.points):
+    angle = math.pi * index / 8
+    point.co = (math.cos(angle) * W * 0.13, 0, H + math.sin(angle) * HANDLE_H, 1)
+handle = bpy.data.objects.new('top_carry_handle', curve)
+bpy.context.collection.objects.link(handle)
+handle.data.materials.append(TRIM)` : ''}
+
+print('✅ Mochila modular creada. Ajusta las piezas y aplica el material/textura en Blender.')`;
+      } else if (state.preset === 'cap') {
+        const c = state.cap;
+        pyCode = `import bpy
+import math
+
+# Gorra paramétrica: copa elíptica, visera curva y costuras de panel.
+WIDTH = ${ (c.width / 1000).toFixed(4) }
+DEPTH = ${ (c.depth / 1000).toFixed(4) }
+CROWN_H = ${ (c.crownHeight / 1000).toFixed(4) }
+BRIM_L = ${ (c.brimLength / 1000).toFixed(4) }
+BAND_H = max(0.012, CROWN_H * 0.13)
+FABRIC_COLOR = (${[1,3,5].map((i) => (parseInt(c.fabricColor.slice(i, i + 2), 16) / 255).toFixed(3)).join(', ')}, 1.0)
+VISOR_COLOR = (${[1,3,5].map((i) => (parseInt(c.visorColor.slice(i, i + 2), 16) / 255).toFixed(3)).join(', ')}, 1.0)
+
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.object.delete(use_global=False)
+
+def make_material(name, color):
+    mat = bpy.data.materials.new(name)
+    mat.diffuse_color = color
+    mat.use_nodes = True
+    mat.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value = color
+    mat.node_tree.nodes.get('Principled BSDF').inputs['Roughness'].default_value = 0.85
+    return mat
+
+fabric = make_material('Tela de la gorra', FABRIC_COLOR)
+visor_mat = make_material('Visera', VISOR_COLOR)
+rx, rz = WIDTH / 2, DEPTH / 2
+verts, faces = [], []
+THETA, PHI = 24, 64
+for row in range(THETA + 1):
+    theta = (row / THETA) * math.pi / 2
+    for col in range(PHI + 1):
+        phi = (col / PHI) * math.tau
+        verts.append((rx * math.sin(theta) * math.cos(phi), BAND_H + CROWN_H * math.cos(theta), rz * math.sin(theta) * math.sin(phi)))
+for row in range(THETA):
+    for col in range(PHI):
+        a = row * (PHI + 1) + col
+        b = a + PHI + 1
+        faces.append((a, b, a + 1, b + 1))
+mesh = bpy.data.meshes.new('CopaMesh')
+mesh.from_pydata(verts, [], faces)
+mesh.materials.append(fabric)
+crown = bpy.data.objects.new('printable_cap_crown', mesh)
+bpy.context.collection.objects.link(crown)
+for poly in mesh.polygons: poly.use_smooth = True
+
+# Visera en cuadrícula, con curvatura hacia abajo y punta al frente (+Y en Blender).
+verts, faces = [], []
+ACROSS, DEPTH_STEPS = 40, 16
+for layer in range(2):
+    for row in range(DEPTH_STEPS + 1):
+        v = row / DEPTH_STEPS
+        for col in range(ACROSS + 1):
+            s = col / ACROSS * 2 - 1
+            x = s * rx * 1.08
+            root_y = rz * math.sqrt(max(0, 1 - min(1, (x / rx) ** 2)))
+            ext = BRIM_L * math.sqrt(max(0, 1 - s * s))
+            y = root_y + ext * v
+            z = BAND_H - v * 0.005 - (1 - s * s) * 0.003 - layer * 0.0022
+            verts.append((x, y, z))
+row_size = ACROSS + 1
+layer_size = (DEPTH_STEPS + 1) * row_size
+for layer in range(2):
+    base = layer * layer_size
+    for row in range(DEPTH_STEPS):
+        for col in range(ACROSS):
+            a = base + row * row_size + col
+            b = a + row_size
+            faces.append((a, a + 1, b + 1, b))
+brim_mesh = bpy.data.meshes.new('ViseraMesh')
+brim_mesh.from_pydata(verts, [], faces)
+brim_mesh.materials.append(visor_mat)
+brim = bpy.data.objects.new('printable_cap_brim', brim_mesh)
+bpy.context.collection.objects.link(brim)
+for poly in brim_mesh.polygons: poly.use_smooth = True
+
+print('✅ Gorra paramétrica creada. Ajusta ancho, fondo, copa y visera en el generador.')`;
+      } else if (state.preset === 'notebook' || state.preset === 'pouch') {
+        pyCode = `import bpy
+
+# ==========================================
+# SCRIPT BLENDER 4.X/5.X - PRODUCTO RECTANGULAR/BOLSA
+# Producto: ${state.preset.toUpperCase()} (${state.boxWidth}x${state.boxHeight}x${state.boxDepth} mm)
+# ==========================================
+
+WIDTH = ${ (state.boxWidth / 1000).toFixed(4) }
+HEIGHT = ${ (state.boxHeight / 1000).toFixed(4) }
+DEPTH = ${ (state.boxDepth / 1000).toFixed(4) }
+
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete(use_global=False)
+
+bpy.ops.mesh.primitive_cube_add(scale=(WIDTH/2, DEPTH/2, HEIGHT/2), location=(0, 0, HEIGHT/2))
+obj = bpy.context.active_object
+obj.name = "printable"
+
+# Material Principal
+mat = bpy.data.materials.new("${state.preset}_Material")
+mat.use_nodes = True
+obj.data.materials.append(mat)
+
+# Mapeo UV para Estampado Directo
+bpy.ops.object.mode_set(mode='EDIT')
+bpy.ops.mesh.select_all(action='SELECT')
+bpy.ops.uv.cube_project()
+bpy.ops.object.mode_set(mode='OBJECT')
+
+print("✅ Modelo prismático exportado con éxito.");`;
+      } else {
+        pyCode = `import bpy
+import math
+
+# ==========================================
+# SCRIPT BLENDER 4.X/5.X - PRODUCTO EN REVOLUCIÓN 360°
+# Producto: ${state.preset.toUpperCase()} CON PERFIL PARAMÉTRICO
+# ==========================================
+
+HEIGHT = ${ (state.height / 1000).toFixed(4) }          # ${state.height} mm
+WALL = ${ (state.wallThickness / 1000).toFixed(4) }           # ${state.wallThickness} mm
+FLOOR = 0.0040          # 4 mm
+SEGMENTS = ${state.segments}
+
+D_TOP = ${ (state.dTop / 1000).toFixed(4) }
+D_UPPER = ${ (state.dUpper / 1000).toFixed(4) }
+D_MID = ${ (state.dMid / 1000).toFixed(4) }
+D_LOWER = ${ (state.dLower / 1000).toFixed(4) }
+D_BOTTOM = ${ (state.dBottom / 1000).toFixed(4) }
+
+HAS_HANDLE = ${state.hasHandle ? 'True' : 'False'}
+HANDLE_HEIGHT = ${ (state.handleHeight / 1000).toFixed(4) }
+HANDLE_WIDTH = ${ (state.handleWidth / 1000).toFixed(4) }
+HANDLE_RADIUS = ${ ((state.handleThickness / 2) / 1000).toFixed(4) }
+
+# 1. Limpiar escena existente
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete(use_global=False)
+
+mat = bpy.data.materials.new("${state.preset}_Material")
+mat.use_nodes = True
+bsdf = mat.node_tree.nodes.get("Principled BSDF")
+if bsdf:
+    bsdf.inputs["Base Color"].default_value = (0.95, 0.95, 0.95, 1.0)
+    bsdf.inputs["Roughness"].default_value = ${state.material === 'paper' ? '0.8' : '0.15'}
+
+def create_revolute_body():
+    profile = [
+        (0.0, 0.0),
+        (D_BOTTOM / 2 * 0.9, 0.0),
+        (D_BOTTOM / 2, 0.002),
+        (D_LOWER / 2, HEIGHT * 0.25),
+        (D_MID / 2, HEIGHT * 0.50),
+        (D_UPPER / 2, HEIGHT * 0.75),
+        (D_TOP / 2, HEIGHT),
+        (D_TOP / 2 - WALL, HEIGHT),
+        (D_BOTTOM / 2 - WALL, FLOOR),
+        (0.0, FLOOR)
+    ]
+
+    verts, rings, faces = [], [], []
+    for radius, z in profile:
+        if radius <= 1e-8:
+            rings.append(None)
+            continue
+        ring = []
+        for i in range(SEGMENTS):
+            a = 2 * math.pi * i / SEGMENTS
+            ring.append(len(verts))
+            verts.append((radius * math.cos(a), radius * math.sin(a), z))
+        rings.append(ring)
+
+    for k in range(len(profile) - 1):
+        a_ring, b_ring = rings[k], rings[k + 1]
+        if a_ring is not None and b_ring is not None:
+            for i in range(SEGMENTS):
+                j = (i + 1) % SEGMENTS
+                faces.append((a_ring[i], a_ring[j], b_ring[j], b_ring[i]))
+
+    mesh = bpy.data.meshes.new("${state.preset}_Mesh")
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new("printable", mesh)
+    bpy.context.collection.objects.link(obj)
+    obj.data.materials.append(mat)
+    for p in obj.data.polygons:
+        p.use_smooth = True
+    return obj
+
+body = create_revolute_body()
+
+# Blender operators requieren que el cuerpo esté activo y seleccionado.
+bpy.ops.object.select_all(action='DESELECT')
+body.select_set(True)
+bpy.context.view_layer.objects.active = body
+
+# UV Mapping Cilíndrico
+bpy.ops.object.mode_set(mode='EDIT')
+bpy.ops.mesh.select_all(action='SELECT')
+bpy.ops.uv.cylinder_project(direction='VIEW_ON_EQUATOR', align='POLAR_ZX', correct_aspect=True)
+bpy.ops.object.mode_set(mode='OBJECT')
+
+if HAS_HANDLE:
+    attach_radius = (D_UPPER + D_MID) / 4
+    z_top = HEIGHT * 0.75
+    z_bottom = max(z_top - HANDLE_HEIGHT, 0.01)
+    curve_data = bpy.data.curves.new('handle_curve', 'CURVE')
+    curve_data.dimensions = '3D'
+    curve_data.resolution_u = 32
+    curve_data.bevel_depth = HANDLE_RADIUS
+    curve_data.bevel_resolution = 4
+    spline = curve_data.splines.new('BEZIER')
+    spline.bezier_points.add(1)
+    points = [(-attach_radius + 0.002, 0, z_top), (-(attach_radius + HANDLE_WIDTH), 0, z_top - 0.005), (-(attach_radius + HANDLE_WIDTH), 0, z_bottom + 0.005), (-attach_radius + 0.002, 0, z_bottom)]
+    spline.bezier_points.add(2)
+    for point, coordinate in zip(spline.bezier_points, points):
+        point.co = coordinate
+        point.handle_left_type = 'AUTO'
+        point.handle_right_type = 'AUTO'
+    handle = bpy.data.objects.new('handle', curve_data)
+    bpy.context.collection.objects.link(handle)
+    handle.data.materials.append(mat)
+    bpy.ops.object.select_all(action='DESELECT')
+    handle.select_set(True)
+    bpy.context.view_layer.objects.active = handle
+    bpy.ops.object.convert(target='MESH')
+
+print("✅ Modelo de revolución generado en Blender.");`;
+      }
+
+      elements.codeOutput.textContent = pyCode;
+    }
+
+    async function runGeminiImageTo3D(apiKeyOverride = '') {
+      const button = elements.btnRunAi;
+      const apiKey = (apiKeyOverride || elements.aiApiKey.value).trim();
+      const setStatus = (message, loading = false, error = false) => {
+        elements.aiStatusBox.classList.remove('hidden');
+        elements.aiStatusTitle.innerHTML = loading
+          ? '<i class="fa-solid fa-spinner animate-spin text-purple-400"></i> Analizando las fotos…'
+          : error
+            ? '<i class="fa-solid fa-triangle-exclamation text-amber-400"></i> No se pudo analizar'
+            : '<i class="fa-solid fa-circle-check text-emerald-400"></i> Perfil paramétrico generado';
+        elements.aiStatusDetail.textContent = message;
+      };
+      if (!apiKey) { showToast('Pega tu clave de Gemini para analizar las fotos.'); elements.aiApiKey.focus(); return; }
+      if (!state.aiImages.length) { showToast('Selecciona al menos una foto del producto.'); return; }
+
+      setStatus('Gemini compara las vistas y propone un perfil. Tus medidas tienen prioridad sobre las estimaciones.', true);
+      button.disabled = true;
+
+      const measuredWidth = Number(elements.aiMeasureWidth.value) || 0;
+      const measuredHeight = Number(elements.aiMeasureHeight.value) || 0;
+      const measuredDepth = Number(elements.aiMeasureDepth.value) || 0;
+      const userPrompt = elements.aiPromptInput.value.trim();
+      const forcedCap = elements.aiProductType.value === 'cap' || /\b(gorra|gorra\s+con\s+visera|baseball\s+cap)\b/i.test(userPrompt);
+      const validPresets = ['mug','thermos','can','jar','tube','notebook','pouch','backpack','cap','custom_lathe'];
+      const prompt = `Analiza todas las fotos del mismo producto y usa la etiqueta de orientación indicada junto a cada imagen. Compara las vistas frontal, posterior, laterales y superior para deducir proporciones; no confundas izquierda con derecha. Si una vista no está etiquetada, infiérela con cautela. Tipo seleccionado por el usuario: ${forcedCap ? 'gorra con visera (preset obligatorio: cap)' : 'detección automática'}. Elige el preset más específico: si es una gorra con visera, usa cap y estima capWidth, capDepth, crownHeight y brimLength; si es mochila, usa backpack; no representes esos productos como cilindros. Devuelve un perfil paramétrico compatible con el generador, no una malla arbitraria. Responde con JSON puro y estos campos: preset (uno de mug, thermos, can, jar, tube, notebook, pouch, backpack, cap, custom_lathe), height, wallThickness, dTop, dUpper, dMid, dLower, dBottom, hasHandle, handleHeight, handleWidth, boxWidth, boxHeight, boxDepth, capWidth, capDepth, crownHeight, brimLength, material (ceramic, metal o paper), summary. Todas las medidas en mm. Si doy medidas reales, respétalas exactamente: ancho=${measuredWidth || 'no indicado'} mm, alto=${measuredHeight || 'no indicado'} mm, profundidad=${measuredDepth || 'no indicada'} mm. Para la gorra, capWidth es el ancho, capDepth es el fondo de la copa sin visera y brimLength es el largo adicional de la visera; la profundidad total es capDepth + brimLength. La altura corresponde desde la base hasta la parte superior. Estima la visera con la vista lateral. No inventes precisión cuando una parte no sea visible. ${userPrompt}`;
+      const parts = [{ text: prompt }];
+      state.aiImages.forEach((image, index) => {
+        const viewLabel = PHOTO_VIEW_OPTIONS.find(([value]) => value === image.view)?.[1] || 'Sin especificar';
+        parts.push({ text: `Imagen ${index + 1} (${viewLabel}): ${image.name}` });
+        parts.push({ inlineData: { mimeType: image.mimeType, data: image.base64 } });
+      });
+
+      try {
+        const requestModel = async (model) => {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts }],
+              generationConfig: { responseMimeType: 'application/json' },
+            }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            const apiMessage = data.error?.message || `Gemini respondió HTTP ${response.status}.`;
+            const error = new Error(response.status === 503
+              ? `Gemini está temporalmente saturado (503): ${apiMessage}`
+              : apiMessage);
+            error.status = response.status;
+            throw error;
+          }
+          return data;
+        };
+
+        // Google recomienda reintentar errores transitorios con espera creciente.
+        // Si 3.8 sigue saturado, se intenta 3.6, que también acepta imágenes.
+        let data;
+        const models = ['gemini-3.8-flash', 'gemini-3.6-flash'];
+        let lastApiError;
+        for (let modelIndex = 0; modelIndex < models.length && !data; modelIndex += 1) {
+          const model = models[modelIndex];
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            try {
+              data = await requestModel(model);
+              break;
+            } catch (error) {
+              lastApiError = error;
+              const retryable = error.status === 408 || error.status === 429 || error.status >= 500;
+              if (!retryable) {
+                if (error.status === 403) {
+                  throw new Error(`Google rechazó el acceso del proyecto (403): ${error.message} Revisa en Google AI Studio que la clave pertenezca a un proyecto habilitado para Gemini API y que no esté restringida de forma incompatible. Si el proyecto aparece bloqueado o restringido, Google debe habilitarlo; cambiar el código no puede retirar esa restricción.`);
+                }
+                throw error;
+              }
+              if (attempt === 0) {
+                const waitMs = 1200 + Math.floor(Math.random() * 500);
+                setStatus(`${model} está ocupado. Reintentando en ${Math.ceil(waitMs / 1000)} s…`, true);
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
+                continue;
+              }
+              // Un 429 suele indicar límite de uso del proyecto; otro modelo
+              // comparte ese límite, así que no tiene sentido cambiar de modelo.
+              if (error.status === 429) throw new Error(`Gemini alcanzó el límite temporal de solicitudes (429). Espera un momento y vuelve a intentarlo. ${error.message}`);
+              if (modelIndex === 0) {
+                setStatus('Gemini 3.8 sigue ocupado. Probando el modelo de respaldo…', true);
+              }
+            }
+          }
+        }
+        if (!data) {
+          throw new Error(`Los modelos de Gemini siguen saturados. Espera unos minutos y vuelve a intentarlo. ${lastApiError?.message || ''}`.trim());
+        }
+        const candidateText = data.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('').trim();
+        if (!candidateText) throw new Error('Gemini no devolvió un perfil. Prueba con fotos más claras y completas.');
+        const parsed = JSON.parse(candidateText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
+        if (forcedCap) state.preset = 'cap';
+        else if (validPresets.includes(parsed.preset)) state.preset = parsed.preset;
+        for (const key of ['height','wallThickness','dTop','dUpper','dMid','dLower','dBottom','handleHeight','handleWidth','boxWidth','boxHeight','boxDepth']) {
+          if (Number.isFinite(Number(parsed[key])) && Number(parsed[key]) > 0) state[key] = Number(parsed[key]);
+        }
+        for (const key of ['capWidth','capDepth','crownHeight','brimLength']) {
+          if (Number.isFinite(Number(parsed[key])) && Number(parsed[key]) > 0) state.cap[key === 'capWidth' ? 'width' : key === 'capDepth' ? 'depth' : key] = Number(parsed[key]);
+        }
+        if (typeof parsed.hasHandle === 'boolean') state.hasHandle = parsed.hasHandle;
+        if (['ceramic','metal','paper'].includes(parsed.material)) state.material = parsed.material;
+
+        // Las dimensiones medidas son autoritativas; Gemini sólo estima lo
+        // que no se proporcionó. El perfil 360° sólo representa secciones redondas.
+        if (state.preset === 'cap') {
+          if (measuredWidth > 0) state.cap.width = measuredWidth;
+          if (measuredHeight > 0) state.cap.crownHeight = Math.max(30, measuredHeight - 14);
+          if (measuredDepth > 0) state.cap.depth = Math.max(80, measuredDepth - state.cap.brimLength);
+        } else if (measuredHeight > 0) { state.height = measuredHeight; state.boxHeight = measuredHeight; }
+        if (state.preset === 'cap') {
+          // Las dimensiones medidas de la gorra ya se aplicaron a sus controles específicos.
+        } else if (state.preset === 'notebook' || state.preset === 'pouch') {
+          if (measuredWidth > 0) state.boxWidth = measuredWidth;
+          if (measuredDepth > 0) state.boxDepth = measuredDepth;
+        } else {
+          const measuredDiameter = measuredWidth > 0 && measuredDepth > 0 ? (measuredWidth + measuredDepth) / 2 : measuredWidth || measuredDepth;
+          if (measuredDiameter > 0) {
+            const ratio = measuredDiameter / Math.max(1, state.dMid);
+            for (const key of ['dTop','dUpper','dMid','dLower','dBottom']) state[key] = Math.max(5, Math.round(state[key] * ratio));
+          }
+        }
+        syncFormInputs();
+        update3DModel();
+        setStatus(`${parsed.summary || 'Revisa el modelo y corrige las secciones con las fotos de referencia.'} Comprueba las medidas en el panel antes de exportar.`);
+        showToast('Perfil generado. Revisa las dimensiones y el modelo.');
+      } catch (err) {
+        console.error('Error al analizar las fotos con Gemini:', err);
+        setStatus(err instanceof Error ? err.message : 'Revisa tu conexión, clave y fotos e intenta de nuevo.', false, true);
+        showToast('No se pudo generar el perfil; revisa el mensaje de error.');
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function prepareAiImage(file) {
+      const bitmap = await createImageBitmap(file);
+      const maxSide = 1280;
+      const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+      canvas.width = 0;
+      canvas.height = 0;
+      return { name: file.name, view: 'unspecified', mimeType: 'image/jpeg', base64: dataUrl.split(',')[1], preview: dataUrl };
+    }
+
+    function drawAiGallery(gallery, images) {
+      gallery.replaceChildren();
+      images.forEach((image, index) => {
+        const figure = document.createElement('figure');
+        figure.className = 'min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-900';
+        const preview = document.createElement('img');
+        preview.src = image.preview;
+        preview.alt = `Referencia ${index + 1}: ${image.name}`;
+        preview.className = 'h-20 w-full object-contain';
+        const caption = document.createElement('figcaption');
+        caption.className = 'truncate px-1.5 py-1 text-[9px] text-slate-400';
+        caption.textContent = image.name;
+        const orientation = createOrientationSelect(image.view, (value) => { image.view = value; });
+        figure.append(preview, caption, orientation);
+        gallery.appendChild(figure);
+      });
+    }
+
+    const PHOTO_VIEW_OPTIONS = [
+      ['unspecified', 'Sin especificar'],
+      ['front', 'Frente'],
+      ['back', 'Espalda'],
+      ['left', 'Lado izquierdo'],
+      ['right', 'Lado derecho'],
+      ['top', 'Vista desde arriba'],
+      ['bottom', 'Vista desde abajo'],
+      ['perspective', 'Perspectiva'],
+      ['detail', 'Detalle'],
+    ];
+
+    function createOrientationSelect(value, onChange) {
+      const select = document.createElement('select');
+      select.className = 'relative z-30 mx-1 mb-1 w-[calc(100%-0.5rem)] rounded border border-slate-700 bg-slate-950 px-1 py-1 text-[9px] text-slate-200 focus:border-cyan-500 focus:outline-none';
+      select.setAttribute('aria-label', 'Orientación de la foto');
+      PHOTO_VIEW_OPTIONS.forEach(([optionValue, label]) => {
+        const option = document.createElement('option');
+        option.value = optionValue;
+        option.textContent = label;
+        select.appendChild(option);
+      });
+      select.value = value || 'unspecified';
+      select.addEventListener('change', () => onChange(select.value));
+      select.addEventListener('click', (event) => event.stopPropagation());
+      return select;
+    }
+
+    function renderReferenceImages(fileList) {
+      state.referenceImages.forEach((image) => URL.revokeObjectURL(image.url));
+      const files = Array.from(fileList || [])
+        .filter((file) => file.type.startsWith('image/'))
+        .slice(0, 8);
+      state.referenceFiles = files;
+      state.referenceImages = files.map((file) => ({ name: file.name, url: URL.createObjectURL(file), view: 'unspecified' }));
+      elements.photoGallery.replaceChildren();
+      state.referenceImages.forEach((image, index) => {
+        const figure = document.createElement('figure');
+        figure.className = 'min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-900';
+        const preview = document.createElement('img');
+        preview.src = image.url;
+        preview.alt = `Foto guía ${index + 1}: ${image.name}`;
+        preview.className = 'h-20 w-full object-contain';
+        const caption = document.createElement('figcaption');
+        caption.className = 'truncate px-1.5 py-1 text-[9px] text-slate-400';
+        caption.textContent = image.name;
+        const orientation = createOrientationSelect(image.view, (value) => { image.view = value; });
+        figure.append(preview, caption, orientation);
+        elements.photoGallery.appendChild(figure);
+      });
+      const hasImages = state.referenceImages.length > 0;
+      elements.photoPreviewContainer.classList.toggle('hidden', !hasImages);
+      elements.photoUploadPlaceholder.classList.toggle('hidden', hasImages);
+      if (files.length < Array.from(fileList || []).filter((file) => file.type.startsWith('image/')).length) {
+        showToast('Se muestran hasta 8 fotos guía.');
+      }
+    }
+
+    function clearReferenceImages() {
+      state.referenceImages.forEach((image) => URL.revokeObjectURL(image.url));
+      state.referenceImages = [];
+      state.referenceFiles = [];
+      elements.photoGallery.replaceChildren();
+      elements.fileInput.value = '';
+      elements.photoPreviewContainer.classList.add('hidden');
+      elements.photoUploadPlaceholder.classList.remove('hidden');
+    }
+
+    async function loadAiImages(fileList) {
+      const files = Array.from(fileList || []).filter((file) => file.type.startsWith('image/')).slice(0, 6);
+      if (!files.length) return;
+      elements.aiStatusBox.classList.remove('hidden');
+      elements.aiStatusTitle.textContent = 'Preparando imágenes…';
+      elements.aiStatusDetail.textContent = `Optimizando ${files.length} ${files.length === 1 ? 'foto' : 'fotos'} para el análisis.`;
+      try {
+        state.aiImages = await Promise.all(files.map(prepareAiImage));
+        drawAiGallery(elements.aiPhotoGallery, state.aiImages);
+        elements.aiPhotoPreviewContainer.classList.remove('hidden');
+        elements.aiPhotoPlaceholder.classList.add('hidden');
+        elements.aiStatusTitle.textContent = 'Fotos listas';
+        elements.aiStatusDetail.textContent = `${state.aiImages.length} foto(s) optimizadas. Ingresa medidas y analiza.`;
+      } catch (error) {
+        console.error('No se pudieron preparar las imágenes:', error);
+        elements.aiStatusTitle.textContent = 'No se pudieron leer las imágenes';
+        elements.aiStatusDetail.textContent = 'Prueba con archivos JPG o PNG más pequeños.';
+      }
+    }
+
+    function clearAiImages() {
+      state.aiImages = [];
+      elements.aiFileInput.value = '';
+      elements.aiPhotoGallery.replaceChildren();
+      elements.aiPhotoPreviewContainer.classList.add('hidden');
+      elements.aiPhotoPlaceholder.classList.remove('hidden');
+      elements.aiStatusBox.classList.add('hidden');
+    }
+
+    const PROFILE_FIELDS = ['preset','height','wallThickness','dTop','dUpper','dMid','dLower','dBottom','boxWidth','boxHeight','boxDepth','hasHandle','handleHeight','handleWidth','handleThickness','material','segments','backpack','cap'];
+
+    function saveModelProfile() {
+      const profile = Object.fromEntries(PROFILE_FIELDS.map((key) => [key, state[key]]));
+      const blob = new Blob([JSON.stringify({ format: 'studio-product-profile', version: 1, profile }, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `${state.preset}-perfil-3d.json`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      showToast('Configuración del modelo guardada.');
+    }
+
+    async function loadModelProfile(file) {
+      if (!file) return;
+      try {
+        const data = JSON.parse(await file.text());
+        const profile = data?.format === 'studio-product-profile' ? data.profile : data;
+        const validPresets = ['mug','thermos','can','jar','tube','notebook','pouch','backpack','cap','custom_lathe'];
+        if (!profile || typeof profile !== 'object' || (profile.preset && !validPresets.includes(profile.preset))) throw new Error('El archivo no es una configuración de producto compatible.');
+        const positiveFields = ['height','wallThickness','dTop','dUpper','dMid','dLower','dBottom','boxWidth','boxHeight','boxDepth','handleHeight','handleWidth','handleThickness','segments'];
+        for (const key of PROFILE_FIELDS) {
+          if (key === 'preset' && validPresets.includes(profile[key])) state[key] = profile[key];
+          else if (key === 'hasHandle' && typeof profile[key] === 'boolean') state[key] = profile[key];
+          else if (key === 'material' && ['ceramic','metal','paper'].includes(profile[key])) state[key] = profile[key];
+          else if (key === 'backpack' && profile[key] && typeof profile[key] === 'object') {
+            for (const [backpackKey, value] of Object.entries(profile[key])) {
+              if (typeof state.backpack[backpackKey] === 'boolean' && typeof value === 'boolean') state.backpack[backpackKey] = value;
+              else if (typeof state.backpack[backpackKey] === 'number' && Number.isFinite(Number(value)) && Number(value) > 0) state.backpack[backpackKey] = Number(value);
+              else if (['fabricColor','trimColor'].includes(backpackKey) && /^#[0-9a-f]{6}$/i.test(value)) state.backpack[backpackKey] = value;
+            }
+          }
+          else if (key === 'cap' && profile[key] && typeof profile[key] === 'object') {
+            for (const [capKey, value] of Object.entries(profile[key])) {
+              if (typeof state.cap[capKey] === 'number' && Number.isFinite(Number(value)) && Number(value) > 0) state.cap[capKey] = Number(value);
+              else if (['fabricColor','visorColor'].includes(capKey) && /^#[0-9a-f]{6}$/i.test(value)) state.cap[capKey] = value;
+            }
+          }
+          else if (positiveFields.includes(key) && Number.isFinite(Number(profile[key])) && Number(profile[key]) > 0) state[key] = Number(profile[key]);
+        }
+        syncFormInputs();
+        update3DModel();
+        showToast('Configuración cargada en el modelo.');
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'No se pudo leer la configuración.');
+      }
+    }
+
+    function updateGeometryWarnings() {
+      const warnings = [];
+      if (!['notebook','pouch','backpack','cap'].includes(state.preset)) {
+        const minDiameter = Math.min(state.dTop, state.dUpper, state.dMid, state.dLower, state.dBottom);
+        if (state.wallThickness * 2 >= minDiameter) warnings.push('El grosor de pared alcanza el diámetro mínimo. Reduce el grosor o aumenta el diámetro para conservar una cavidad interior.');
+        if (state.wallThickness >= state.height) warnings.push('El grosor de pared debe ser menor que la altura del producto.');
+      }
+      elements.geometryWarning.textContent = warnings.join(' ');
+      elements.geometryWarning.classList.toggle('hidden', warnings.length === 0);
+    }
+
+    function syncFormInputs() {
+      elements.inputHeight.value = state.height;
+      elements.inputWall.value = state.wallThickness;
+
+      elements.sliderDTop.value = state.dTop;
+      elements.sliderDUpper.value = state.dUpper;
+      elements.sliderDMid.value = state.dMid;
+      elements.sliderDLower.value = state.dLower;
+      elements.sliderDBottom.value = state.dBottom;
+
+      elements.labelDTop.value = state.dTop;
+      elements.labelDUpper.value = state.dUpper;
+      elements.labelDMid.value = state.dMid;
+      elements.labelDLower.value = state.dLower;
+      elements.labelDBottom.value = state.dBottom;
+
+      elements.inputBoxWidth.value = state.boxWidth;
+      elements.inputBoxHeight.value = state.boxHeight;
+      elements.inputBoxDepth.value = state.boxDepth;
+
+      elements.toggleHandle.checked = state.hasHandle;
+      elements.handleOptions.style.display = state.hasHandle ? 'block' : 'none';
+      elements.inputHandleHeight.value = state.handleHeight;
+      elements.inputHandleWidth.value = state.handleWidth;
+      elements.inputHandleThickness.value = state.handleThickness;
+      Object.entries(elements.backpackInputs).forEach(([key, input]) => {
+        const value = state.backpack[key];
+        if (input.type === 'checkbox') input.checked = Boolean(value);
+        else input.value = value;
+      });
+      Object.entries(elements.capInputs).forEach(([key, input]) => { input.value = state.cap[key]; });
+
+      document.querySelectorAll('.mat-btn').forEach((btn) => {
+        const selected = btn.dataset.mat === state.material;
+        btn.classList.toggle('active', selected);
+        btn.classList.toggle('border-cyan-500', selected);
+        btn.classList.toggle('bg-cyan-950/30', selected);
+        btn.classList.toggle('text-cyan-300', selected);
+        btn.classList.toggle('border-slate-800', !selected);
+        btn.classList.toggle('bg-slate-950', !selected);
+        btn.classList.toggle('text-slate-400', !selected);
+      });
+
+      // Select preset button UI
+      document.querySelectorAll('.preset-btn').forEach(btn => {
+        if (btn.dataset.preset === state.preset) {
+          btn.classList.add('active', 'bg-cyan-950/40', 'border-cyan-500/50', 'text-cyan-300');
+          btn.classList.remove('bg-slate-950', 'border-slate-800', 'text-slate-400');
+        } else {
+          btn.classList.remove('active', 'bg-cyan-950/40', 'border-cyan-500/50', 'text-cyan-300');
+          btn.classList.add('bg-slate-950', 'border-slate-800', 'text-slate-400');
+        }
+      });
+
+      if (state.preset === 'cap') {
+        elements.controlsLathe.classList.add('hidden');
+        elements.controlsBox.classList.add('hidden');
+        elements.controlsBackpack.classList.add('hidden');
+        elements.controlsCap.classList.remove('hidden');
+        elements.handleSection.classList.add('hidden');
+      } else if (state.preset === 'backpack') {
+        elements.controlsLathe.classList.add('hidden');
+        elements.controlsBox.classList.add('hidden');
+        elements.controlsBackpack.classList.remove('hidden');
+        elements.controlsCap.classList.add('hidden');
+        elements.handleSection.classList.add('hidden');
+      } else if (state.preset === 'notebook' || state.preset === 'pouch') {
+        elements.controlsLathe.classList.add('hidden');
+        elements.controlsBox.classList.remove('hidden');
+        elements.controlsBackpack.classList.add('hidden');
+        elements.controlsCap.classList.add('hidden');
+        elements.handleSection.classList.add('hidden');
+      } else {
+        elements.controlsLathe.classList.remove('hidden');
+        elements.controlsBox.classList.add('hidden');
+        elements.controlsBackpack.classList.add('hidden');
+        elements.controlsCap.classList.add('hidden');
+        elements.handleSection.classList.remove('hidden');
+      }
+    }
+
+    function setupEvents() {
+      // Mode Switchers
+      elements.modeParametricBtn.addEventListener('click', () => {
+        state.mode = 'parametric';
+        elements.modeParametricBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-950 text-cyan-400 border border-cyan-800 flex items-center justify-center gap-2';
+        elements.modeAiBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 flex items-center justify-center gap-2';
+        elements.panelParametric.classList.remove('hidden');
+        elements.panelAi.classList.add('hidden');
+      });
+
+      elements.modeAiBtn.addEventListener('click', () => {
+        state.mode = 'ai';
+        elements.modeAiBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-950 text-purple-400 border border-purple-800 flex items-center justify-center gap-2';
+        elements.modeParametricBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 flex items-center justify-center gap-2';
+        elements.panelAi.classList.remove('hidden');
+        elements.panelParametric.classList.add('hidden');
+      });
+
+      // Inputs
+      elements.inputHeight.addEventListener('input', (e) => { state.height = parseFloat(e.target.value) || 10; update3DModel(); });
+      elements.inputWall.addEventListener('input', (e) => { state.wallThickness = parseFloat(e.target.value) || 1; update3DModel(); });
+
+      // Contour sliders and direct numeric fields stay synchronized.
+      const bindDiameter = (slider, field, key) => {
+        slider.addEventListener('input', (e) => {
+          const val = parseFloat(e.target.value);
+          state[key] = val;
+          field.value = val;
+          update3DModel();
+        });
+        field.addEventListener('input', (e) => {
+          const val = Number(e.target.value);
+          if (!Number.isFinite(val) || val < 5 || val > 600) return;
+          state[key] = val;
+          slider.value = val;
+          update3DModel();
+        });
+      };
+
+      bindDiameter(elements.sliderDTop, elements.labelDTop, 'dTop');
+      bindDiameter(elements.sliderDUpper, elements.labelDUpper, 'dUpper');
+      bindDiameter(elements.sliderDMid, elements.labelDMid, 'dMid');
+      bindDiameter(elements.sliderDLower, elements.labelDLower, 'dLower');
+      bindDiameter(elements.sliderDBottom, elements.labelDBottom, 'dBottom');
+
+      elements.scaleProfileButton.addEventListener('click', () => {
+        const target = Number(elements.targetDiameter.value);
+        const currentMax = Math.max(state.dTop, state.dUpper, state.dMid, state.dLower, state.dBottom);
+        if (!Number.isFinite(target) || target < 5 || target > 600) {
+          showToast('Ingresa un diámetro máximo entre 5 y 600 mm.');
+          elements.targetDiameter.focus();
+          return;
+        }
+        const factor = target / currentMax;
+        for (const key of ['dTop','dUpper','dMid','dLower','dBottom']) state[key] = Math.max(5, Math.round(state[key] * factor * 10) / 10);
+        syncFormInputs();
+        update3DModel();
+        showToast(`Perfil escalado proporcionalmente a ${target} mm.`);
+      });
+
+      elements.saveProfileButton.addEventListener('click', saveModelProfile);
+      elements.loadProfileButton.addEventListener('click', () => elements.profileFileInput.click());
+      elements.profileFileInput.addEventListener('change', (event) => {
+        void loadModelProfile(event.target.files?.[0]);
+        event.currentTarget.value = '';
+      });
+
+      elements.inputBoxWidth.addEventListener('input', (e) => { state.boxWidth = parseFloat(e.target.value) || 10; update3DModel(); });
+      elements.inputBoxHeight.addEventListener('input', (e) => { state.boxHeight = parseFloat(e.target.value) || 10; update3DModel(); });
+      elements.inputBoxDepth.addEventListener('input', (e) => { state.boxDepth = parseFloat(e.target.value) || 2; update3DModel(); });
+
+      // Handle Toggle
+      elements.toggleHandle.addEventListener('change', (e) => {
+        state.hasHandle = e.target.checked;
+        elements.handleOptions.style.display = state.hasHandle ? 'block' : 'none';
+        update3DModel();
+      });
+
+      elements.inputHandleHeight.addEventListener('input', (e) => { state.handleHeight = parseFloat(e.target.value) || 10; update3DModel(); });
+      elements.inputHandleWidth.addEventListener('input', (e) => { state.handleWidth = parseFloat(e.target.value) || 5; update3DModel(); });
+      elements.inputHandleThickness.addEventListener('input', (e) => { state.handleThickness = parseFloat(e.target.value) || 2; update3DModel(); });
+      Object.entries(elements.backpackInputs).forEach(([key, input]) => {
+        input.addEventListener(input.type === 'checkbox' ? 'change' : 'input', () => {
+          const value = input.type === 'checkbox' ? input.checked : input.type === 'color' ? input.value : Number(input.value);
+          if (input.type === 'number' && (!Number.isFinite(value) || value <= 0)) return;
+          state.backpack[key] = value;
+          update3DModel();
+        });
+      });
+      Object.entries(elements.capInputs).forEach(([key, input]) => {
+        input.addEventListener('input', () => {
+          const value = input.type === 'color' ? input.value : Number(input.value);
+          if (typeof value === 'number' && (!Number.isFinite(value) || value <= 0)) return;
+          state.cap[key] = value;
+          update3DModel();
+        });
+      });
+
+      // Preset Buttons
+      document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const presetKey = btn.dataset.preset;
+          state.preset = presetKey;
+
+          if (presetKey === 'mug') {
+            state.height = 96; state.dTop = 80; state.dUpper = 80; state.dMid = 80; state.dLower = 80; state.dBottom = 80;
+            state.hasHandle = true; state.handleHeight = 68; state.handleWidth = 36;
+          } else if (presetKey === 'thermos') {
+            state.height = 240; state.dTop = 60; state.dUpper = 60; state.dMid = 72; state.dLower = 72; state.dBottom = 72;
+            state.hasHandle = false;
+          } else if (presetKey === 'can') {
+            state.height = 122; state.dTop = 54; state.dUpper = 66; state.dMid = 66; state.dLower = 66; state.dBottom = 58;
+            state.hasHandle = false;
+          } else if (presetKey === 'jar') {
+            state.height = 110; state.dTop = 60; state.dUpper = 85; state.dMid = 90; state.dLower = 85; state.dBottom = 70;
+            state.hasHandle = false;
+          } else if (presetKey === 'tube') {
+            state.height = 140; state.dTop = 32; state.dUpper = 40; state.dMid = 42; state.dLower = 42; state.dBottom = 40;
+            state.hasHandle = false;
+          } else if (presetKey === 'custom_lathe') {
+            state.height = 180; state.dTop = 40; state.dUpper = 25; state.dMid = 95; state.dLower = 60; state.dBottom = 70;
+            state.hasHandle = false;
+          } else if (presetKey === 'backpack') {
+            state.backpack = {
+              bodyWidth: 300, bodyHeight: 420, bodyDepth: 160,
+              fabricColor: '#40516a', trimColor: '#202a3a',
+              frontEnabled: true, frontWidth: 220, frontHeight: 150, frontDepth: 35, frontBottom: 80,
+              sidesEnabled: true, sideWidth: 70, sideHeight: 180, sideDepth: 45,
+              strapsEnabled: true, strapWidth: 65, strapThickness: 14,
+              handleEnabled: true, handleHeight: 55, handleThickness: 12,
+            };
+          } else if (presetKey === 'cap') {
+            state.cap = { width: 190, depth: 175, crownHeight: 105, brimLength: 70, fabricColor: '#27364b', visorColor: '#202a3a' };
+            state.hasHandle = false;
+          }
+
+          syncFormInputs();
+          update3DModel();
+        });
+      });
+
+      // Material buttons
+      document.querySelectorAll('.mat-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.mat-btn').forEach(b => {
+            b.classList.remove('active', 'border-cyan-500', 'bg-cyan-950/30', 'text-cyan-300');
+            b.classList.add('border-slate-800', 'bg-slate-950', 'text-slate-400');
+          });
+          btn.classList.add('active', 'border-cyan-500', 'bg-cyan-950/30', 'text-cyan-300');
+          btn.classList.remove('border-slate-800', 'bg-slate-950', 'text-slate-400');
+          state.material = btn.dataset.mat;
+          update3DModel();
+        });
+      });
+
+      // Tabs
+      elements.tab3d.addEventListener('click', () => {
+        elements.tab3d.classList.add('bg-slate-800', 'text-cyan-400', 'border', 'border-slate-700');
+        elements.tabCode.classList.remove('bg-slate-800', 'text-cyan-400', 'border', 'border-slate-700');
+        elements.view3d.classList.remove('hidden');
+        elements.viewCode.classList.add('hidden');
+      });
+
+      elements.tabCode.addEventListener('click', () => {
+        elements.tabCode.classList.add('bg-slate-800', 'text-cyan-400', 'border', 'border-slate-700');
+        elements.tab3d.classList.remove('bg-slate-800', 'text-cyan-400', 'border', 'border-slate-700');
+        elements.viewCode.classList.remove('hidden');
+        elements.view3d.classList.add('hidden');
+      });
+
+      // Copy Script Actions
+      const copyScript = () => {
+        const scriptText = elements.codeOutput.textContent;
+        const textArea = document.createElement("textarea");
+        textArea.value = scriptText;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+
+        showToast("¡Script Python para Blender copiado!");
+      };
+
+      document.getElementById('btn-copy-script').addEventListener('click', copyScript);
+      document.getElementById('btn-copy-code-inline').addEventListener('click', copyScript);
+
+      // Export .GLB
+      document.getElementById('btn-export-glb').addEventListener('click', () => {
+        const exportButton = document.getElementById('btn-export-glb');
+        exportButton.disabled = true;
+        exportButton.classList.add('opacity-60', 'cursor-wait');
+        const exporter = new THREE.GLTFExporter();
+        exporter.parse(
+          productMeshGroup,
+          (gltf) => {
+            if (!(gltf instanceof ArrayBuffer) || gltf.byteLength < 12 || new DataView(gltf).getUint32(0, true) !== 0x46546c67) {
+              console.error('El exportador no devolvió un GLB binario válido:', gltf);
+              showToast('No se generó un GLB válido. Vuelve a intentar la exportación.');
+              exportButton.disabled = false;
+              exportButton.classList.remove('opacity-60', 'cursor-wait');
+              return;
+            }
+            const blob = new Blob([gltf], { type: 'model/gltf-binary' });
+            const link = document.createElement('a');
+            const safeName = state.preset.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-|-$/g, '') || 'producto';
+            link.href = URL.createObjectURL(blob);
+            link.download = `${safeName}_producto_3d.glb`;
+            link.click();
+            window.setTimeout(() => URL.revokeObjectURL(link.href), 30000);
+            exportButton.disabled = false;
+            exportButton.classList.remove('opacity-60', 'cursor-wait');
+            showToast('¡Archivo .GLB compatible con el visor descargado!');
+          },
+          { binary: true }
+        );
+      });
+
+      // Reference Photo Upload (Parametric overlay)
+      elements.fileInput.addEventListener('change', (e) => renderReferenceImages(e.target.files));
+
+      elements.btnRemovePhoto.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearReferenceImages();
+      });
+
+      elements.btnAnalyzeGuide.addEventListener('click', async () => {
+        const apiKey = elements.universalApiKey.value.trim();
+        if (!apiKey) {
+          showToast('Pega tu clave de Gemini para analizar las fotos.');
+          elements.universalApiKey.focus();
+          return;
+        }
+        if (!state.referenceFiles.length) {
+          showToast('Carga primero varias fotos en Foto Guía.');
+          elements.fileInput.click();
+          return;
+        }
+        elements.btnAnalyzeGuide.disabled = true;
+        elements.guideAiStatus.classList.remove('hidden');
+        elements.guideAiStatus.textContent = `Preparando ${state.referenceFiles.length} foto(s) para Gemini…`;
+        try {
+          state.aiImages = await Promise.all(state.referenceFiles.map((file, index) => prepareAiImage(file).then((image) => ({ ...image, view: state.referenceImages[index]?.view || 'unspecified' }))));
+          const isBox = ['notebook', 'pouch'].includes(state.preset);
+          elements.aiMeasureWidth.value = isBox ? state.boxWidth : state.dMid;
+          elements.aiMeasureHeight.value = isBox ? state.boxHeight : state.height;
+          elements.aiMeasureDepth.value = isBox ? state.boxDepth : state.dMid;
+          elements.aiPromptInput.value = 'Usa las varias vistas para proponer la forma paramétrica más parecida. Conserva las medidas actuales como referencia y no inventes detalles que no se vean.';
+          elements.guideAiStatus.textContent = 'Analizando las fotos y ajustando el modelo…';
+          await runGeminiImageTo3D(apiKey);
+          const detail = elements.aiStatusDetail.textContent;
+          elements.guideAiStatus.textContent = detail;
+          if (elements.aiStatusTitle.textContent.includes('No se pudo')) throw new Error(detail);
+        } catch (error) {
+          console.error('No se pudieron analizar las fotos guía:', error);
+          elements.guideAiStatus.textContent = error instanceof Error ? error.message : 'No se pudieron preparar las fotos.';
+        } finally {
+          elements.btnAnalyzeGuide.disabled = false;
+        }
+      });
+
+      // AI Image Upload Handlers
+      elements.aiFileInput.addEventListener('change', (e) => { void loadAiImages(e.target.files); });
+      elements.aiBtnRemovePhoto.addEventListener('click', (e) => { e.stopPropagation(); clearAiImages(); });
+
+      // AI Run Trigger
+      elements.btnRunAi.addEventListener('click', () => { void runGeminiImageTo3D(); });
+    }
+
+    function showToast(message) {
+      const toast = document.createElement('div');
+      toast.className = 'fixed bottom-5 right-5 z-50 bg-cyan-500 text-slate-950 font-semibold text-xs px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 transform translate-y-10 opacity-0 transition-all duration-300';
+      toast.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${message}`;
+      document.body.appendChild(toast);
+
+      setTimeout(() => {
+        toast.classList.remove('translate-y-10', 'opacity-0');
+      }, 10);
+
+      setTimeout(() => {
+        toast.classList.add('translate-y-10', 'opacity-0');
+        setTimeout(() => document.body.removeChild(toast), 300);
+      }, 2500);
+    }
+
+    window.onload = () => {
+      init3D();
+      setupEvents();
+      syncFormInputs();
+    };
+  </script>
+</body>
+</html>

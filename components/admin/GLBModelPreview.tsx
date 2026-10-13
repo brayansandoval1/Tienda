@@ -5,6 +5,7 @@ import { Canvas } from '@react-three/fiber';
 import { Bounds, OrbitControls, Stage } from '@react-three/drei';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { validateGLBArrayBuffer } from '@/src/utils/glbValidation';
 
 function PreviewScene({ scene }: { scene: THREE.Object3D }) {
   const normalizedScene = useMemo(() => {
@@ -44,6 +45,10 @@ export default function GLBModelPreview({ url, file }: { url: string; file: File
         let gltf;
         if (file) {
           const buffer = await file.arrayBuffer();
+          if (validateGLBArrayBuffer(buffer)) {
+            if (!cancelled) setStatus('error');
+            return;
+          }
           gltf = await loader.parseAsync(buffer, '');
         } else {
           gltf = await loader.loadAsync(url.trim());

@@ -16,6 +16,7 @@ import PrintArea3DEditor from '@/components/admin/PrintArea3DEditor';
 import GLBModelPreview from '@/components/admin/GLBModelPreview';
 import { DEFAULT_MESH_SETTINGS, type MeshSettings, type SafeAreaPoint, type SafeAreaShape } from '@/src/config/products';
 import { seedSafeAreaPolygon } from '@/src/utils/safeAreaPolygon';
+import { validateGLBArrayBuffer } from '@/src/utils/glbValidation';
 
 const Product3DViewer = dynamic(() => import('@/components/editor/Product3DViewer'), { ssr: false, loading: () => <div className="grid h-full min-h-[280px] place-items-center text-xs text-slate-500">Cargando visor 3D…</div> });
 
@@ -235,7 +236,6 @@ export default function AdminProductEditor() {
   const meshInspectRequestRef = useRef(0);
   const [meshInspection, setMeshInspection] = useState<MeshInspectionState>({ status: 'idle', message: '', meshes: [] });
   const [localGLBFile, setLocalGLBFile] = useState<File | null>(null);
-  const [localGLBPreviewUrl, setLocalGLBPreviewUrl] = useState('');
   const [addonCatalog, setAddonCatalog] = useState<Addon[]>([]);
   const [addonCatalogError, setAddonCatalogError] = useState('');
   const activeView = form.views[Math.min(activeTab, form.views.length - 1)];
@@ -246,18 +246,12 @@ export default function AdminProductEditor() {
   const pixelsWidth = Math.round((printWidth / 2.54) * 300);
   const pixelsHeight = Math.round((printHeight / 2.54) * 300);
   const detectedMeshNames = meshInspection.meshes.map((mesh) => mesh.name);
-  useEffect(() => {
-    if (!localGLBFile) { setLocalGLBPreviewUrl(''); return; }
-    const url = URL.createObjectURL(localGLBFile);
-    setLocalGLBPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [localGLBFile]);
   const baseViews = useMemo(() => form.views.map((view) => ({ id: view.id, name: view.name || 'Vista', mockupUrl: view.mockupUrl, printArea: normalizePrintArea({ x: Number(view.x), y: Number(view.y), width: Number(view.width), height: Number(view.height), shape: view.shape, radius: Number(view.radius), polygon: parsePolygonForm(view.polygon) }) })), [form.views]);
   const adminPreviewProduct: Product = {
     id: selectedId ?? 'admin-product-preview', name: form.name || 'Vista previa', category: form.category,
     price: Number(form.price) || 0, canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT,
     printWidthCm: printWidth || undefined, printHeightCm: printHeight || undefined,
-    model3dUrl: form.model3dUrl.trim() || localGLBPreviewUrl || undefined,
+    model3dUrl: form.model3dUrl.trim() || undefined,
     meshSettings: { textureWidth: Number(form.textureWidth) || DEFAULT_MESH_SETTINGS.textureWidth, textureHeight: Number(form.textureHeight) || DEFAULT_MESH_SETTINGS.textureHeight },
     pricingSchema: { sidesPricing: { mode: form.sidesPricingMode, pricePerAdditionalSide: Number(form.extraSidePrice) || 0, wrapPrice: Number(form.fullWrapPrice) || 0 } },
     colors: products.find((product) => product.id === selectedId)?.colors,
@@ -347,6 +341,11 @@ export default function AdminProductEditor() {
     let inspectedScene: THREE.Object3D | null = null;
     try {
       const buffer = await file.arrayBuffer();
+      const validationError = validateGLBArrayBuffer(buffer);
+      if (validationError) {
+        setMeshInspection({ status: 'error', message: validationError, meshes: [] });
+        return;
+      }
       const gltf = await new Promise<GLTF>((resolve, reject) => {
         new GLTFLoader().parse(buffer, '', resolve, reject);
       });
@@ -598,7 +597,7 @@ export default function AdminProductEditor() {
               <div className="min-w-0 space-y-4">
                 {activeArea3D && <div className="space-y-3 rounded-xl border border-sky-200 bg-white p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-semibold text-slate-800">Proyección 3D · {activeView.name || `Vista ${activeIndex + 1}`}</h3><p className="mt-1 text-xs text-slate-500">Edita los nodos de la faja plana; esta calibración se guarda por vista.</p></div><button type="button" onClick={() => resetViewArea3DFrom2D(activeIndex)} className="text-xs font-semibold text-sky-700 underline underline-offset-2 hover:text-sky-900">Volver a usar zona 2D</button></div>
                   <div><PrintArea3DEditor viewName={activeView.name || `Vista ${activeIndex + 1}`} area={activeArea3D} aspectRatio={1} mockupUrl={activeView.mockupUrl} onChange={(area) => setViewArea3D(activeIndex, area)} /></div>
-                  <div className="h-[380px] min-h-[350px] overflow-hidden rounded-xl border border-slate-200 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] p-2">{adminArea && adminPreviewProduct.model3dUrl ? <Product3DViewer product={adminPreviewProduct} componentColors={Object.fromEntries(form.customizableParts.map((part) => [part.meshName, part.defaultColor]))} enabledMeshNames={form.customizableParts.filter((part) => part.enabled !== false).map((part) => part.meshName)} showSafeAreaGuide safeArea={adminArea} activeViewIndex={activeIndex} activeViewName={activeView.name} /> : <div className="grid h-full place-items-center rounded-lg bg-slate-50 px-6 text-center text-xs text-slate-500">Agrega una ruta de modelo GLB para ver la proyección sobre la malla 3D.</div>}</div>
+                  <div className="h-[380px] min-h-[350px] overflow-hidden rounded-xl border border-slate-200 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] p-2">{adminArea && adminPreviewProduct.model3dUrl ? <Product3DViewer product={adminPreviewProduct} componentColors={Object.fromEntries(form.customizableParts.map((part) => [part.meshName, part.defaultColor]))} enabledMeshNames={form.customizableParts.filter((part) => part.enabled !== false).map((part) => part.meshName)} showSafeAreaGuide safeArea={adminArea} activeViewIndex={activeIndex} activeViewName={activeView.name} /> : <div className="grid h-full place-items-center rounded-lg bg-slate-50 px-6 text-center text-xs text-slate-500">{localGLBFile ? 'El archivo local ya se inspeccionó arriba. Agrega su ruta pública para proyectarlo sobre la malla y guardarlo en la tienda.' : 'Agrega una ruta de modelo GLB para ver la proyección sobre la malla 3D.'}</div>}</div>
                 </div>}
               </div>
             </div>}
