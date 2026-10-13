@@ -482,13 +482,12 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         hasBorders: true,
       };
 
-      // Tipos cuyo escalado debe ser siempre proporcional. Un `fabric.Image`
-      // NUNCA debe deformarse: como `width`/`height` ya son las medidas en
-      // píxeles de la región visible (con el recorte ya aplicado), la imagen
-      // sólo es fiel cuando `scaleX === scaleY`.
+      // Tipos con controles proporcionales. Las imágenes se manejan aparte:
+      // sus tiradores deben poder cambiar un solo eje o deformar desde una
+      // esquina según el tirador que el usuario arrastre.
       const PRESERVE_ASPECT_TYPES = ['image', 'group', 'rect', 'ellipse', 'circle', 'triangle', 'polygon', 'path'];
 
-      // Escalado proporcional real para los OCHO tiradores.
+      // Escalado proporcional para los objetos que conservan aspecto.
       // En Fabric 5 los laterales (ml/mr/mt/mb) usan `scalingX`/`scalingY`,
       // que mueven un único eje y deforman el contenido; y las esquinas sólo
       // escalan proporcionalmente mientras no se pulse Mayús (lo decide
@@ -506,9 +505,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const wrapWithFixedAnchor = controlsUtils?.wrapWithFixedAnchor;
       const wrapWithFireEvent = controlsUtils?.wrapWithFireEvent;
       const scalingEqually = controlsUtils?.scalingEqually;
+      const scalingX = controlsUtils?.scalingX;
+      const scalingY = controlsUtils?.scalingY;
       const scaleCursorStyleHandler = controlsUtils?.scaleCursorStyleHandler;
       const isUniformScaleReady = Boolean(
-        getLocalPoint && wrapWithFixedAnchor && wrapWithFireEvent && scalingEqually,
+        getLocalPoint && wrapWithFixedAnchor && wrapWithFireEvent && scalingEqually && scalingX && scalingY,
       );
 
       const UNIFORM_SIDE_CORNERS = ['ml', 'mr', 'mt', 'mb'];
@@ -595,8 +596,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const handler = (eventData: any, transform: any, x: number, y: number) => {
           if (!transform?.target) return false;
           const centeredModifier = Boolean(eventData?.[canvas.centeredKey] ?? eventData?.altKey);
-          // Las imágenes escalan desde el centro por defecto, expandiéndose
-          // hacia sus cuatro lados. La tecla centrada invierte ese modo.
+          // Por defecto el nodo opuesto permanece fijo. Alt activa el modo
+          // centrado para expandir o reducir desde el centro del objeto.
           const centered = transform.target.centeredScaling ? !centeredModifier : centeredModifier;
           setUniformAnchor(transform, corner, centered);
           return wrapped(eventData, transform, x, y);
@@ -614,6 +615,40 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         return scalingEqually(neutralEvent, transform, x, y);
       };
 
+      // Para imágenes, cada tirador lateral modifica únicamente su eje y cada
+      // esquina puede cambiar ancho y alto de forma independiente. Ambos usan
+      // como ancla el lado o la esquina opuestos; no fuerzan escala uniforme.
+      const imageSideScaler = (corner: string) => (eventData: any, transform: any, x: number, y: number) => {
+        if (!transform?.target) return false;
+        const centered = Boolean(eventData?.[canvas.centeredKey] ?? eventData?.altKey);
+        const horizontal = corner === 'ml' || corner === 'mr';
+        setUniformAnchor(transform, corner, centered);
+        return horizontal ? scalingX(eventData, transform, x, y) : scalingY(eventData, transform, x, y);
+      };
+
+      const imageCornerScaler = (eventData: any, transform: any, x: number, y: number) => {
+        if (!transform?.target) return false;
+        const targetCanvas = transform.target.canvas;
+        const previousUniformScaling = targetCanvas.uniformScaling;
+        const uniScaleKey = targetCanvas.uniScaleKey;
+        const centered = Boolean(eventData?.[targetCanvas.centeredKey] ?? eventData?.altKey);
+        const corner = String(transform.corner || '');
+        if (centered) {
+          transform.originX = 'center';
+          transform.originY = 'center';
+        } else {
+          transform.originX = corner.endsWith('l') ? 'right' : 'left';
+          transform.originY = corner.startsWith('t') ? 'bottom' : 'top';
+        }
+        const freeScaleEvent = { ...eventData, shiftKey: false, ...(uniScaleKey ? { [uniScaleKey]: false } : {}) };
+        try {
+          targetCanvas.uniformScaling = false;
+          return scalingEqually(freeScaleEvent, transform, x, y);
+        } finally {
+          targetCanvas.uniformScaling = previousUniformScaling;
+        }
+      };
+
       // Un control de Fabric NO es un objeto plano: `calcCornerCoords`,
       // `positionHandler` y `render` viven en `fabric.Control.prototype`.
       // Hacer `{...control}` los pierde y revienta con
@@ -628,14 +663,18 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         return clone;
       };
 
-      // Aplica a cualquier objeto los ocho tiradores con escalado uniforme.
+      // Aplica los ocho tiradores a cada objeto; las imágenes usan controles
+      // independientes por eje y las demás formas conservan su escala uniforme.
       // El recorte (`isCropOverlay`) queda excluido a propósito: su único
       // papel es deformar el recorte a voluntad.
       const applyAspectSafeControls = (target: any) => {
         if (!target) return;
         target.set({
-          lockUniScaling: true,
-          centeredScaling: String(target.type).toLowerCase() === 'image',
+          lockUniScaling: String(target.type).toLowerCase() !== 'image',
+          _allowNonUniformScaling: String(target.type).toLowerCase() === 'image',
+          // El escalado desde el centro es opcional (Alt), no el modo normal:
+          // al arrastrar un nodo, el opuesto debe quedar anclado.
+          centeredScaling: false,
           lockSkewingX: true,
           lockSkewingY: true,
           lockScalingFlip: true,
@@ -661,7 +700,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             visible: true,
             x: horizontal ? (corner === 'ml' ? -0.5 : 0.5) : 0,
             y: horizontal ? 0 : (corner === 'mt' ? -0.5 : 0.5),
-            actionHandler: uniformSideScaler(corner),
+            actionHandler: String(target.type).toLowerCase() === 'image' ? imageSideScaler(corner) : uniformSideScaler(corner),
             getActionName: () => 'scale',
             cursorStyleHandler: source.cursorStyleHandler || scaleCursorStyleHandler,
           });
@@ -674,7 +713,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             visible: true,
             x: corner.endsWith('l') ? -0.5 : 0.5,
             y: corner.startsWith('t') ? -0.5 : 0.5,
-            actionHandler: uniformCornerScaler,
+            actionHandler: String(target.type).toLowerCase() === 'image' ? imageCornerScaler : uniformCornerScaler,
           });
         });
 
@@ -689,6 +728,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // usuario NO está arrastrando y conservando el centro visual.
       const enforceUniformScale = (object: any) => {
         if (!object || String(object.type).toLowerCase() !== 'image') return false;
+        if (object._allowNonUniformScaling) return false;
         const scaleX = Number(object.scaleX);
         const scaleY = Number(object.scaleY);
         if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX === 0 || scaleY === 0) return false;
