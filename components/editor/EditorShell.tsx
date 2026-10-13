@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useState, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import type { Producto, TextOptions } from '@/types/product';
 import FloatingFooter from '@/components/editor/FloatingFooter';
 import Header, { type EditorStep } from '@/components/editor/Header';
@@ -17,6 +18,10 @@ const EditorCanvas = dynamic(() => import('@/components/editor/EditorCanvas'), {
 const Product3DViewer = dynamic(() => import('@/components/editor/Product3DViewer'), { ssr: false });
 
 export default function EditorShell({ producto, initialProduct }: { producto: Producto; initialProduct?: Product }) {
+  const pathname = usePathname();
+  // El editor interno (/editor/...) administra el catálogo. La ruta pública de
+  // personalización solo permite elegir plantillas ya preparadas.
+  const canManageTemplates = pathname?.startsWith('/editor/') ?? false;
   const products = useProductStore((state) => state.products);
   // Estado para el producto actualmente seleccionado en el editor
   const [currentProduct, setCurrentProduct] = useState<Product>(
@@ -110,7 +115,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
       <div className="flex-1 flex flex-row overflow-hidden relative">
         {/* Panel Izquierdo: herramientas de diseño */}
         <div className={`${activeStep === 'design' ? 'w-[clamp(250px,16vw,320px)]' : 'w-0 border-r-0'} h-full min-w-0 shrink-0 bg-[#fcfaff] border-r border-slate-200 flex flex-col z-10 overflow-hidden transition-[width] duration-200`} aria-hidden={activeStep !== 'design'}>
-          <SidebarPanel product={currentProduct} />
+          <SidebarPanel product={currentProduct} canManageTemplates={canManageTemplates} />
         </div>
 
         {/* Canvas Central (Lienzo) */}

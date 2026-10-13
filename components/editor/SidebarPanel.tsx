@@ -115,7 +115,7 @@ function TemplateGraphicPreview({ name, emoji, accent }: { name: string; emoji: 
   );
 }
 
-export default function SidebarPanel({ product }: { product?: Product }) { // Removed onAddShape prop
+export default function SidebarPanel({ product, canManageTemplates = false }: { product?: Product; canManageTemplates?: boolean }) {
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
   const [iconQuery, setIconQuery] = useState('');
   const [iconResults, setIconResults] = useState<string[]>([]);
@@ -204,7 +204,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
     ...savedTemplates.map((saved) => ({
       id: saved.id,
       name: saved.name,
-      description: new Date(saved.createdAt).toLocaleDateString(),
+      description: `Diseño guardado · ${saved.templateJSON.objects?.length ?? 0} elementos`,
       category: saved.category,
       productType: saved.productType,
       emoji: '⭐',
@@ -217,15 +217,22 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
   // Las plantillas sólo son visibles/aplicables en el producto para el que
   // fueron diseñadas (misma categoría de producto). Las plantillas sin
   // `productType` (mocks por defecto) se consideran universales.
-  const currentProductType = product?.category ?? '';
-  const templatesForProduct = allTemplates.filter(
-    (template) => !template.productType || template.productType === currentProductType,
-  );
+  const currentProductType = product?.category || product?.id || '';
+  const normalizeProductType = (value?: string) => value?.trim().toLocaleLowerCase() ?? '';
+  const templatesForProduct = allTemplates
+    .filter((template) => !template.productType || normalizeProductType(template.productType) === normalizeProductType(currentProductType))
+    // Primero las plantillas diseñadas para este producto; las universales
+    // siguen disponibles como alternativas.
+    .sort((a, b) => Number(Boolean(b.productType)) - Number(Boolean(a.productType)));
   const normalizedTemplateSearch = templateSearch.trim().toLocaleLowerCase();
   const visibleTemplates = templatesForProduct.filter((template) =>
     (selectedCategoryFilter === 'Todas' || template.category === selectedCategoryFilter) &&
     (!normalizedTemplateSearch || `${template.name} ${template.category} ${template.description}`.toLocaleLowerCase().includes(normalizedTemplateSearch)),
   );
+  const availableTemplateCategories = [
+    'Todas',
+    ...Array.from(new Set(templatesForProduct.map((template) => template.category).filter(Boolean))),
+  ];
 
   // Carga inicial + refresco cuando el editor guarda una plantilla nueva.
   useEffect(() => {
@@ -458,7 +465,9 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
           <div className="flex items-center justify-between px-1 pt-0.5">
             <div>
               <h2 className="text-xl font-bold tracking-[-0.04em] text-slate-900">Plantillas</h2>
-              <p className="mt-0.5 text-[11px] text-slate-500">Comienza con un diseño listo.</p>
+              <p className="mt-0.5 text-[11px] text-slate-500">
+                {canManageTemplates ? 'Prepara y organiza diseños para tus clientes.' : `Elige un diseño para ${product?.name ?? 'tu producto'}.`}
+              </p>
             </div>
             <button type="button" onClick={() => setActiveTab('recursos')} className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900" aria-label="Cerrar plantillas"><X size={20} /></button>
           </div>
@@ -468,14 +477,13 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
           </label>
 
           
+          {canManageTemplates && <>
           {/* Modo Administrador: guardar/actualizar el diseño actual como plantilla.
               TODO: cuando exista BD, este dispatch pasa a POST (o PUT si es edición). */}
           <details className={`rounded-xl border border-dashed p-2.5 ${editingTemplate ? 'border-slate-900 bg-slate-100' : 'border-slate-300 bg-slate-50'}`} open={Boolean(editingTemplate)}>
-            <summary className="cursor-pointer list-none text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500 marker:hidden">{editingTemplate ? `✏️ Editando: ${editingTemplate.name}` : '+ Guardar diseño actual como plantilla'}</summary>
+            <summary className="cursor-pointer list-none text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500 marker:hidden">{editingTemplate ? `✏️ Actualizar: ${editingTemplate.name}` : '+ Crear plantilla desde el diseño'}</summary>
             <div className="mt-2 space-y-2">
-            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-              {editingTemplate ? `✏️ Editando: ${editingTemplate.name}` : 'Guardar diseño actual'}
-            </p>
+            <p className="text-[11px] leading-4 text-slate-500">Guarda el diseño del lienzo para que sirva como punto de partida. El producto y sus zonas de impresión se conservan.</p>
             <input
               type="text"
               placeholder="Nombre de la plantilla..."
@@ -620,12 +628,13 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
             {templateFeedback && <p className="text-[11px] text-slate-600">{templateFeedback}</p>}
             </div>
           </details>
+          </>}
 
           <div className="space-y-2">
             {/* Barra de filtros por categoría: chips compactos arriba de la lista.
                 TODO: cuando exista BD, las categorías pueden venir de GET /api/templates/categories. */}
             <div className="flex flex-wrap gap-1.5">
-              {TEMPLATE_CATEGORIES.map((category) => (
+              {availableTemplateCategories.map((category) => (
                 <button
                   key={category}
                   type="button"
@@ -648,7 +657,9 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
             <div className="grid grid-cols-2 gap-2.5">
             {visibleTemplates.length === 0 ? (
               <div className="col-span-2 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-500">
-                No encontramos plantillas para esta búsqueda.
+                <p className="font-semibold text-slate-700">No encontramos plantillas</p>
+                <p className="mt-1">Prueba otra búsqueda o selecciona “Todas”.</p>
+                {canManageTemplates && <p className="mt-2">También puedes guardar el diseño actual como plantilla.</p>}
               </div>
             ) : (
             visibleTemplates.map((template) => (
@@ -663,7 +674,7 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
                 {/* Acciones de gestión (sólo plantillas guardadas): Editar
                     carga el diseño en el canvas y precarga el formulario;
                     Eliminar pide confirmación antes de borrar de localStorage. */}
-                {template.saved && (
+                {canManageTemplates && template.saved && (
                   <div className="absolute right-1.5 top-1.5 z-10 flex gap-1">
                     <button
                       type="button"
@@ -716,7 +727,10 @@ export default function SidebarPanel({ product }: { product?: Product }) { // Re
                 <div className="px-3 py-2.5">
                   <p className="truncate text-sm font-semibold text-slate-800">{template.name}</p>
                   <p className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-slate-500">{template.description}</p>
-                  <span className="mt-2 block text-[10px] font-bold text-violet-600 opacity-0 transition group-hover:opacity-100">Aplicar plantilla →</span>
+                  {template.productType && normalizeProductType(template.productType) === normalizeProductType(currentProductType) && (
+                    <span className="mt-2 inline-flex max-w-full truncate rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">Para {product?.category || 'este producto'}</span>
+                  )}
+                  <span className="mt-2 block text-[10px] font-bold text-violet-600 transition">Usar plantilla →</span>
                 </div>
                 </button>
               </div>
