@@ -23,8 +23,8 @@ export default function SurpriseGiftStudio() {
   const [recipientGender, setRecipientGender] = useState('sin-especificar');
   const [recipientAge, setRecipientAge] = useState('sin-especificar');
   const [recipientStyle, setRecipientStyle] = useState('automatico');
-  const [selectedItems, setSelectedItems] = useState<string[]>(['peluche', 'fotos', 'dulces']);
-  const [selectedCatalogChoices, setSelectedCatalogChoices] = useState<Record<string, string>>({ peluche: 'oso-cumple-clasico', dulces: 'dulces-cumple-caja' });
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const [selectedCatalogChoices, setSelectedCatalogChoices] = useState<Record<string, string>>({});
   const [catalogModalCategory, setCatalogModalCategory] = useState<string | null>(null);
   const [catalogDraftId, setCatalogDraftId] = useState('');
   const [boxStyleId, setBoxStyleId] = useState('rosa');
@@ -66,11 +66,15 @@ export default function SurpriseGiftStudio() {
   const chosenItems = giftItems.filter((item) => selectedItems.includes(item.id));
   const getCatalogChoice = (categoryId: string, choiceId = selectedCatalogChoices[categoryId]) => {
     const options = (catalogOptions[occasion] ?? catalogOptions.sorpresa ?? DEFAULT_SURPRISE_GIFT_CONFIG.catalogOptions.sorpresa)?.[categoryId] ?? [];
+    if (choiceId === '') return undefined;
     return options.find((option) => option.id === choiceId) ?? options[0];
   };
+  const getItemVolume = (id: string) => catalogItemIds.includes(id)
+    ? getCatalogChoice(id)?.volume ?? itemVolumes[id] ?? 0
+    : itemVolumes[id] ?? 0;
   const itemsTotal = chosenItems.reduce((sum, item) => sum + (catalogItemIds.includes(item.id) ? (getCatalogChoice(item.id)?.price ?? 0) : item.price), 0) + products.filter((product) => selectedProducts.includes(product.id)).reduce((sum, product) => sum + product.price, 0);
-  const usedVolume = selectedItems.reduce((sum, id) => sum + (catalogItemIds.includes(id) ? (getCatalogChoice(id)?.volume ?? itemVolumes[id] ?? 0) : (itemVolumes[id] ?? 0)), 0);
-  const capacity = boxSize === 'premium' ? pricing.premiumCapacity : pricing.standardCapacity;
+  const usedVolume = selectedItems.reduce((sum, id) => sum + getItemVolume(id), 0);
+  const capacity = Math.max(1, boxSize === 'premium' ? activePresentation.extendedCapacity : activePresentation.capacity);
   const capacityPercent = Math.round((usedVolume / capacity) * 100);
   const estimate = activePresentation.price + itemsTotal + (boxSize === 'premium' ? pricing.premiumBoxSurcharge : 0);
   const selectedProductNames = [
@@ -164,18 +168,22 @@ export default function SurpriseGiftStudio() {
       return;
     }
     if (selectedItems.includes(id)) {
-      setSelectedItems((current) => current.filter((item) => item !== id));
-      setCapacityWarning('');
+      const remainingItems = selectedItems.filter((item) => item !== id);
+      const remainingVolume = remainingItems.reduce((sum, item) => sum + getItemVolume(item), 0);
+      setSelectedItems(remainingItems);
+      setCapacityWarning(remainingVolume > (boxSize === 'premium' ? activePresentation.extendedCapacity : activePresentation.capacity)
+        ? 'Todavía hay más volumen del que admite esta presentación. Quita otro elemento.'
+        : remainingVolume > activePresentation.capacity ? 'Hay más elementos que espacio en esta presentación.' : '');
       if (id === 'carta') setLetterOpen(false);
       return;
     }
     const nextVolume = usedVolume + (itemVolumes[id] ?? 0);
-    if (nextVolume > pricing.premiumCapacity) {
-      setCapacityWarning('La capacidad extendida también está llena. Quita algún elemento para continuar.');
+    if (nextVolume > activePresentation.extendedCapacity) {
+      setCapacityWarning(`La ${activePresentation.name.toLowerCase()} llegó a su capacidad máxima. Quita algún elemento para continuar.`);
       return;
     }
     setSelectedItems((current) => [...current, id]);
-    setCapacityWarning(nextVolume > pricing.standardCapacity && boxSize === 'standard' ? 'Hay más elementos que espacio en la caja actual.' : '');
+    setCapacityWarning(nextVolume > activePresentation.capacity && boxSize === 'standard' ? 'Hay más elementos que espacio en esta presentación.' : '');
     if (id === 'carta') setLetterOpen(true);
   };
 
@@ -186,8 +194,8 @@ export default function SurpriseGiftStudio() {
       ? getCatalogChoice(catalogModalCategory)?.volume ?? itemVolumes[catalogModalCategory] ?? 0
       : 0;
     const nextVolume = usedVolume - currentVolume + (option?.volume ?? 0);
-    if (nextVolume > pricing.premiumCapacity) {
-      setCapacityWarning('La capacidad extendida también está llena. Quita algún elemento para continuar.');
+    if (nextVolume > activePresentation.extendedCapacity) {
+      setCapacityWarning(`La ${activePresentation.name.toLowerCase()} llegó a su capacidad máxima. Quita algún elemento para continuar.`);
       return;
     }
     if (option) {
@@ -211,13 +219,13 @@ export default function SurpriseGiftStudio() {
     const maximum = boxSize === 'premium' ? 3 : 1;
     if (selectedProducts.length >= maximum) return;
     const nextVolume = usedVolume + (itemVolumes['producto-personalizado'] ?? 0);
-    if (nextVolume > pricing.premiumCapacity) {
-      setCapacityWarning('La capacidad extendida también está llena. Quita algún elemento para continuar.');
+    if (nextVolume > activePresentation.extendedCapacity) {
+      setCapacityWarning(`La ${activePresentation.name.toLowerCase()} llegó a su capacidad máxima. Quita algún elemento para continuar.`);
       return;
     }
     setSelectedProducts((current) => [...current, productId]);
     setSelectedItems((current) => current.includes('producto-personalizado') ? current : [...current, 'producto-personalizado']);
-    setCapacityWarning(nextVolume > pricing.standardCapacity && boxSize === 'standard' ? 'Hay más elementos que espacio en la caja actual.' : '');
+    setCapacityWarning(nextVolume > activePresentation.capacity && boxSize === 'standard' ? 'Hay más elementos que espacio en esta presentación.' : '');
   };
 
   const draftLetter = () => {
@@ -293,8 +301,14 @@ export default function SurpriseGiftStudio() {
           <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(390px,.92fr)]">
             <div className="space-y-4">
               <section className="rounded-[1.6rem] border border-white bg-white/85 p-5 shadow-[0_18px_50px_rgba(109,88,150,.08)] backdrop-blur sm:p-6">
+                <div className="mb-4 flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-sm font-bold text-amber-700">01</span><div><h2 className="font-semibold text-slate-800">Elige la forma de tu caja</h2><p className="text-xs text-slate-400">Cada presentación transforma la sorpresa.</p></div></div>
+                <div className="grid gap-2 sm:grid-cols-3">{boxPresentations.map((presentation) => <button key={presentation.id} type="button" onClick={() => { setBoxPresentationId(presentation.id); if (presentation.id === 'explosiva-fotos') setSelectedItems((current) => current.includes('fotos') ? current : [...current, 'fotos']); const incomingVolume = presentation.id === 'explosiva-fotos' && !selectedItems.includes('fotos') ? itemVolumes.fotos ?? 0 : 0; const volume = usedVolume + incomingVolume; const limit = boxSize === 'premium' ? presentation.extendedCapacity : presentation.capacity; setCapacityWarning(volume > limit ? `${presentation.name} no tiene espacio suficiente para todos los detalles seleccionados.` : ''); }} aria-pressed={boxPresentationId === presentation.id} className={`rounded-2xl border p-3 text-left transition ${boxPresentationId === presentation.id ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 bg-white hover:border-violet-200'}`}><span className="mb-2 grid h-20 place-items-center overflow-hidden rounded-xl" style={{ backgroundColor: `${activeBox.color}80` }}><span className={`block border-2 border-white/90 shadow-md ${presentation.shape === 'round' ? 'h-12 w-16 rounded-[50%/24%]' : presentation.shape === 'explosion' ? 'h-12 w-14 rotate-3 rounded-sm' : 'h-11 w-14 rounded-sm'}`} style={{ background: `linear-gradient(135deg, ${activeBox.color}, white)` }}>{presentation.shape === 'explosion' && <span className="grid h-full place-items-center text-xl">📸</span>}</span></span><span className="block min-h-9 text-[11px] font-bold leading-4 text-slate-800">{presentation.name}</span><span className="mt-1 block text-[10px] leading-4 text-slate-500">{presentation.detail}</span><span className="mt-2 block text-xs font-bold text-slate-800">${presentation.price.toLocaleString('es-MX')} MXN</span><span className="mt-1 block text-[9px] text-slate-400">Capacidad ${presentation.capacity} · extendida ${presentation.extendedCapacity}</span></button>)}</div>
+                {activePresentation.id === 'explosiva-fotos' && <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-[10px] leading-4 text-rose-800">Agregamos Fotos favoritas para que puedas subir tus imágenes y verlas en las caras de la caja.</p>}
+              </section>
+
+              <section className="rounded-[1.6rem] border border-white bg-white/85 p-5 shadow-[0_18px_50px_rgba(109,88,150,.08)] backdrop-blur sm:p-6">
                 <div className="mb-4 flex items-center gap-3">
-                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-violet-100 text-sm font-bold text-violet-700">01</span>
+                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-violet-100 text-sm font-bold text-violet-700">02</span>
                   <div><h2 className="font-semibold text-slate-800">¿Qué celebramos?</h2><p className="text-xs text-slate-400">La ocasión inspira cada detalle.</p></div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -315,7 +329,7 @@ export default function SurpriseGiftStudio() {
 
               <section className="rounded-[1.6rem] border border-white bg-white/85 p-5 shadow-[0_18px_50px_rgba(109,88,150,.08)] backdrop-blur sm:p-6">
                 <div className="mb-4 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-rose-100 text-sm font-bold text-rose-700">02</span><div><h2 className="font-semibold text-slate-800">Arma la sorpresa</h2><p className="text-xs text-slate-400">Selecciona lo que quieres incluir.</p></div></div>
+                  <div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-rose-100 text-sm font-bold text-rose-700">03</span><div><h2 className="font-semibold text-slate-800">Arma la sorpresa</h2><p className="text-xs text-slate-400">Selecciona lo que quieres incluir.</p></div></div>
                   <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-500">{selectedItems.length} seleccionados</span>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
@@ -334,8 +348,9 @@ export default function SurpriseGiftStudio() {
                   <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold text-slate-700">Espacio de la caja</p><p className="mt-1 text-[11px] text-slate-500">Tu caja está al {capacityPercent}% de su capacidad</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-violet-700">{boxSize === 'premium' ? 'Capacidad extendida' : 'Capacidad estándar'}</span></div>
                   <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white"><div className={`h-full rounded-full transition-all ${capacityPercent > 100 ? 'bg-rose-500' : 'bg-gradient-to-r from-violet-500 to-rose-400'}`} style={{ width: `${Math.min(capacityPercent, 100)}%` }} /></div>
                   {capacityWarning && <p role="status" className="mt-3 text-xs font-medium text-rose-700">{capacityWarning}</p>}
-                  {usedVolume > pricing.standardCapacity && boxSize === 'standard' && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white p-3"><p className="text-[11px] text-slate-600">Te conviene más espacio para acomodar todo.</p><button type="button" onClick={() => { setBoxSize('premium'); setCapacityWarning(''); }} className="rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-violet-800">Ampliar capacidad +${pricing.premiumBoxSurcharge}</button></div>}
-                  {boxSize === 'premium' && usedVolume <= 100 && selectedProducts.length <= 1 && <button type="button" onClick={() => setBoxSize('standard')} className="mt-2 text-[10px] font-medium text-violet-700 underline">Volver a caja estándar</button>}
+                  {usedVolume > activePresentation.capacity && boxSize === 'standard' && usedVolume <= activePresentation.extendedCapacity && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white p-3"><p className="text-[11px] text-slate-600">Te conviene más espacio para esta presentación.</p><button type="button" onClick={() => { setBoxSize('premium'); setCapacityWarning(''); }} className="rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-violet-800">Ampliar capacidad +${pricing.premiumBoxSurcharge}</button></div>}
+                  {usedVolume > activePresentation.extendedCapacity && <p role="status" className="mt-3 rounded-xl bg-rose-50 p-3 text-[11px] font-medium text-rose-700">Los artículos superan el máximo de esta presentación. Quita algún elemento o elige otra forma.</p>}
+                  {boxSize === 'premium' && usedVolume <= activePresentation.capacity && selectedProducts.length <= 1 && <button type="button" onClick={() => setBoxSize('standard')} className="mt-2 text-[10px] font-medium text-violet-700 underline">Volver a caja estándar</button>}
                 </div>
                 {selectedItems.includes('fotos') && <div className="mt-5 rounded-2xl border border-rose-100 bg-rose-50/40 p-4">
                   <div className="mb-3 flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-slate-800">Tus 6 fotos favoritas</p><p className="mt-1 text-[10px] text-slate-500">Súbelas y ajusta el encuadre de cada impresión.</p></div><span className="rounded-full bg-white px-2 py-1 text-[10px] text-slate-500">{photos.filter(Boolean).length}/6</span></div>
@@ -343,14 +358,10 @@ export default function SurpriseGiftStudio() {
                 </div>}
               </section>
 
-              <section className="rounded-[1.6rem] border border-white bg-white/85 p-5 shadow-[0_18px_50px_rgba(109,88,150,.08)] backdrop-blur sm:p-6">
-                <div className="mb-4 flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-sm font-bold text-amber-700">04</span><div><h2 className="font-semibold text-slate-800">Elige la forma de tu caja</h2><p className="text-xs text-slate-400">Cada presentación transforma la sorpresa.</p></div></div>
-                <div className="grid gap-2 sm:grid-cols-3">{boxPresentations.map((presentation) => <button key={presentation.id} type="button" onClick={() => { setBoxPresentationId(presentation.id); if (presentation.id === 'explosiva-fotos') setSelectedItems((current) => current.includes('fotos') ? current : [...current, 'fotos']); }} aria-pressed={boxPresentationId === presentation.id} className={`rounded-2xl border p-3 text-left transition ${boxPresentationId === presentation.id ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 bg-white hover:border-violet-200'}`}><span className="mb-2 grid h-20 place-items-center overflow-hidden rounded-xl" style={{ backgroundColor: `${activeBox.color}80` }}><span className={`block border-2 border-white/90 shadow-md ${presentation.shape === 'round' ? 'h-12 w-16 rounded-[50%/24%]' : presentation.shape === 'explosion' ? 'h-12 w-14 rotate-3 rounded-sm' : 'h-11 w-14 rounded-sm'}`} style={{ background: `linear-gradient(135deg, ${activeBox.color}, white)` }}>{presentation.shape === 'explosion' && <span className="grid h-full place-items-center text-xl">📸</span>}</span></span><span className="block min-h-9 text-[11px] font-bold leading-4 text-slate-800">{presentation.name}</span><span className="mt-1 block text-[10px] leading-4 text-slate-500">{presentation.detail}</span><span className="mt-2 block text-xs font-bold text-slate-800">${presentation.price.toLocaleString('es-MX')} MXN</span></button>)}</div>
-                {activePresentation.id === 'explosiva-fotos' && <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-[10px] leading-4 text-rose-800">Agregamos Fotos favoritas para que puedas subir tus imágenes y verlas en las caras de la caja.</p>}
-              </section>
+
 
               <section className="rounded-[1.6rem] border border-white bg-white/85 p-5 shadow-[0_18px_50px_rgba(109,88,150,.08)] backdrop-blur sm:p-6">
-                <div className="mb-4 flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-sm font-bold text-amber-700">05</span><div><h2 className="font-semibold text-slate-800">Personaliza el exterior</h2><p className="text-xs text-slate-400">Elige el forrado de la tapa y la base.</p></div></div>
+                <div className="mb-4 flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-sm font-bold text-amber-700">04</span><div><h2 className="font-semibold text-slate-800">Personaliza el exterior</h2><p className="text-xs text-slate-400">Elige el forrado de la tapa y la base.</p></div></div>
                 <div className="flex flex-wrap gap-2">
                   {boxStyles.map((style) => <button key={style.id} type="button" onClick={() => { setBoxStyleId(style.id); setBaseColor(style.color); setLidColor(style.color); }} aria-label={`Caja ${style.name}`} aria-pressed={boxStyleId === style.id} className={`group flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-medium transition ${boxStyleId === style.id ? 'border-slate-700 bg-white shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}><span className="h-4 w-4 rounded-full border border-black/5" style={{ backgroundColor: style.color }} />{style.name}</button>)}
                 </div>

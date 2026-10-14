@@ -29,9 +29,9 @@ export const ribbonColors = [
 ];
 
 export const boxPresentations = [
-  { id: 'clasica-cuadrada', name: 'Caja clásica cuadrada', detail: 'Ideal para sets mixtos; personaliza el forrado exterior de tapa y base.', price: 290, shape: 'square' },
-  { id: 'sombrerera-premium', name: 'Caja sombrerera premium', detail: 'Forma redonda y elegante para flores o un peluche protagonista.', price: 410, shape: 'round' },
-  { id: 'explosiva-fotos', name: 'Caja explosiva de fotos', detail: 'Abre sus caras para revelar fotos y mensajes sorpresa.', price: 490, shape: 'explosion' },
+  { id: 'clasica-cuadrada', name: 'Caja clásica cuadrada', detail: 'Ideal para sets mixtos; personaliza el forrado exterior de tapa y base.', price: 290, capacity: 100, extendedCapacity: 140, shape: 'square' },
+  { id: 'sombrerera-premium', name: 'Caja sombrerera premium', detail: 'Forma redonda y elegante para flores o un peluche protagonista.', price: 410, capacity: 120, extendedCapacity: 160, shape: 'round' },
+  { id: 'explosiva-fotos', name: 'Caja explosiva de fotos', detail: 'Abre sus caras para revelar fotos y mensajes sorpresa.', price: 490, capacity: 80, extendedCapacity: 110, shape: 'explosion' },
 ];
 
 const itemVolumes: Record<string, number> = { peluche: 34, 'producto-personalizado': 23, fotos: 8, dulces: 20, carta: 4, flores: 25 };
