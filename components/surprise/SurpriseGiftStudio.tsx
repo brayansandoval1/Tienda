@@ -12,9 +12,11 @@ import { DEFAULT_SURPRISE_GIFT_CONFIG } from '@/src/config/surpriseGiftConfig';
 import { surpriseGiftConfigRepository } from '@/src/services/surpriseGiftConfigRepository';
 import SurpriseGiftIcon from '@/components/surprise/SurpriseGiftIcon';
 type PhotoSlot = { src: string; zoom: number; x: number } | null;
+type GiftStep = 'presentation' | 'occasion' | 'items' | 'exterior';
 
 export default function SurpriseGiftStudio() {
   const [config, setConfig] = useState(DEFAULT_SURPRISE_GIFT_CONFIG);
+  const [activeStep, setActiveStep] = useState<GiftStep>('presentation');
   const { occasions, giftItems, boxStyles, ribbonColors, boxPresentations, itemVolumes, catalogOptions, catalogItemIds } = config;
   const { genders, ages, styles } = config.recipientOptions;
   const { pricing } = config;
@@ -93,6 +95,15 @@ export default function SurpriseGiftStudio() {
       .sort((a, b) => b.score - a.score || a.index - b.index)
       .map(({ option }, index) => ({ ...option, recommended: index === 0 && preferredTerms.length > 0 }));
   };
+
+  const wizardSteps: Array<{ id: GiftStep; label: string; shortLabel: string; complete: boolean }> = [
+    { id: 'presentation', label: 'Forma de caja', shortLabel: 'Caja', complete: Boolean(activePresentation) },
+    { id: 'occasion', label: 'Ocasión y destinatario', shortLabel: 'Ocasión', complete: Boolean(occasion) },
+    { id: 'items', label: 'Arma la sorpresa', shortLabel: 'Detalles', complete: selectedItems.length > 0 },
+    { id: 'exterior', label: 'Personaliza el exterior', shortLabel: 'Exterior', complete: true },
+  ];
+  const activeStepIndex = wizardSteps.findIndex((step) => step.id === activeStep);
+  const goToStep = (step: GiftStep) => setActiveStep(step);
 
   useEffect(() => {
     const refreshConfig = () => setConfig(surpriseGiftConfigRepository.read());
@@ -298,14 +309,22 @@ export default function SurpriseGiftStudio() {
             </div>
           </div>
 
+          <nav aria-label="Pasos para crear el regalo" className="mb-5 rounded-2xl border border-white bg-white/80 p-2 shadow-sm backdrop-blur">
+            <div className="grid grid-cols-4 gap-1">{wizardSteps.map((step, index) => <button key={step.id} type="button" onClick={() => goToStep(step.id)} aria-current={activeStep === step.id ? 'step' : undefined} className={`flex min-w-0 items-center gap-2 rounded-xl px-2 py-2.5 text-left transition sm:px-3 ${activeStep === step.id ? 'bg-violet-700 text-white shadow-md shadow-violet-200' : 'text-slate-600 hover:bg-violet-50'}`}><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[10px] font-bold ${activeStep === step.id ? 'bg-white/15 text-white' : step.complete ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{step.complete && step.id !== 'items' ? <Check size={14} /> : `0${index + 1}`}</span><span className="min-w-0"><span className="hidden truncate text-[11px] font-semibold sm:block">{step.label}</span><span className="block truncate text-[10px] font-semibold sm:hidden">{step.shortLabel}</span><span className={`hidden text-[9px] sm:block ${activeStep === step.id ? 'text-violet-100' : step.complete ? 'text-emerald-700' : 'text-slate-400'}`}>{step.id === 'items' && !step.complete ? 'Pendiente' : step.complete ? 'Listo' : 'Por completar'}</span></span></button>)}</div>
+            <div className="mx-2 mt-2 h-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-violet-600 to-rose-400 transition-all duration-300" style={{ width: `${((activeStepIndex + 1) / wizardSteps.length) * 100}%` }} /></div>
+          </nav>
+
           <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(390px,.92fr)]">
             <div className="space-y-4">
+              {activeStep === 'presentation' && (
               <section className="rounded-[1.6rem] border border-white bg-white/85 p-5 shadow-[0_18px_50px_rgba(109,88,150,.08)] backdrop-blur sm:p-6">
                 <div className="mb-4 flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-sm font-bold text-amber-700">01</span><div><h2 className="font-semibold text-slate-800">Elige la forma de tu caja</h2><p className="text-xs text-slate-400">Cada presentación transforma la sorpresa.</p></div></div>
                 <div className="grid gap-2 sm:grid-cols-3">{boxPresentations.map((presentation) => <button key={presentation.id} type="button" onClick={() => { setBoxPresentationId(presentation.id); if (presentation.id === 'explosiva-fotos') setSelectedItems((current) => current.includes('fotos') ? current : [...current, 'fotos']); const incomingVolume = presentation.id === 'explosiva-fotos' && !selectedItems.includes('fotos') ? itemVolumes.fotos ?? 0 : 0; const volume = usedVolume + incomingVolume; const limit = boxSize === 'premium' ? presentation.extendedCapacity : presentation.capacity; setCapacityWarning(volume > limit ? `${presentation.name} no tiene espacio suficiente para todos los detalles seleccionados.` : ''); }} aria-pressed={boxPresentationId === presentation.id} className={`rounded-2xl border p-3 text-left transition ${boxPresentationId === presentation.id ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 bg-white hover:border-violet-200'}`}><span className="mb-2 grid h-20 place-items-center overflow-hidden rounded-xl" style={{ backgroundColor: `${activeBox.color}80` }}><span className={`block border-2 border-white/90 shadow-md ${presentation.shape === 'round' ? 'h-12 w-16 rounded-[50%/24%]' : presentation.shape === 'explosion' ? 'h-12 w-14 rotate-3 rounded-sm' : 'h-11 w-14 rounded-sm'}`} style={{ background: `linear-gradient(135deg, ${activeBox.color}, white)` }}>{presentation.shape === 'explosion' && <span className="grid h-full place-items-center text-xl">📸</span>}</span></span><span className="block min-h-9 text-[11px] font-bold leading-4 text-slate-800">{presentation.name}</span><span className="mt-1 block text-[10px] leading-4 text-slate-500">{presentation.detail}</span><span className="mt-2 block text-xs font-bold text-slate-800">${presentation.price.toLocaleString('es-MX')} MXN</span><span className="mt-1 block text-[9px] text-slate-400">Capacidad ${presentation.capacity} · extendida ${presentation.extendedCapacity}</span></button>)}</div>
                 {activePresentation.id === 'explosiva-fotos' && <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-[10px] leading-4 text-rose-800">Agregamos Fotos favoritas para que puedas subir tus imágenes y verlas en las caras de la caja.</p>}
               </section>
+              )}
 
+              {activeStep === 'occasion' && (
               <section className="rounded-[1.6rem] border border-white bg-white/85 p-5 shadow-[0_18px_50px_rgba(109,88,150,.08)] backdrop-blur sm:p-6">
                 <div className="mb-4 flex items-center gap-3">
                   <span className="grid h-9 w-9 place-items-center rounded-xl bg-violet-100 text-sm font-bold text-violet-700">02</span>
@@ -326,7 +345,9 @@ export default function SurpriseGiftStudio() {
                   <p className="mt-2 rounded-lg bg-violet-50 px-3 py-2 text-[10px] leading-4 text-violet-800">{recipientAge === 'sin-especificar' && recipientStyle === 'automatico' ? 'Las opciones se ordenan según la ocasión; puedes elegir el estilo y la edad para afinarlas.' : `Sugerencias adaptadas a ${recipientContext}${recipientStyle !== 'automatico' ? ` · estilo ${recipientStyle}` : ''}. El género no limita los productos.`}</p>
                 </div>
               </section>
+              )}
 
+              {activeStep === 'items' && (
               <section className="rounded-[1.6rem] border border-white bg-white/85 p-5 shadow-[0_18px_50px_rgba(109,88,150,.08)] backdrop-blur sm:p-6">
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-rose-100 text-sm font-bold text-rose-700">03</span><div><h2 className="font-semibold text-slate-800">Arma la sorpresa</h2><p className="text-xs text-slate-400">Selecciona lo que quieres incluir.</p></div></div>
@@ -357,9 +378,11 @@ export default function SurpriseGiftStudio() {
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{photos.map((photo, index) => <div key={index} className="rounded-lg bg-white p-2 shadow-sm ring-1 ring-slate-100"><label className="block cursor-pointer"><div className="relative aspect-[4/3] overflow-hidden bg-slate-100">{photo ? <img src={photo.src} alt={`Foto ${index + 1}`} className="h-full w-full object-cover" style={{ transform: `scale(${photo.zoom})`, objectPosition: `${photo.x}% center` }} /> : <div className="grid h-full place-items-center text-center text-slate-400"><Camera size={20} /><span className="mt-1 text-[9px]">Subir foto {index + 1}</span></div>}<input type="file" accept="image/*" className="sr-only" onChange={(event) => loadPhoto(index, event)} /></div><span className="mt-2 block text-center text-[9px] font-medium text-slate-500">{photo ? 'Cambiar foto' : 'Elegir imagen'}</span></label>{photo && <div className="mt-2 space-y-1.5"><label className="flex items-center gap-1 text-[9px] text-slate-500"><ZoomIn size={11} /><input aria-label={`Acercar foto ${index + 1}`} type="range" min="1" max="2.5" step="0.05" value={photo.zoom} onChange={(event) => updatePhoto(index, { zoom: Number(event.target.value) })} className="w-full accent-violet-600" /></label><input aria-label={`Mover encuadre de foto ${index + 1}`} type="range" min="0" max="100" value={photo.x} onChange={(event) => updatePhoto(index, { x: Number(event.target.value) })} className="w-full accent-rose-500" /></div>}</div>)}</div>
                 </div>}
               </section>
+              )}
 
 
 
+              {activeStep === 'exterior' && (
               <section className="rounded-[1.6rem] border border-white bg-white/85 p-5 shadow-[0_18px_50px_rgba(109,88,150,.08)] backdrop-blur sm:p-6">
                 <div className="mb-4 flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-sm font-bold text-amber-700">04</span><div><h2 className="font-semibold text-slate-800">Personaliza el exterior</h2><p className="text-xs text-slate-400">Elige el forrado de la tapa y la base.</p></div></div>
                 <div className="flex flex-wrap gap-2">
@@ -378,12 +401,18 @@ export default function SurpriseGiftStudio() {
                   <span className="mt-1 block text-right text-[10px] font-normal text-slate-400">{message.length}/140</span>
                 </label>
               </section>
+              )}
+              <div className="flex items-center justify-between gap-3 rounded-2xl border border-white bg-white/80 p-3 shadow-sm">
+                <button type="button" onClick={() => setActiveStep(wizardSteps[Math.max(0, activeStepIndex - 1)].id)} disabled={activeStepIndex === 0} className="rounded-xl px-4 py-2.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35">Anterior</button>
+                <span className="text-[10px] font-medium text-slate-400">Paso {activeStepIndex + 1} de {wizardSteps.length}</span>
+                {activeStepIndex < wizardSteps.length - 1 ? <button type="button" onClick={() => setActiveStep(wizardSteps[activeStepIndex + 1].id)} className="inline-flex items-center gap-2 rounded-xl bg-violet-700 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-800">Siguiente <ArrowRight size={14} /></button> : <span className="rounded-xl bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700">Vista previa lista</span>}
+              </div>
             </div>
 
             <aside className="xl:sticky xl:top-24">
               <section className="overflow-hidden rounded-[1.8rem] border border-white bg-white/90 shadow-[0_24px_70px_rgba(109,88,150,.14)] backdrop-blur">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-violet-100 px-5 py-4">
-                  <div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-violet-500">Tu regalo va tomando forma</p><h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-800">Vista de la sorpresa</h2></div>
+                  <div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-violet-500">Tu regalo va tomando forma</p><h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-800">Vista de la sorpresa</h2><p className="mt-1 text-[10px] font-medium text-slate-500">{selectedItems.length} detalles seleccionados · {activeOccasion.name} · Para: {recipientContext}</p></div>
                   <div className="flex items-center gap-2"><button type="button" onClick={() => setBoxClosed((value) => !value)} aria-pressed={boxClosed} className="rounded-full border border-violet-200 bg-white px-3 py-2 text-[10px] font-semibold text-violet-700 transition hover:bg-violet-50">{boxClosed ? 'Ver caja abierta' : 'Ver caja cerrada'}</button><button type="button" onClick={enableDeviceTilt} className="rounded-full bg-emerald-50 px-2.5 py-2 text-[10px] font-semibold text-emerald-700">{tiltEnabled ? 'Movimiento activo' : 'Activar movimiento'}</button></div>
                 </div>
                 <div className="relative grid min-h-[370px] place-items-center overflow-hidden bg-[radial-gradient(circle_at_50%_25%,rgba(255,255,255,.95),transparent_44%),linear-gradient(145deg,#fbf7ff,#f4efff_55%,#fdf1f6)] px-5 py-8" onPointerMove={trackPointerTilt} onPointerLeave={() => !tiltEnabled && setTilt({ x: 0, y: 0 })}>
