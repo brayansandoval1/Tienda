@@ -15,7 +15,7 @@ type PhotoSlot = { src: string; zoom: number; x: number } | null;
 
 export default function SurpriseGiftStudio() {
   const [config, setConfig] = useState(DEFAULT_SURPRISE_GIFT_CONFIG);
-  const { occasions, giftItems, boxStyles, ribbonColors, itemVolumes, catalogOptions, catalogItemIds } = config;
+  const { occasions, giftItems, boxStyles, ribbonColors, boxPresentations, itemVolumes, catalogOptions, catalogItemIds } = config;
   const { genders, ages, styles } = config.recipientOptions;
   const { pricing } = config;
   const [occasion, setOccasion] = useState('cumpleanos');
@@ -28,6 +28,9 @@ export default function SurpriseGiftStudio() {
   const [catalogModalCategory, setCatalogModalCategory] = useState<string | null>(null);
   const [catalogDraftId, setCatalogDraftId] = useState('');
   const [boxStyleId, setBoxStyleId] = useState('rosa');
+  const [boxPresentationId, setBoxPresentationId] = useState('clasica-cuadrada');
+  const [baseColor, setBaseColor] = useState(DEFAULT_SURPRISE_GIFT_CONFIG.boxStyles[0].color);
+  const [lidColor, setLidColor] = useState(DEFAULT_SURPRISE_GIFT_CONFIG.boxStyles[0].color);
   const [ribbonColorId, setRibbonColorId] = useState(DEFAULT_SURPRISE_GIFT_CONFIG.ribbonColors[0].id);
   const [message, setMessage] = useState('¡Hoy celebramos lo increíble que eres!');
   const [ribbonEnabled, setRibbonEnabled] = useState(true);
@@ -58,6 +61,7 @@ export default function SurpriseGiftStudio() {
     ? { id: 'otra', name: customOccasionName.trim() || 'Otra ocasión', emoji: '✨' }
     : occasions.find((item) => item.id === occasion) ?? occasions[0] ?? DEFAULT_SURPRISE_GIFT_CONFIG.occasions[0];
   const activeBox = boxStyles.find((item) => item.id === boxStyleId) ?? boxStyles[0] ?? DEFAULT_SURPRISE_GIFT_CONFIG.boxStyles[0];
+  const activePresentation = boxPresentations.find((item) => item.id === boxPresentationId) ?? boxPresentations[0] ?? DEFAULT_SURPRISE_GIFT_CONFIG.boxPresentations[0];
   const ribbonColor = ribbonColors.find((item) => item.id === ribbonColorId)?.color ?? ribbonColors[0]?.color ?? DEFAULT_SURPRISE_GIFT_CONFIG.ribbonColors[0].color;
   const chosenItems = giftItems.filter((item) => selectedItems.includes(item.id));
   const getCatalogChoice = (categoryId: string, choiceId = selectedCatalogChoices[categoryId]) => {
@@ -68,7 +72,7 @@ export default function SurpriseGiftStudio() {
   const usedVolume = selectedItems.reduce((sum, id) => sum + (catalogItemIds.includes(id) ? (getCatalogChoice(id)?.volume ?? itemVolumes[id] ?? 0) : (itemVolumes[id] ?? 0)), 0);
   const capacity = boxSize === 'premium' ? pricing.premiumCapacity : pricing.standardCapacity;
   const capacityPercent = Math.round((usedVolume / capacity) * 100);
-  const estimate = pricing.boxBasePrice + itemsTotal + (boxSize === 'premium' ? pricing.premiumBoxSurcharge : 0);
+  const estimate = activePresentation.price + itemsTotal + (boxSize === 'premium' ? pricing.premiumBoxSurcharge : 0);
   const selectedProductNames = [
     ...chosenItems.map((item) => getCatalogChoice(item.id)?.name ?? item.name),
     ...products.filter((product) => selectedProducts.includes(product.id)).map((product) => product.name),
@@ -96,6 +100,20 @@ export default function SurpriseGiftStudio() {
       window.removeEventListener('surprise-gift-config-updated', refreshConfig);
     };
   }, []);
+
+  useEffect(() => {
+    const selectedBox = boxStyles.find((item) => item.id === boxStyleId) ?? boxStyles[0];
+    if (selectedBox) {
+      setBaseColor(selectedBox.color);
+      setLidColor(selectedBox.color);
+    }
+  }, [boxStyles, boxStyleId]);
+
+  useEffect(() => {
+    if (!ribbonColors.some((item) => item.id === ribbonColorId) && ribbonColors[0]) {
+      setRibbonColorId(ribbonColors[0].id);
+    }
+  }, [ribbonColors, ribbonColorId]);
 
   useEffect(() => {
     const refreshSavedProducts = () => setSavedProducts(products.filter((product) => Boolean(getDraft(product.id))));
@@ -153,7 +171,7 @@ export default function SurpriseGiftStudio() {
     }
     const nextVolume = usedVolume + (itemVolumes[id] ?? 0);
     if (nextVolume > pricing.premiumCapacity) {
-      setCapacityWarning('La caja premium también está llena. Quita algún elemento para continuar.');
+      setCapacityWarning('La capacidad extendida también está llena. Quita algún elemento para continuar.');
       return;
     }
     setSelectedItems((current) => [...current, id]);
@@ -169,7 +187,7 @@ export default function SurpriseGiftStudio() {
       : 0;
     const nextVolume = usedVolume - currentVolume + (option?.volume ?? 0);
     if (nextVolume > pricing.premiumCapacity) {
-      setCapacityWarning('La caja premium también está llena. Quita algún elemento para continuar.');
+      setCapacityWarning('La capacidad extendida también está llena. Quita algún elemento para continuar.');
       return;
     }
     if (option) {
@@ -194,7 +212,7 @@ export default function SurpriseGiftStudio() {
     if (selectedProducts.length >= maximum) return;
     const nextVolume = usedVolume + (itemVolumes['producto-personalizado'] ?? 0);
     if (nextVolume > pricing.premiumCapacity) {
-      setCapacityWarning('La caja premium también está llena. Quita algún elemento para continuar.');
+      setCapacityWarning('La capacidad extendida también está llena. Quita algún elemento para continuar.');
       return;
     }
     setSelectedProducts((current) => [...current, productId]);
@@ -313,10 +331,10 @@ export default function SurpriseGiftStudio() {
                 </div>
                 {selectedItems.includes('carta') && <button type="button" onClick={() => { setLetterDraft(letterText); setLetterOpen(true); }} className="mt-3 inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-violet-700 hover:bg-violet-50">💌 {letterText ? 'Editar carta' : 'Abrir carta especial'}</button>}
                 <div className="mt-5 rounded-2xl border border-violet-100 bg-violet-50/60 p-4">
-                  <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold text-slate-700">Espacio de la caja</p><p className="mt-1 text-[11px] text-slate-500">Tu caja está al {capacityPercent}% de su capacidad</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-violet-700">{boxSize === 'premium' ? 'Grande premium' : 'Estándar'}</span></div>
+                  <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold text-slate-700">Espacio de la caja</p><p className="mt-1 text-[11px] text-slate-500">Tu caja está al {capacityPercent}% de su capacidad</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-violet-700">{boxSize === 'premium' ? 'Capacidad extendida' : 'Capacidad estándar'}</span></div>
                   <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white"><div className={`h-full rounded-full transition-all ${capacityPercent > 100 ? 'bg-rose-500' : 'bg-gradient-to-r from-violet-500 to-rose-400'}`} style={{ width: `${Math.min(capacityPercent, 100)}%` }} /></div>
                   {capacityWarning && <p role="status" className="mt-3 text-xs font-medium text-rose-700">{capacityWarning}</p>}
-                  {usedVolume > pricing.standardCapacity && boxSize === 'standard' && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white p-3"><p className="text-[11px] text-slate-600">Te conviene más espacio para acomodar todo.</p><button type="button" onClick={() => { setBoxSize('premium'); setCapacityWarning(''); }} className="rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-violet-800">Usar Caja Grande Premium +${pricing.premiumBoxSurcharge}</button></div>}
+                  {usedVolume > pricing.standardCapacity && boxSize === 'standard' && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white p-3"><p className="text-[11px] text-slate-600">Te conviene más espacio para acomodar todo.</p><button type="button" onClick={() => { setBoxSize('premium'); setCapacityWarning(''); }} className="rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-violet-800">Ampliar capacidad +${pricing.premiumBoxSurcharge}</button></div>}
                   {boxSize === 'premium' && usedVolume <= 100 && selectedProducts.length <= 1 && <button type="button" onClick={() => setBoxSize('standard')} className="mt-2 text-[10px] font-medium text-violet-700 underline">Volver a caja estándar</button>}
                 </div>
                 {selectedItems.includes('fotos') && <div className="mt-5 rounded-2xl border border-rose-100 bg-rose-50/40 p-4">
@@ -326,10 +344,17 @@ export default function SurpriseGiftStudio() {
               </section>
 
               <section className="rounded-[1.6rem] border border-white bg-white/85 p-5 shadow-[0_18px_50px_rgba(109,88,150,.08)] backdrop-blur sm:p-6">
-                <div className="mb-4 flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-sm font-bold text-amber-700">03</span><div><h2 className="font-semibold text-slate-800">Personaliza la caja</h2><p className="text-xs text-slate-400">El exterior también cuenta la historia.</p></div></div>
+                <div className="mb-4 flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-sm font-bold text-amber-700">04</span><div><h2 className="font-semibold text-slate-800">Elige la forma de tu caja</h2><p className="text-xs text-slate-400">Cada presentación transforma la sorpresa.</p></div></div>
+                <div className="grid gap-2 sm:grid-cols-3">{boxPresentations.map((presentation) => <button key={presentation.id} type="button" onClick={() => { setBoxPresentationId(presentation.id); if (presentation.id === 'explosiva-fotos') setSelectedItems((current) => current.includes('fotos') ? current : [...current, 'fotos']); }} aria-pressed={boxPresentationId === presentation.id} className={`rounded-2xl border p-3 text-left transition ${boxPresentationId === presentation.id ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200 bg-white hover:border-violet-200'}`}><span className="mb-2 grid h-20 place-items-center overflow-hidden rounded-xl" style={{ backgroundColor: `${activeBox.color}80` }}><span className={`block border-2 border-white/90 shadow-md ${presentation.shape === 'round' ? 'h-12 w-16 rounded-[50%/24%]' : presentation.shape === 'explosion' ? 'h-12 w-14 rotate-3 rounded-sm' : 'h-11 w-14 rounded-sm'}`} style={{ background: `linear-gradient(135deg, ${activeBox.color}, white)` }}>{presentation.shape === 'explosion' && <span className="grid h-full place-items-center text-xl">📸</span>}</span></span><span className="block min-h-9 text-[11px] font-bold leading-4 text-slate-800">{presentation.name}</span><span className="mt-1 block text-[10px] leading-4 text-slate-500">{presentation.detail}</span><span className="mt-2 block text-xs font-bold text-slate-800">${presentation.price.toLocaleString('es-MX')} MXN</span></button>)}</div>
+                {activePresentation.id === 'explosiva-fotos' && <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-[10px] leading-4 text-rose-800">Agregamos Fotos favoritas para que puedas subir tus imágenes y verlas en las caras de la caja.</p>}
+              </section>
+
+              <section className="rounded-[1.6rem] border border-white bg-white/85 p-5 shadow-[0_18px_50px_rgba(109,88,150,.08)] backdrop-blur sm:p-6">
+                <div className="mb-4 flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-sm font-bold text-amber-700">05</span><div><h2 className="font-semibold text-slate-800">Personaliza el exterior</h2><p className="text-xs text-slate-400">Elige el forrado de la tapa y la base.</p></div></div>
                 <div className="flex flex-wrap gap-2">
-                  {boxStyles.map((style) => <button key={style.id} type="button" onClick={() => setBoxStyleId(style.id)} aria-label={`Caja ${style.name}`} aria-pressed={boxStyleId === style.id} className={`group flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-medium transition ${boxStyleId === style.id ? 'border-slate-700 bg-white shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}><span className="h-4 w-4 rounded-full border border-black/5" style={{ backgroundColor: style.color }} />{style.name}</button>)}
+                  {boxStyles.map((style) => <button key={style.id} type="button" onClick={() => { setBoxStyleId(style.id); setBaseColor(style.color); setLidColor(style.color); }} aria-label={`Caja ${style.name}`} aria-pressed={boxStyleId === style.id} className={`group flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-medium transition ${boxStyleId === style.id ? 'border-slate-700 bg-white shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}><span className="h-4 w-4 rounded-full border border-black/5" style={{ backgroundColor: style.color }} />{style.name}</button>)}
                 </div>
+                {activePresentation.id === 'clasica-cuadrada' && <div className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-white p-3 sm:grid-cols-2"><div><p className="text-xs font-semibold text-slate-700">Forrado de la tapa</p><div className="mt-2 flex flex-wrap gap-2">{boxStyles.map((style) => <button key={`lid-${style.id}`} type="button" onClick={() => setLidColor(style.color)} aria-label={`Forrado de tapa ${style.name}`} aria-pressed={lidColor === style.color} className={`h-7 w-7 rounded-full border-2 ${lidColor === style.color ? 'border-slate-800 ring-2 ring-slate-200' : 'border-white shadow ring-1 ring-slate-200'}`} style={{ backgroundColor: style.color }} />)}</div></div><div><p className="text-xs font-semibold text-slate-700">Forrado de la base</p><div className="mt-2 flex flex-wrap gap-2">{boxStyles.map((style) => <button key={`base-${style.id}`} type="button" onClick={() => setBaseColor(style.color)} aria-label={`Forrado de base ${style.name}`} aria-pressed={baseColor === style.color} className={`h-7 w-7 rounded-full border-2 ${baseColor === style.color ? 'border-slate-800 ring-2 ring-slate-200' : 'border-white shadow ring-1 ring-slate-200'}`} style={{ backgroundColor: style.color }} />)}</div></div></div>}
                 <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3"><p className="text-xs font-semibold text-slate-700">Color del listón</p><p className="mt-0.5 text-[10px] text-slate-400">Elige un color disponible para combinarlo con cualquier caja.</p><div className="mt-2 flex flex-wrap gap-2">{ribbonColors.map((item) => <button key={item.id} type="button" onClick={() => setRibbonColorId(item.id)} aria-label={`Listón ${item.name}`} title={item.name} aria-pressed={ribbonColorId === item.id} className={`h-8 w-8 rounded-full border-2 transition ${ribbonColorId === item.id ? 'scale-110 border-slate-800 ring-2 ring-slate-200' : 'border-white shadow ring-1 ring-slate-200'}`} style={{ backgroundColor: item.color }} />)}</div></div>
                 <label className="mt-4 flex items-center gap-3 rounded-xl border border-slate-200 p-3">
                   <input type="checkbox" checked={ribbonEnabled} onChange={(event) => setRibbonEnabled(event.target.checked)} className="h-4 w-4 accent-violet-600" />
@@ -353,11 +378,12 @@ export default function SurpriseGiftStudio() {
                 <div className="relative grid min-h-[370px] place-items-center overflow-hidden bg-[radial-gradient(circle_at_50%_25%,rgba(255,255,255,.95),transparent_44%),linear-gradient(145deg,#fbf7ff,#f4efff_55%,#fdf1f6)] px-5 py-8" onPointerMove={trackPointerTilt} onPointerLeave={() => !tiltEnabled && setTilt({ x: 0, y: 0 })}>
                   <div className="absolute inset-0 opacity-40" style={{ backgroundImage: 'radial-gradient(#b8a5d6 0.7px, transparent 0.7px)', backgroundSize: '18px 18px' }} />
                   <div className="relative w-full max-w-[360px]" style={{ perspective: '900px', transform: `rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)`, transition: 'transform 180ms ease-out' }}>
-                    <div className="relative z-20 mx-auto flex h-24 w-[90%] items-center justify-center rounded-t-[2rem] border-[8px] border-b-0 border-white/75 shadow-[0_15px_25px_rgba(94,65,120,.14)]" style={{ backgroundColor: `${activeBox.color}dd`, transform: `translateZ(28px) rotateX(${boxClosed ? '0deg' : '-12deg'}) translateY(${boxClosed ? '72px' : '0px'})`, transformOrigin: 'bottom center', transition: 'transform 850ms cubic-bezier(.2,.8,.2,1)', boxShadow: '0 15px 25px rgba(94,65,120,.18)' }}>
+                    <div className={`relative z-20 mx-auto flex h-24 w-[90%] items-center justify-center border-[8px] border-b-0 border-white/75 shadow-[0_15px_25px_rgba(94,65,120,.14)] ${activePresentation.shape === 'round' ? 'rounded-[50%/35%]' : 'rounded-t-[2rem]'}`} style={{ backgroundColor: `${activePresentation.id === 'clasica-cuadrada' ? lidColor : baseColor}dd`, transform: `translateZ(28px) rotateX(${boxClosed ? '0deg' : '-12deg'}) translateY(${boxClosed ? '72px' : '0px'})`, transformOrigin: 'bottom center', transition: 'transform 850ms cubic-bezier(.2,.8,.2,1)', boxShadow: '0 15px 25px rgba(94,65,120,.18)' }}>
                       <span className={`rounded-lg bg-white/75 px-3 py-1 text-[10px] font-bold uppercase tracking-[.16em] text-slate-600 shadow-sm transition-opacity ${boxClosed ? 'opacity-0' : 'opacity-100'}`}>{activeOccasion.name}</span>
                     </div>
-                    <div className="relative z-10 -mt-1 grid min-h-40 grid-cols-3 items-center justify-items-center gap-1 overflow-hidden rounded-[1.35rem] border-[9px] border-t-[6px] border-white/80 px-3 py-3 shadow-[0_22px_26px_rgba(94,65,120,.18)]" style={{ backgroundColor: activeBox.color, transform: 'translateZ(8px)', transition: 'background-color 350ms' }}>
+                    <div className={`relative z-10 -mt-1 grid min-h-40 grid-cols-3 items-center justify-items-center gap-1 overflow-hidden border-[9px] border-t-[6px] border-white/80 px-3 py-3 shadow-[0_22px_26px_rgba(94,65,120,.18)] ${activePresentation.shape === 'round' ? 'rounded-[50%/18%]' : activePresentation.shape === 'explosion' ? 'rounded-md' : 'rounded-[1.35rem]'}`} style={{ backgroundColor: baseColor, transform: 'translateZ(8px)', transition: 'background-color 350ms' }}>
                       <div className="pointer-events-none absolute inset-x-2 bottom-1 z-0 h-10 rounded-b-xl opacity-70" style={{ background: `repeating-linear-gradient(35deg, ${ribbonColor}88 0 3px, transparent 3px 8px), repeating-linear-gradient(-24deg, #fff9 0 2px, transparent 2px 7px)` }} />
+                      {activePresentation.shape === 'explosion' && [0, 1, 2, 3].map((face) => <div key={`face-${face}`} className={`pointer-events-none absolute z-0 overflow-hidden rounded-md border-2 border-white/80 bg-white/45 shadow-sm ${face === 0 ? 'inset-x-4 top-2 h-8' : face === 1 ? 'inset-x-4 bottom-2 h-8' : face === 2 ? 'bottom-12 left-2 top-12 w-8' : 'bottom-12 right-2 top-12 w-8'}`}>{photos[face] && <img src={photos[face]?.src} alt="" className="h-full w-full object-cover" />}{!photos[face] && <span className="grid h-full place-items-center px-1 text-center text-[8px] font-semibold text-slate-600">{message.slice(0, 24) || 'Tu mensaje'}</span>}</div>)}
                       {chosenItems.length ? chosenItems.slice(0, 6).flatMap((item) => item.id === 'producto-personalizado' ? selectedProducts.slice(0, 3).map((productId) => ({ id: `product-${productId}`, emoji: '🎨', imageUrl: '' })) : catalogItemIds.includes(item.id) ? [{ id: item.id, emoji: getCatalogChoice(item.id)?.emoji ?? item.emoji, imageUrl: getCatalogChoice(item.id)?.imageUrl ?? item.imageUrl ?? '' }] : [{ id: item.id, emoji: item.emoji, imageUrl: item.imageUrl ?? '' }]).map((item, index) => <span key={item.id} className={`relative z-10 grid h-[4.4rem] w-[4.4rem] place-items-center overflow-hidden text-4xl transition-all duration-700 ${boxClosed ? 'translate-y-8 scale-75 opacity-0' : 'opacity-100'} ${index % 2 ? 'rotate-3' : '-rotate-3'}`} style={{ filter: 'drop-shadow(0 12px 5px rgba(79,42,75,.32))', transform: `translateZ(${20 + index * 3}px) ${boxClosed ? 'translateY(38px) scale(.7)' : ''}`, transitionDelay: `${index * 35}ms` }}>{item.id === 'fotos' && photos.some(Boolean) ? <span className="grid h-full w-full grid-cols-2 gap-0.5 rounded-sm bg-white p-1">{photos.filter(Boolean).slice(0, 4).map((photo, photoIndex) => photo && <img key={photoIndex} src={photo.src} alt="" className="h-full w-full object-cover" />)}</span> : <SurpriseGiftIcon emoji={item.emoji} imageUrl={item.imageUrl} className="h-full w-full text-4xl" />}</span>) : <div className="relative z-10 col-span-3 py-8 text-center text-xs font-medium text-slate-500">Agrega detalles para llenar la sorpresa</div>}
                       {ribbonEnabled && <div className="pointer-events-none absolute inset-y-0 left-1/2 w-4 -translate-x-1/2 opacity-80" style={{ backgroundColor: ribbonColor }} />}
                     </div>
@@ -377,8 +403,8 @@ export default function SurpriseGiftStudio() {
                   <div className="flex items-center justify-between"><div><p className="text-xs font-semibold text-slate-700">{chosenItems.length} detalles seleccionados</p><p className="mt-0.5 text-[10px] text-slate-400">{activeOccasion.name} · Para: {recipientContext}</p></div><span className="grid h-9 w-9 place-items-center rounded-xl bg-violet-50 text-violet-600"><Package size={17} /></span></div>
                   <div className="flex flex-wrap gap-1.5">{chosenItems.map((item) => item.id === 'producto-personalizado' ? selectedProducts.map((productId) => { const product = products.find((candidate) => candidate.id === productId); return product && <span key={product.id} className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-600">🎨 {product.name}</span>; }) : <span key={item.id} className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-600"><SurpriseGiftIcon emoji={getCatalogChoice(item.id)?.emoji ?? item.emoji} imageUrl={getCatalogChoice(item.id)?.imageUrl ?? item.imageUrl} className="mr-1 inline-grid h-4 w-4 align-middle" />{getCatalogChoice(item.id)?.name ?? item.name}</span>)}</div>
                   <div className="space-y-1.5 border-t border-slate-100 pt-3 text-[11px] text-slate-500">
-                    <div className="flex justify-between"><span>Caja y armado</span><span>${pricing.boxBasePrice.toLocaleString('es-MX')} MXN</span></div>
-                    {boxSize === 'premium' && <div className="flex justify-between"><span>Caja Grande Premium</span><span>+${pricing.premiumBoxSurcharge.toLocaleString('es-MX')} MXN</span></div>}
+                    <div className="flex justify-between"><span>{activePresentation.name}</span><span>${activePresentation.price.toLocaleString('es-MX')} MXN</span></div>
+                    {boxSize === 'premium' && <div className="flex justify-between"><span>Capacidad extendida</span><span>+${pricing.premiumBoxSurcharge.toLocaleString('es-MX')} MXN</span></div>}
                     <div className="flex justify-between"><span>Detalles seleccionados</span><span>${itemsTotal.toLocaleString('es-MX')} MXN</span></div>
                   </div>
                   <div className="rounded-xl bg-violet-50 px-3 py-2.5"><div className="flex justify-between text-[10px] font-medium text-violet-800"><span>Capacidad {boxSize === 'premium' ? 'premium' : 'de la caja'}</span><span>{capacityPercent}%</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-rose-400" style={{ width: `${Math.min(capacityPercent, 100)}%` }} /></div></div>
@@ -433,7 +459,7 @@ export default function SurpriseGiftStudio() {
       {productsModalOpen && <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setProductsModalOpen(false); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="custom-products-title" className="my-auto w-full max-w-2xl rounded-3xl bg-white p-5 shadow-2xl sm:p-7">
           <div className="flex items-start justify-between gap-4"><div><span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700"><Package size={12} /> Diseños guardados</span><h2 id="custom-products-title" className="mt-3 text-xl font-semibold text-slate-800">Elige tus productos personalizados</h2><p className="mt-1 text-xs leading-5 text-slate-500">Selecciona productos que ya diseñaste y guardaste en este navegador.</p></div><button type="button" aria-label="Cerrar" onClick={() => setProductsModalOpen(false)} className="rounded-full p-2 text-slate-400 hover:bg-slate-100"><X size={18} /></button></div>
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-violet-50 p-3"><div><p className="text-xs font-semibold text-violet-900">{selectedProducts.length}/{boxSize === 'premium' ? 3 : 1} productos seleccionados</p><p className="mt-1 text-[10px] text-violet-700">{boxSize === 'premium' ? 'Tu caja premium permite hasta 3 productos.' : 'La caja estándar permite 1 producto personalizado.'}</p></div>{boxSize !== 'premium' && <button type="button" onClick={() => { setBoxSize('premium'); setCapacityWarning(''); }} className="rounded-xl bg-violet-700 px-3 py-2.5 text-[10px] font-semibold text-white hover:bg-violet-800">Activar Caja Grande Premium · +$80 MXN</button>}</div>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-violet-50 p-3"><div><p className="text-xs font-semibold text-violet-900">{selectedProducts.length}/{boxSize === 'premium' ? 3 : 1} productos seleccionados</p><p className="mt-1 text-[10px] text-violet-700">{boxSize === 'premium' ? 'Con capacidad extendida puedes agregar hasta 3 productos.' : 'La configuración estándar permite 1 producto personalizado.'}</p></div>{boxSize !== 'premium' && <button type="button" onClick={() => { setBoxSize('premium'); setCapacityWarning(''); }} className="rounded-xl bg-violet-700 px-3 py-2.5 text-[10px] font-semibold text-white hover:bg-violet-800">Ampliar capacidad · +${pricing.premiumBoxSurcharge} MXN</button>}</div>
           {savedProducts.length ? <div className="mt-4 grid max-h-[50vh] grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2">{savedProducts.map((product) => { const selected = selectedProducts.includes(product.id); const disabled = !selected && selectedProducts.length >= (boxSize === 'premium' ? 3 : 1); return <div key={product.id} className={`rounded-2xl border p-3 transition ${selected ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100' : 'border-slate-200'}`}><button type="button" onClick={() => toggleProduct(product.id)} disabled={disabled} aria-pressed={selected} className={`flex w-full items-center gap-3 text-left ${disabled ? 'cursor-not-allowed opacity-45' : ''}`}><span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-100">{product.views[0]?.mockupUrl ? <img src={product.views[0].mockupUrl} alt="" className="h-full w-full object-contain" /> : <Package size={21} className="text-slate-400" />}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-slate-800">{product.name}</span><span className="mt-1 block truncate text-[10px] text-slate-500">{product.category} · ${product.price.toLocaleString('es-MX')} MXN</span></span><span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border ${selected ? 'border-violet-600 bg-violet-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}><Check size={12} /></span></button><a href={`/editor/${product.id}`} target="_blank" rel="noreferrer" onClick={() => { if (!selected && !disabled) toggleProduct(product.id); }} className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-[10px] font-semibold text-white transition hover:bg-violet-700"><Sparkles size={12} />Abrir editor 3D para ajustar estampado</a></div>; })}</div> : <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center"><span className="mx-auto grid h-11 w-11 place-items-center rounded-2xl bg-white text-violet-600 shadow-sm"><Package size={20} /></span><p className="mt-3 text-sm font-semibold text-slate-700">Aún no hay diseños guardados</p><p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-slate-500">Diseña un producto y guarda el borrador en el editor. Aparecerá aquí para agregarlo a tu sorpresa.</p></div>}
           <div className="mt-5 flex justify-end"><button type="button" onClick={() => setProductsModalOpen(false)} className="rounded-xl bg-slate-800 px-4 py-2.5 text-xs font-semibold text-white">Listo</button></div>
         </section>

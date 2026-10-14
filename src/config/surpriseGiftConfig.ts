@@ -28,6 +28,12 @@ export const ribbonColors = [
   { id: 'menta-liston', name: 'Menta', color: '#4e9b83' },
 ];
 
+export const boxPresentations = [
+  { id: 'clasica-cuadrada', name: 'Caja clásica cuadrada', detail: 'Ideal para sets mixtos; personaliza el forrado exterior de tapa y base.', price: 290, shape: 'square' },
+  { id: 'sombrerera-premium', name: 'Caja sombrerera premium', detail: 'Forma redonda y elegante para flores o un peluche protagonista.', price: 410, shape: 'round' },
+  { id: 'explosiva-fotos', name: 'Caja explosiva de fotos', detail: 'Abre sus caras para revelar fotos y mensajes sorpresa.', price: 490, shape: 'explosion' },
+];
+
 const itemVolumes: Record<string, number> = { peluche: 34, 'producto-personalizado': 23, fotos: 8, dulces: 20, carta: 4, flores: 25 };
 const catalogOptions: Record<string, Record<string, Array<{ id: string; name: string; detail: string; emoji: string; imageUrl?: string; price: number; volume: number }>>> = {
   cumpleanos: {
@@ -150,6 +156,7 @@ export type SurpriseGiftConfig = {
   giftItems: typeof giftItems;
   boxStyles: typeof boxStyles;
   ribbonColors: typeof ribbonColors;
+  boxPresentations: typeof boxPresentations;
   itemVolumes: typeof itemVolumes;
   catalogOptions: typeof catalogOptions;
   catalogItemIds: typeof catalogItemIds;
@@ -160,6 +167,6 @@ export type SurpriseGiftConfig = {
 };
 
 export const DEFAULT_SURPRISE_GIFT_CONFIG: SurpriseGiftConfig = {
-  occasions, giftItems, boxStyles, ribbonColors, itemVolumes, catalogOptions, catalogItemIds,
+  occasions, giftItems, boxStyles, ribbonColors, boxPresentations, itemVolumes, catalogOptions, catalogItemIds,
   recipientOptions, recommendationTerms, pricing: giftPricing, ideaSuggestions,
 };

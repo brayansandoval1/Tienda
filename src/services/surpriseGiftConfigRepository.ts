@@ -25,6 +25,7 @@ const browserRepository: SurpriseGiftConfigRepository = {
         ...DEFAULT_SURPRISE_GIFT_CONFIG,
         ...saved,
         ribbonColors: saved.ribbonColors ?? DEFAULT_SURPRISE_GIFT_CONFIG.ribbonColors,
+        boxPresentations: saved.boxPresentations ?? DEFAULT_SURPRISE_GIFT_CONFIG.boxPresentations,
         pricing: { ...DEFAULT_SURPRISE_GIFT_CONFIG.pricing, ...saved.pricing },
         recipientOptions: {
           ...DEFAULT_SURPRISE_GIFT_CONFIG.recipientOptions,
