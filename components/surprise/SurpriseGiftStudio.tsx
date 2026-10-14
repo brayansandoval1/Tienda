@@ -15,7 +15,7 @@ type PhotoSlot = { src: string; zoom: number; x: number } | null;
 
 export default function SurpriseGiftStudio() {
   const [config, setConfig] = useState(DEFAULT_SURPRISE_GIFT_CONFIG);
-  const { occasions, giftItems, boxStyles, itemVolumes, catalogOptions, catalogItemIds } = config;
+  const { occasions, giftItems, boxStyles, ribbonColors, itemVolumes, catalogOptions, catalogItemIds } = config;
   const { genders, ages, styles } = config.recipientOptions;
   const { pricing } = config;
   const [occasion, setOccasion] = useState('cumpleanos');
@@ -28,6 +28,7 @@ export default function SurpriseGiftStudio() {
   const [catalogModalCategory, setCatalogModalCategory] = useState<string | null>(null);
   const [catalogDraftId, setCatalogDraftId] = useState('');
   const [boxStyleId, setBoxStyleId] = useState('rosa');
+  const [ribbonColorId, setRibbonColorId] = useState(DEFAULT_SURPRISE_GIFT_CONFIG.ribbonColors[0].id);
   const [message, setMessage] = useState('¡Hoy celebramos lo increíble que eres!');
   const [ribbonEnabled, setRibbonEnabled] = useState(true);
   const [boxSize, setBoxSize] = useState<'standard' | 'premium'>('standard');
@@ -57,6 +58,7 @@ export default function SurpriseGiftStudio() {
     ? { id: 'otra', name: customOccasionName.trim() || 'Otra ocasión', emoji: '✨' }
     : occasions.find((item) => item.id === occasion) ?? occasions[0] ?? DEFAULT_SURPRISE_GIFT_CONFIG.occasions[0];
   const activeBox = boxStyles.find((item) => item.id === boxStyleId) ?? boxStyles[0] ?? DEFAULT_SURPRISE_GIFT_CONFIG.boxStyles[0];
+  const ribbonColor = ribbonColors.find((item) => item.id === ribbonColorId)?.color ?? ribbonColors[0]?.color ?? DEFAULT_SURPRISE_GIFT_CONFIG.ribbonColors[0].color;
   const chosenItems = giftItems.filter((item) => selectedItems.includes(item.id));
   const getCatalogChoice = (categoryId: string, choiceId = selectedCatalogChoices[categoryId]) => {
     const options = (catalogOptions[occasion] ?? catalogOptions.sorpresa ?? DEFAULT_SURPRISE_GIFT_CONFIG.catalogOptions.sorpresa)?.[categoryId] ?? [];
@@ -328,6 +330,7 @@ export default function SurpriseGiftStudio() {
                 <div className="flex flex-wrap gap-2">
                   {boxStyles.map((style) => <button key={style.id} type="button" onClick={() => setBoxStyleId(style.id)} aria-label={`Caja ${style.name}`} aria-pressed={boxStyleId === style.id} className={`group flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-medium transition ${boxStyleId === style.id ? 'border-slate-700 bg-white shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}><span className="h-4 w-4 rounded-full border border-black/5" style={{ backgroundColor: style.color }} />{style.name}</button>)}
                 </div>
+                <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3"><p className="text-xs font-semibold text-slate-700">Color del listón</p><p className="mt-0.5 text-[10px] text-slate-400">Elige un color disponible para combinarlo con cualquier caja.</p><div className="mt-2 flex flex-wrap gap-2">{ribbonColors.map((item) => <button key={item.id} type="button" onClick={() => setRibbonColorId(item.id)} aria-label={`Listón ${item.name}`} title={item.name} aria-pressed={ribbonColorId === item.id} className={`h-8 w-8 rounded-full border-2 transition ${ribbonColorId === item.id ? 'scale-110 border-slate-800 ring-2 ring-slate-200' : 'border-white shadow ring-1 ring-slate-200'}`} style={{ backgroundColor: item.color }} />)}</div></div>
                 <label className="mt-4 flex items-center gap-3 rounded-xl border border-slate-200 p-3">
                   <input type="checkbox" checked={ribbonEnabled} onChange={(event) => setRibbonEnabled(event.target.checked)} className="h-4 w-4 accent-violet-600" />
                   <span className="grid h-8 w-8 place-items-center rounded-lg bg-rose-50 text-rose-600"><Gift size={16} /></span>
@@ -354,11 +357,17 @@ export default function SurpriseGiftStudio() {
                       <span className={`rounded-lg bg-white/75 px-3 py-1 text-[10px] font-bold uppercase tracking-[.16em] text-slate-600 shadow-sm transition-opacity ${boxClosed ? 'opacity-0' : 'opacity-100'}`}>{activeOccasion.name}</span>
                     </div>
                     <div className="relative z-10 -mt-1 grid min-h-40 grid-cols-3 items-center justify-items-center gap-1 overflow-hidden rounded-[1.35rem] border-[9px] border-t-[6px] border-white/80 px-3 py-3 shadow-[0_22px_26px_rgba(94,65,120,.18)]" style={{ backgroundColor: activeBox.color, transform: 'translateZ(8px)', transition: 'background-color 350ms' }}>
-                      <div className="pointer-events-none absolute inset-x-2 bottom-1 z-0 h-10 rounded-b-xl opacity-70" style={{ background: `repeating-linear-gradient(35deg, ${activeBox.ribbon}88 0 3px, transparent 3px 8px), repeating-linear-gradient(-24deg, #fff9 0 2px, transparent 2px 7px)` }} />
+                      <div className="pointer-events-none absolute inset-x-2 bottom-1 z-0 h-10 rounded-b-xl opacity-70" style={{ background: `repeating-linear-gradient(35deg, ${ribbonColor}88 0 3px, transparent 3px 8px), repeating-linear-gradient(-24deg, #fff9 0 2px, transparent 2px 7px)` }} />
                       {chosenItems.length ? chosenItems.slice(0, 6).flatMap((item) => item.id === 'producto-personalizado' ? selectedProducts.slice(0, 3).map((productId) => ({ id: `product-${productId}`, emoji: '🎨', imageUrl: '' })) : catalogItemIds.includes(item.id) ? [{ id: item.id, emoji: getCatalogChoice(item.id)?.emoji ?? item.emoji, imageUrl: getCatalogChoice(item.id)?.imageUrl ?? item.imageUrl ?? '' }] : [{ id: item.id, emoji: item.emoji, imageUrl: item.imageUrl ?? '' }]).map((item, index) => <span key={item.id} className={`relative z-10 grid h-[4.4rem] w-[4.4rem] place-items-center overflow-hidden text-4xl transition-all duration-700 ${boxClosed ? 'translate-y-8 scale-75 opacity-0' : 'opacity-100'} ${index % 2 ? 'rotate-3' : '-rotate-3'}`} style={{ filter: 'drop-shadow(0 12px 5px rgba(79,42,75,.32))', transform: `translateZ(${20 + index * 3}px) ${boxClosed ? 'translateY(38px) scale(.7)' : ''}`, transitionDelay: `${index * 35}ms` }}>{item.id === 'fotos' && photos.some(Boolean) ? <span className="grid h-full w-full grid-cols-2 gap-0.5 rounded-sm bg-white p-1">{photos.filter(Boolean).slice(0, 4).map((photo, photoIndex) => photo && <img key={photoIndex} src={photo.src} alt="" className="h-full w-full object-cover" />)}</span> : <SurpriseGiftIcon emoji={item.emoji} imageUrl={item.imageUrl} className="h-full w-full text-4xl" />}</span>) : <div className="relative z-10 col-span-3 py-8 text-center text-xs font-medium text-slate-500">Agrega detalles para llenar la sorpresa</div>}
-                      {ribbonEnabled && <div className="pointer-events-none absolute inset-y-0 left-1/2 w-4 -translate-x-1/2 opacity-80" style={{ backgroundColor: activeBox.ribbon }} />}
+                      {ribbonEnabled && <div className="pointer-events-none absolute inset-y-0 left-1/2 w-4 -translate-x-1/2 opacity-80" style={{ backgroundColor: ribbonColor }} />}
                     </div>
-                    {ribbonEnabled && <div className="absolute left-1/2 z-30 -translate-x-1/2 text-5xl drop-shadow-md" style={{ top: boxClosed ? '3.8rem' : '-1.25rem', transform: `translateX(-50%) translateZ(45px) scale(${boxClosed ? 1.1 : 1})`, transition: 'top 850ms cubic-bezier(.2,.8,.2,1), transform 850ms cubic-bezier(.2,.8,.2,1)' }}>🎀</div>}
+                    {ribbonEnabled && <div aria-hidden="true" className="absolute left-1/2 z-30 h-12 w-16 -translate-x-1/2 drop-shadow-md" style={{ top: boxClosed ? '3.8rem' : '-1.25rem', transform: `translateX(-50%) translateZ(45px) scale(${boxClosed ? 1.1 : 1})`, transition: 'top 850ms cubic-bezier(.2,.8,.2,1), transform 850ms cubic-bezier(.2,.8,.2,1)' }}>
+                      <span className="absolute left-1 top-1 h-7 w-8 rounded-[80%_20%_70%_30%] border border-black/10 shadow-inner" style={{ backgroundColor: ribbonColor, transform: 'rotate(28deg)' }} />
+                      <span className="absolute right-1 top-1 h-7 w-8 rounded-[20%_80%_30%_70%] border border-black/10 shadow-inner" style={{ backgroundColor: ribbonColor, transform: 'rotate(-28deg)' }} />
+                      <span className="absolute left-1/2 top-3 h-5 w-5 -translate-x-1/2 rounded-md border border-black/10 shadow-sm" style={{ backgroundColor: ribbonColor }} />
+                      <span className="absolute left-3 top-6 h-6 w-3 border border-black/10 shadow-sm" style={{ backgroundColor: ribbonColor, clipPath: 'polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%)', transform: 'rotate(12deg)' }} />
+                      <span className="absolute right-3 top-6 h-6 w-3 border border-black/10 shadow-sm" style={{ backgroundColor: ribbonColor, clipPath: 'polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%)', transform: 'rotate(-12deg)' }} />
+                    </div>}
                     <div className="mx-auto h-5 w-[86%] rounded-b-full bg-slate-900/10 blur-md" />
                   </div>
                   {message.trim() && <div className="absolute bottom-4 left-4 right-4 rounded-xl border border-white/80 bg-white/85 px-3 py-2 text-center text-xs font-medium italic text-slate-600 shadow-sm backdrop-blur">“{message}”</div>}

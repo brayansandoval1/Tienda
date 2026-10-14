@@ -21,6 +21,13 @@ export const boxStyles = [
   { id: 'menta', name: 'Menta', color: '#b4ddd0', ribbon: '#4e9b83' },
 ];
 
+export const ribbonColors = [
+  { id: 'rosa-liston', name: 'Rosa', color: '#c64e83' },
+  { id: 'lavanda-liston', name: 'Lavanda', color: '#7657b8' },
+  { id: 'dorado-liston', name: 'Dorado', color: '#a47a46' },
+  { id: 'menta-liston', name: 'Menta', color: '#4e9b83' },
+];
+
 const itemVolumes: Record<string, number> = { peluche: 34, 'producto-personalizado': 23, fotos: 8, dulces: 20, carta: 4, flores: 25 };
 const catalogOptions: Record<string, Record<string, Array<{ id: string; name: string; detail: string; emoji: string; imageUrl?: string; price: number; volume: number }>>> = {
   cumpleanos: {
@@ -142,6 +149,7 @@ export type SurpriseGiftConfig = {
   occasions: typeof occasions;
   giftItems: typeof giftItems;
   boxStyles: typeof boxStyles;
+  ribbonColors: typeof ribbonColors;
   itemVolumes: typeof itemVolumes;
   catalogOptions: typeof catalogOptions;
   catalogItemIds: typeof catalogItemIds;
@@ -152,6 +160,6 @@ export type SurpriseGiftConfig = {
 };
 
 export const DEFAULT_SURPRISE_GIFT_CONFIG: SurpriseGiftConfig = {
-  occasions, giftItems, boxStyles, itemVolumes, catalogOptions, catalogItemIds,
+  occasions, giftItems, boxStyles, ribbonColors, itemVolumes, catalogOptions, catalogItemIds,
   recipientOptions, recommendationTerms, pricing: giftPricing, ideaSuggestions,
 };
