@@ -250,7 +250,7 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, 
   />;
 }
 
-function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds | null, targetCanvas: HTMLCanvasElement, panoramic: boolean, objectsOverride?: any[], projectionArea?: PrintAreaBounds, totalViews = 0, surfaceBaseColor?: string) {
+function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBounds | null, targetCanvas: HTMLCanvasElement, panoramic: boolean, objectsOverride?: any[], projectionArea?: PrintAreaBounds, totalViews = 0, surfaceBaseColor?: string, safeAreaOutlineColor = '#22c55e') {
   // Si falta el área publicada por el editor, recorta una faja panorámica
   // centrada en el espacio lógico cuadrado de Fabric. El buffer conserva la
   // resolución/aspecto de la plantilla de impresión.
@@ -478,6 +478,57 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     context.restore();
   }
 
+  // Guía visual de la zona segura proyectada sobre la malla 3D. El Admin la usa
+  // para ver y calibrar dónde caerá el diseño; en el editor final marca el área
+  // donde el cliente puede imprimir. Se dibuja un contorno punteado que respeta
+  // la forma (rect / rounded / ellipse / polígono libre) de la zona.
+  const safeWidth = hasCalibratedTarget ? panelWidth : bounds.width * scaleX;
+  const safeHeight = hasCalibratedTarget ? panelHeight : bounds.height * scaleY;
+  const pathLeft = hasCalibratedTarget ? panelLeft : safeLeft;
+  const pathTop = hasCalibratedTarget ? panelTop : safeTop;
+  const safePathArea = hasCalibratedTarget ? targetBounds : area;
+  const traceSafeAreaPath = () => {
+    context.beginPath();
+    if (safePathArea?.polygon && safePathArea.polygon.length >= 3) {
+      safePathArea.polygon.forEach((point, index) => {
+        const x = hasCalibratedTarget
+          ? panelLeft + ((point.x - Number(targetBounds?.left ?? 0)) / 100) * sideWidth
+          : safeLeft + (point.x - bounds.left) * scaleX;
+        const y = hasCalibratedTarget
+          ? panelTop + ((point.y - Number(targetBounds?.top ?? 0)) / 100) * target.height
+          : safeTop + (point.y - bounds.top) * scaleY;
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.closePath();
+    } else if (safePathArea?.shape === 'ellipse') {
+      context.ellipse(pathLeft + safeWidth / 2, pathTop + safeHeight / 2, safeWidth / 2, safeHeight / 2, 0, 0, Math.PI * 2);
+    } else if (safePathArea?.shape === 'rounded') {
+      const radius = Math.min(50, Math.max(0, Number(safePathArea.radius) || 0)) / 100;
+      const radiusX = Math.min(safeWidth / 2, safeWidth * radius);
+      const radiusY = Math.min(safeHeight / 2, safeHeight * radius);
+      context.moveTo(pathLeft + radiusX, pathTop);
+      context.lineTo(pathLeft + safeWidth - radiusX, pathTop);
+      context.quadraticCurveTo(pathLeft + safeWidth, pathTop, pathLeft + safeWidth, pathTop + radiusY);
+      context.lineTo(pathLeft + safeWidth, pathTop + safeHeight - radiusY);
+      context.quadraticCurveTo(pathLeft + safeWidth, pathTop + safeHeight, pathLeft + safeWidth - radiusX, pathTop + safeHeight);
+      context.lineTo(pathLeft + radiusX, pathTop + safeHeight);
+      context.quadraticCurveTo(pathLeft, pathTop + safeHeight, pathLeft, pathTop + safeHeight - radiusY);
+      context.lineTo(pathLeft, pathTop + radiusY);
+      context.quadraticCurveTo(pathLeft, pathTop, pathLeft + radiusX, pathTop);
+      context.closePath();
+    } else {
+      context.rect(pathLeft, pathTop, safeWidth, safeHeight);
+    }
+  };
+  context.save();
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.strokeStyle = safeAreaOutlineColor;
+  context.lineWidth = Math.max(2, target.height / 300);
+  context.setLineDash([6, 6]);
+  traceSafeAreaPath();
+  context.stroke();
+  context.restore();
 }
 
 async function enlivenDesignObjects(serializedObjects: any[]) {
@@ -599,7 +650,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                 radius: liveArea3D.radius,
                 polygon: liveArea3D.nodes ?? liveArea3D.polygon,
               } : undefined;
-              renderFullTexture360(fabricCanvas, printArea, printCanvas, panoramic, undefined, liveProjection, totalViews, printableSurfaceColor);
+              renderFullTexture360(fabricCanvas, printArea, printCanvas, panoramic, undefined, liveProjection, totalViews, printableSurfaceColor, adminArea ? '#0284c7' : '#22c55e');
             } else {
               const context = printCanvas.getContext('2d');
               if (!context) return;
@@ -652,7 +703,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                   radius: livePrintArea3D.radius,
                   polygon: livePrintArea3D.nodes ?? livePrintArea3D.polygon,
                 } : snapshot.projectionArea;
-                renderFullTexture360(fabricCanvas, isActiveSnapshot ? printArea : snapshot.area, printCanvas, panoramic, objects, activeProjection, totalViews, printableSurfaceColor);
+                renderFullTexture360(fabricCanvas, isActiveSnapshot ? printArea : snapshot.area, printCanvas, panoramic, objects, activeProjection, totalViews, printableSurfaceColor, adminArea ? '#0284c7' : '#22c55e');
               }
             }
             if (textureRef.current) textureRef.current.needsUpdate = true;
