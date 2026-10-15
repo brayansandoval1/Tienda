@@ -188,6 +188,8 @@ export interface CustomizablePart {
 
 export interface Product {
   id: string;
+  /** Controla si el producto aparece disponible en el catálogo público. */
+  isActive?: boolean;
   /** Habilita el lienzo de diseño continuo para productos envolventes. */
   allowPanorama360?: boolean;
   /** Marca de invalidación para propagar cambios del Admin al editor. */
