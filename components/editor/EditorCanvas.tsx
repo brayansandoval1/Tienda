@@ -5552,7 +5552,28 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const generateProductPreview = (multiplier: number, quality: number) => {
           if (rendered3DCanvas) {
             try {
-              return rendered3DCanvas.toDataURL('image/jpeg', quality);
+              const framedPreview = document.createElement('canvas');
+              framedPreview.width = rendered3DCanvas.width;
+              framedPreview.height = rendered3DCanvas.height;
+              const context = framedPreview.getContext('2d');
+              if (!context) throw new Error('No se pudo crear el lienzo de la vista previa.');
+              // Recorte central suave: acerca el producto ~22% manteniendo
+              // todo dentro del encuadre cuadrado de la tarjeta.
+              const cropScale = 0.82;
+              const cropWidth = rendered3DCanvas.width * cropScale;
+              const cropHeight = rendered3DCanvas.height * cropScale;
+              context.drawImage(
+                rendered3DCanvas,
+                (rendered3DCanvas.width - cropWidth) / 2,
+                (rendered3DCanvas.height - cropHeight) / 2,
+                cropWidth,
+                cropHeight,
+                0,
+                0,
+                framedPreview.width,
+                framedPreview.height,
+              );
+              return framedPreview.toDataURL('image/jpeg', quality);
             } catch (error) {
               productPreviewIs3D = false;
               console.warn('[PLANTILLA] No se pudo capturar el visor 3D; se usará la vista del lienzo.', error);
