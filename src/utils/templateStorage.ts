@@ -1,9 +1,6 @@
 /**
- * Persistencia de plantillas del editor en localStorage (simula la BD).
- *
- * Clave dedicada 'editor_templates' para no competir con el catálogo de
- * productos ('custom_products'). Las miniaturas se guardan como dataURL JPEG
- * reducido para cuidar la cuota de ~5MB del navegador.
+ * Persistencia de plantillas del editor en IndexedDB. Las imágenes y diseños
+ * Fabric pueden superar la cuota pequeña disponible en localStorage.
  */
 
 export interface SavedTemplate {
@@ -15,7 +12,7 @@ export interface SavedTemplate {
   /** Mockup del producto con el diseño compuesto; se usa en la galería. */
   previewUrl?: string;
   /** Permite invalidar previews antiguas generadas con transparencia. */
-  previewVersion?: 2;
+  previewVersion?: 2 | 3;
   /** Tipo/categoría del producto para el que fue diseñada (ej. 'Funda'). */
   productType?: string;
   /** Ícono/emoji representativo según la categoría (ej. '🎂' para Cumpleaños). */
@@ -29,6 +26,99 @@ export interface SavedTemplate {
 }
 
 const STORAGE_KEY = 'editor_templates';
+const DB_NAME = 'tienda_editor';
+const DB_VERSION = 1;
+const STORE_NAME = 'templates';
+
+function openTemplateDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function migrateLegacyTemplates(db: IDBDatabase): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let legacy: SavedTemplate[] = [];
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) legacy = parsed;
+    } catch { /* Una entrada antigua dañada no debe bloquear el editor. */ }
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    legacy.forEach((item) => store.put(item));
+    tx.oncomplete = () => {
+      try { localStorage.removeItem(STORAGE_KEY); } catch { /* Migración completada en IndexedDB. */ }
+      resolve();
+    };
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+async function withTemplateStore<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  if (typeof indexedDB === 'undefined') throw new Error('IndexedDB no está disponible en este navegador.');
+  const db = await openTemplateDatabase();
+  await migrateLegacyTemplates(db);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, mode);
+    const request = action(tx.objectStore(STORE_NAME));
+    let result: T;
+    request.onsuccess = () => { result = request.result; };
+    request.onerror = () => reject(request.error);
+    tx.oncomplete = () => { db.close(); resolve(result); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error); };
+  });
+}
+
+export async function listSavedTemplates(): Promise<SavedTemplate[]> {
+  try {
+    const items = await withTemplateStore('readonly', (store) => store.getAll());
+    return (items as SavedTemplate[]).sort((a, b) => b.createdAt - a.createdAt);
+  } catch (error) {
+    console.error('❌ [TEMPLATES] No se pudieron leer las plantillas:', error);
+    return [];
+  }
+}
+
+export async function saveTemplateToStorage(template: SavedTemplate): Promise<boolean> {
+  try {
+    await withTemplateStore('readwrite', (store) => store.put(template));
+    return true;
+  } catch (error) {
+    console.error('❌ [TEMPLATES] No se pudo guardar en IndexedDB:', error);
+    return false;
+  }
+}
+
+export async function updateTemplateInStorage(template: SavedTemplate): Promise<boolean> {
+  try {
+    const existing = (await withTemplateStore('readonly', (store) => store.get(template.id))) as SavedTemplate | undefined;
+    if (!existing) return false;
+    await withTemplateStore('readwrite', (store) => store.put(template));
+    return true;
+  } catch (error) {
+    console.error('❌ [TEMPLATES] No se pudo actualizar en IndexedDB:', error);
+    return false;
+  }
+}
+
+export async function deleteSavedTemplate(templateId: string): Promise<SavedTemplate[]> {
+  try {
+    await withTemplateStore('readwrite', (store) => store.delete(templateId));
+    return await listSavedTemplates();
+  } catch (error) {
+    console.error('❌ [TEMPLATES] No se pudo eliminar la plantilla:', error);
+    return await listSavedTemplates();
+  }
+}
 
 /**
  * Mapa de íconos representativos por categoría de plantilla.
@@ -109,58 +199,5 @@ export function saveTemplateCategories(categories: string[]): string[] {
   return merged;
 }
 
-export function listSavedTemplates(): SavedTemplate[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as SavedTemplate[]) : [];
-  } catch (error) {
-    console.error('❌ [TEMPLATES] No se pudieron leer las plantillas:', error);
-    return [];
-  }
-}
-
-export function saveTemplateToStorage(template: SavedTemplate): boolean {
-  try {
-    const templates = listSavedTemplates();
-    templates.unshift(template);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(templates));
-    return true;
-  } catch (error) {
-    // Cuota agotada (normalmente por miniaturas Base64 acumuladas).
-    console.error('❌ [TEMPLATES] No se pudo guardar la plantilla (cuota agotada):', error);
-    return false;
-  }
-}
-
-export function deleteSavedTemplate(templateId: string): SavedTemplate[] {
-  const templates = listSavedTemplates().filter((template) => template.id !== templateId);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(templates));
-  } catch (error) {
-    console.error('❌ [TEMPLATES] No se pudo actualizar la lista:', error);
-  }
-  return templates;
-}
-
-/**
- * Reemplaza una plantilla existente (por id) conservando su createdAt.
- * TODO: cuando exista BD, esto pasa a PUT /api/templates/:id.
- */
-export function updateTemplateInStorage(template: SavedTemplate): boolean {
-  try {
-    const templates = listSavedTemplates().map((item) =>
-      item.id === template.id ? template : item,
-    );
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(templates));
-    return true;
-  } catch (error) {
-    console.error('❌ [TEMPLATES] No se pudo actualizar la plantilla (cuota agotada):', error);
-    return false;
-  }
-}
-
-// TODO: Reemplazar localStorage por POST /api/templates (y GET /api/templates
-// en listSavedTemplates, DELETE /api/templates/:id en deleteSavedTemplate).
-// El shape de SavedTemplate ya es compatible con un documento MongoDB/SQL.
+// Las plantillas y sus imágenes se guardan en IndexedDB para evitar la cuota
+// reducida de localStorage. La primera lectura migra automáticamente los datos antiguos.

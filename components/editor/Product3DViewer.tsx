@@ -147,6 +147,8 @@ function usePrintAreaBounds() {
 function WebGLDiagnostics() {
   const { gl } = useThree();
   useEffect(() => {
+    const previewWindow = window as Window & { __editorProductPreviewCanvas?: HTMLCanvasElement };
+    previewWindow.__editorProductPreviewCanvas = gl.domElement;
     const context = gl.getContext();
     console.info('[Product3DViewer] Canvas WebGL inicializado:', {
       vendor: context.getParameter(context.VENDOR),
@@ -163,6 +165,9 @@ function WebGLDiagnostics() {
       // colgados que interpreten el cierre normal del canvas como un fallo.
       gl.domElement.removeEventListener('webglcontextlost', handleContextLost);
       gl.domElement.removeEventListener('webglcontextrestored', handleContextRestored);
+      if (previewWindow.__editorProductPreviewCanvas === gl.domElement) {
+        delete previewWindow.__editorProductPreviewCanvas;
+      }
     };
   }, [gl]);
   return null;
@@ -1253,7 +1258,7 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
   return <section key={product.id} className="relative flex h-full min-h-[250px] w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-[#eef2f7] shadow-inner" aria-label={`Visor 3D de ${product.name}`}>
     <div className="pointer-events-none absolute left-4 top-4 z-10 rounded-xl border border-white/80 bg-white/75 px-3 py-2 shadow-sm backdrop-blur"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Vista 3D · 360°</p><p className="mt-0.5 text-sm font-semibold text-slate-800">{product.name}</p><p className="mt-0.5 text-[10px] font-medium text-emerald-700">{printArea ? `${printArea.viewName || 'Vista'} · ${viewNumber}/${viewCount} · zona segura activa` : 'Esperando zona segura…'}</p></div>
     {!resolvedFabricCanvas && !previewMode && <p className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/80 px-3 py-1.5 text-xs text-slate-500 shadow-sm">Conectando con el lienzo…</p>}
-    <Canvas key={`${product.id}:${model3dUrl}:${previewMode ? activeAdminViewIndex : 'editor'}`} shadows={{ type: THREE.PCFShadowMap }} dpr={[1, 1.5]} camera={{ position: previewMode ? adminCameraPosition : [0, 0, 5], fov: 35 }} gl={{ antialias: true, alpha: true }}>
+    <Canvas key={`${product.id}:${model3dUrl}:${previewMode ? activeAdminViewIndex : 'editor'}`} shadows={{ type: THREE.PCFShadowMap }} dpr={[1, 1.5]} camera={{ position: previewMode ? adminCameraPosition : [0, 0, 5], fov: 35 }} gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}>
       <WebGLDiagnostics />
       <color attach="background" args={['#eef2f7']} />
       <ambientLight intensity={1.05} />

@@ -5514,7 +5514,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
       // Guardar como Plantilla (modo Administrador): serializa el diseño del
       // canvas actual (sin el mockup ni las guías) junto a una miniatura.
-      handleExportTemplate = (e: Event) => {
+      handleExportTemplate = async (e: Event) => {
         const detail = (e as CustomEvent<{ name?: string; category?: string; updateId?: string }>).detail;
         const canvas = fabricCanvasRef.current;
         if (!canvas) return;
@@ -5522,6 +5522,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const templateName = detail?.name?.trim();
         if (!templateName) {
           console.warn('⚠️ [PLANTILLA] Nombre requerido para guardar la plantilla');
+          window.dispatchEvent(new CustomEvent('editor:template-saved', { detail: { ok: false, reason: 'name' } }));
           return;
         }
 
@@ -5546,8 +5547,19 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         canvas.backgroundColor = '#eef2ff';
         canvas.renderAll();
         const PREVIEW_MAX_CHARS = 350_000;
-        const generateProductPreview = (multiplier: number, quality: number) =>
-          canvas.toDataURL({ format: 'jpeg', multiplier, quality, backgroundColor: '#eef2ff' });
+        const rendered3DCanvas = (window as Window & { __editorProductPreviewCanvas?: HTMLCanvasElement }).__editorProductPreviewCanvas;
+        let productPreviewIs3D = Boolean(rendered3DCanvas);
+        const generateProductPreview = (multiplier: number, quality: number) => {
+          if (rendered3DCanvas) {
+            try {
+              return rendered3DCanvas.toDataURL('image/jpeg', quality);
+            } catch (error) {
+              productPreviewIs3D = false;
+              console.warn('[PLANTILLA] No se pudo capturar el visor 3D; se usará la vista del lienzo.', error);
+            }
+          }
+          return canvas.toDataURL({ format: 'jpeg', multiplier, quality, backgroundColor: '#eef2f7' });
+        };
         // Se intenta primero una captura 4× (3200 px en el canvas lógico de
         // 800 px), perfecta para pantallas Retina. Se reduce sólo si excede
         // la cuota razonable de localStorage.
@@ -5664,7 +5676,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // Si el evento trae updateId, se ACTUALIZA la plantilla existente
         // (conservando su fecha de creación) en lugar de crear una nueva.
         const existing = detail?.updateId
-          ? listSavedTemplates().find((item) => item.id === detail.updateId)
+          ? (await listSavedTemplates()).find((item) => item.id === detail.updateId)
           : undefined;
         // Guardado con reintento: si la cuota se agota, se reintenta una vez
         // con una miniatura mínima (JPEG 1x). Si aún así falla, el problema
@@ -5682,19 +5694,30 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           productType: activeProduct.category || activeProduct.id,
           createdAt: existing?.createdAt ?? Date.now(),
           previewUrl: productPreview,
-          previewVersion: 2 as const,
+          previewVersion: (productPreviewIs3D ? 3 : 2) as 2 | 3,
           templateJSON: { version: canvasJSON.version, objects: designObjects },
         };
-        let saved = existing
-          ? updateTemplateInStorage({ ...basePayload, thumbnail })
-          : saveTemplateToStorage({ ...basePayload, thumbnail });
+        let saved = false;
+        try {
+          saved = await (existing
+            ? updateTemplateInStorage({ ...basePayload, thumbnail })
+            : saveTemplateToStorage({ ...basePayload, thumbnail }));
+        } catch (error) {
+          // Defensa final para que un error de almacenamiento nunca escape del
+          // listener DOM y deje al botón en un estado sin respuesta.
+          console.error('[PLANTILLA] Falló el guardado:', error);
+        }
 
         if (!saved) {
           console.warn('⚠️ [PLANTILLA] Cuota agotada; reintentando con miniatura mínima');
           thumbnail = generateThumbnail('jpeg', 1, 0.7);
-          saved = existing
-            ? updateTemplateInStorage({ ...basePayload, thumbnail })
-            : saveTemplateToStorage({ ...basePayload, thumbnail });
+          try {
+            saved = await (existing
+              ? updateTemplateInStorage({ ...basePayload, thumbnail })
+              : saveTemplateToStorage({ ...basePayload, thumbnail }));
+          } catch (error) {
+            console.error('[PLANTILLA] Falló el reintento de guardado:', error);
+          }
         }
 
         if (!saved) {
@@ -5708,7 +5731,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
         // 4. Notificar a la barra lateral para refrescar la lista.
         window.dispatchEvent(
-          new CustomEvent('editor:template-saved', { detail: { ok: saved, name: templateName } }),
+          new CustomEvent('editor:template-saved', { detail: { ok: saved, name: templateName, reason: saved ? undefined : 'quota' } }),
         );
       };
 

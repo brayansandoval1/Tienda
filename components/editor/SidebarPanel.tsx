@@ -236,17 +236,23 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
 
   // Carga inicial + refresco cuando el editor guarda una plantilla nueva.
   useEffect(() => {
-    setSavedTemplates(listSavedTemplates());
+    void listSavedTemplates().then(setSavedTemplates);
     setCustomCategories(listTemplateCategories()); // Categorías creadas por el admin.
     const handleSaved = (event: Event) => {
-      const ok = (event as CustomEvent<{ ok?: boolean; name?: string }>).detail?.ok;
-      setSavedTemplates(listSavedTemplates());
+      const detail = (event as CustomEvent<{ ok?: boolean; name?: string; reason?: string }>).detail;
+      const ok = detail?.ok;
+      void listSavedTemplates().then(setSavedTemplates);
       if (ok) {
         setTemplateFeedback(`✅ Plantilla "${(event as CustomEvent<{ name?: string }>).detail?.name}" guardada`);
         setTemplateName('');
         setEditingTemplate(null); // Fin del modo edición (crear o actualizar).
       } else {
-        setTemplateFeedback('⚠️ No se pudo guardar (¿canvas vacío o cuota agotada?)');
+        const message = detail?.reason === 'empty'
+          ? 'Agrega al menos un elemento al diseño antes de guardar.'
+          : detail?.reason === 'name'
+            ? 'Escribe un nombre para la plantilla.'
+            : 'No se pudo guardar en este navegador. Revisa el espacio disponible e inténtalo de nuevo.';
+        setTemplateFeedback(`⚠️ ${message}`);
       }
       setTimeout(() => setTemplateFeedback(null), 4000);
     };
@@ -314,9 +320,9 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
   };
 
   // Elimina una plantilla guardada con confirmación previa.
-  const handleDeleteTemplate = (saved: SavedTemplate) => {
+  const handleDeleteTemplate = async (saved: SavedTemplate) => {
     if (!window.confirm(`¿Eliminar la plantilla "${saved.name}"? Esta acción no se puede deshacer.`)) return;
-    setSavedTemplates(deleteSavedTemplate(saved.id));
+    setSavedTemplates(await deleteSavedTemplate(saved.id));
     if (editingTemplate?.id === saved.id) {
       setEditingTemplate(null);
       setTemplateName('');
@@ -713,12 +719,12 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
                   // compuesto muestra producto. Los presets y datos antiguos
                   // conservan una preview gráfica; así no se inyecta el mockup
                   // en las tarjetas superiores ni se muestran capturas negras.
-                  if (template.saved?.previewUrl && template.saved.previewVersion === 2) {
+                  if (template.saved?.previewUrl && (template.saved.previewVersion === 2 || template.saved.previewVersion === 3)) {
                     return (
                       <img
                         src={template.saved.previewUrl}
                         alt={template.name}
-                        className="aspect-square w-full bg-slate-50 object-cover"
+                        className={`aspect-square w-full bg-slate-50 ${template.saved.previewVersion === 3 ? 'object-contain' : 'object-cover'}`}
                       />
                     );
                   }
