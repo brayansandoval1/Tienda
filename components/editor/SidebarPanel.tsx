@@ -6,6 +6,7 @@ import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate,
 import { MOCK_TEMPLATES, type MockTemplate } from '@/src/data/mockTemplates';
 import { listSavedTemplates, deleteSavedTemplate, getCategoryIcon, listTemplateCategories, saveTemplateCategories, saveTemplateIcon, DEFAULT_TEMPLATE_CATEGORIES, type SavedTemplate } from '@/src/utils/templateStorage';
 import type { Product } from '@/src/store/useProductStore';
+import { useProductStore } from '@/src/store/useProductStore';
 import LayersPanel from '@/components/editor/LayersPanel';
 import SmartInputPanel from '@/components/editor/SmartInputPanel';
 import TypographyPresetsPanel from '@/components/editor/TypographyPresetsPanel';
@@ -116,6 +117,7 @@ function TemplateGraphicPreview({ name, emoji, accent }: { name: string; emoji: 
 }
 
 export default function SidebarPanel({ product, canManageTemplates = false }: { product?: Product; canManageTemplates?: boolean }) {
+  const catalogProducts = useProductStore((state) => state.products);
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
   const [iconQuery, setIconQuery] = useState('');
   const [iconResults, setIconResults] = useState<string[]>([]);
@@ -138,6 +140,10 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
   const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
   const [templateName, setTemplateName] = useState('');
   const [templateCategory, setTemplateCategory] = useState('Cumpleaños');
+  const [targetProductCategories, setTargetProductCategories] = useState<string[]>(() =>
+    product?.category?.trim() ? [product.category.trim()] : [],
+  );
+  const [targetProductIds, setTargetProductIds] = useState<string[]>([]);
   const [templateFeedback, setTemplateFeedback] = useState<string | null>(null);
   // Plantilla en modo edición (sólo las guardadas en localStorage son editables).
   // Cuando no es null, el botón "Guardar" se convierte en "Actualizar".
@@ -183,6 +189,19 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
   const [isIconEditMode, setIsIconEditMode] = useState(false);
   const [iconValue, setIconValue] = useState('');
 
+  const selectableProducts = Array.from(new Map(
+    [...catalogProducts, ...(product ? [product] : [])].map((item) => [item.id, item]),
+  ).values());
+  const selectableProductCategories = Array.from(new Set(
+    selectableProducts.map((item) => item.category?.trim()).filter((value): value is string => Boolean(value)),
+  )).sort((a, b) => a.localeCompare(b, 'es'));
+
+  useEffect(() => {
+    if (editingTemplate) return;
+    setTargetProductCategories(product?.category?.trim() ? [product.category.trim()] : []);
+    setTargetProductIds([]);
+  }, [product?.id, editingTemplate]);
+
   // Lista dinámica de categorías: base por defecto + creadas por el admin +
   // cualquier categoría usada por plantillas guardadas (aunque no esté
   // registrada en el catálogo del admin). "Todas" es pseudo-filtro, no categoría.
@@ -214,16 +233,23 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
     })),
   ];
 
-  // Las plantillas sólo son visibles/aplicables en el producto para el que
-  // fueron diseñadas (misma categoría de producto). Las plantillas sin
-  // `productType` (mocks por defecto) se consideran universales.
+  // Compatibilidad nueva: una plantilla puede apuntar a productos/categorías
+  // explícitos. Las antiguas conservan su regla productType; las de código son universales.
   const currentProductType = product?.category || product?.id || '';
   const normalizeProductType = (value?: string) => value?.trim().toLocaleLowerCase() ?? '';
+  const currentProductCategory = normalizeProductType(product?.category);
   const templatesForProduct = allTemplates
-    .filter((template) => !template.productType || normalizeProductType(template.productType) === normalizeProductType(currentProductType))
-    // Primero las plantillas diseñadas para este producto; las universales
-    // siguen disponibles como alternativas.
-    .sort((a, b) => Number(Boolean(b.productType)) - Number(Boolean(a.productType)));
+    .filter((template) => {
+      if (template.saved && (Array.isArray(template.saved.targetProductCategories) || Array.isArray(template.saved.targetProductIds))) {
+        const categories = template.saved.targetProductCategories ?? [];
+        const ids = template.saved.targetProductIds ?? [];
+        return !categories.length && !ids.length
+          || ids.includes(product?.id ?? '')
+          || categories.some((category) => normalizeProductType(category) === currentProductCategory);
+      }
+      return !template.productType || normalizeProductType(template.productType) === normalizeProductType(currentProductType);
+    })
+    .sort((a, b) => Number(Boolean(b.saved?.targetProductIds?.length || b.saved?.targetProductCategories?.length || b.productType)) - Number(Boolean(a.saved?.targetProductIds?.length || a.saved?.targetProductCategories?.length || a.productType)));
   const normalizedTemplateSearch = templateSearch.trim().toLocaleLowerCase();
   const visibleTemplates = templatesForProduct.filter((template) =>
     (selectedCategoryFilter === 'Todas' || template.category === selectedCategoryFilter) &&
@@ -289,7 +315,13 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
     }
     window.dispatchEvent(
       new CustomEvent('editor:save-as-template', {
-        detail: { name, category, updateId: editingTemplate?.id },
+        detail: {
+          name,
+          category,
+          updateId: editingTemplate?.id,
+          targetProductCategories,
+          targetProductIds,
+        },
       }),
     );
   };
@@ -312,6 +344,9 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
     );
     setTemplateName(template.saved.name);
     setTemplateCategory(template.saved.category);
+    setTargetProductCategories(template.saved.targetProductCategories
+      ?? (template.saved.productType ? [template.saved.productType] : []));
+    setTargetProductIds(template.saved.targetProductIds ?? []);
     setIsNewCategoryMode(false);
     setNewCategoryValue('');
     setEditingTemplate(template.saved);
@@ -610,6 +645,45 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
                 </button>
               </div>
             )}
+            <details className="rounded-lg border border-violet-100 bg-violet-50/50 px-2.5 py-2">
+              <summary className="cursor-pointer text-[11px] font-semibold text-slate-700">
+                Disponible para {targetProductCategories.length + targetProductIds.length
+                  ? `${targetProductCategories.length} categorías y ${targetProductIds.length} productos`
+                  : 'todos los productos'}
+              </summary>
+              <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
+                Se mostrará si coincide la categoría o el producto seleccionado. Si no seleccionas nada, será universal.
+              </p>
+              {selectableProductCategories.length > 0 && (
+                <div className="mt-2">
+                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Categorías de producto</p>
+                  <div className="flex flex-wrap gap-1">
+                    {selectableProductCategories.map((category) => {
+                      const selected = targetProductCategories.some((item) => normalizeProductType(item) === normalizeProductType(category));
+                      return <button key={category} type="button" onClick={() => setTargetProductCategories((current) => selected
+                        ? current.filter((item) => normalizeProductType(item) !== normalizeProductType(category))
+                        : [...current, category])} className={`rounded-full border px-2 py-1 text-[10px] transition ${selected ? 'border-violet-500 bg-violet-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-violet-300'}`}>
+                        {category}{category === product?.category ? ' · actual' : ''}
+                      </button>;
+                    })}
+                  </div>
+                </div>
+              )}
+              <div className="mt-2">
+                <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Productos específicos</p>
+                <div className="max-h-28 space-y-1 overflow-y-auto">
+                  {selectableProducts.map((item) => (
+                    <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-[10px] text-slate-700 hover:bg-white">
+                      <input type="checkbox" checked={targetProductIds.includes(item.id)} onChange={() => setTargetProductIds((current) => current.includes(item.id)
+                        ? current.filter((id) => id !== item.id)
+                        : [...current, item.id])} className="accent-violet-600" />
+                      <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                      <span className="shrink-0 text-slate-400">{item.category || 'Sin categoría'}{item.id === product?.id ? ' · actual' : ''}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </details>
             <button
               type="button"
               onClick={() => handleSaveAsTemplateRequest(templateName, templateCategory)}

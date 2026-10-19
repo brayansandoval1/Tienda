@@ -15,6 +15,10 @@ export interface SavedTemplate {
   previewVersion?: 2 | 3;
   /** Tipo/categoría del producto para el que fue diseñada (ej. 'Funda'). */
   productType?: string;
+  /** Categorías de producto compatibles; vacío junto con IDs significa universal. */
+  targetProductCategories?: string[];
+  /** Productos concretos compatibles (permite excepciones a la categoría). */
+  targetProductIds?: string[];
   /** Ícono/emoji representativo según la categoría (ej. '🎂' para Cumpleaños). */
   icon?: string;
   createdAt: number;

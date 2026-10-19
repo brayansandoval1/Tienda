@@ -5515,7 +5515,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // Guardar como Plantilla (modo Administrador): serializa el diseño del
       // canvas actual (sin el mockup ni las guías) junto a una miniatura.
       handleExportTemplate = async (e: Event) => {
-        const detail = (e as CustomEvent<{ name?: string; category?: string; updateId?: string }>).detail;
+        const detail = (e as CustomEvent<{
+          name?: string;
+          category?: string;
+          updateId?: string;
+          targetProductCategories?: string[];
+          targetProductIds?: string[];
+        }>).detail;
         const canvas = fabricCanvasRef.current;
         if (!canvas) return;
 
@@ -5711,8 +5717,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           // directamente como vista previa de la tarjeta en la sidebar.
           icon: getCategoryIcon(detail?.category?.trim()),
           // Tipo de producto activo: la plantilla sólo será visible/aplicable
-          // en el editor para productos de este mismo tipo.
+          // como compatibilidad para plantillas antiguas.
           productType: activeProduct.category || activeProduct.id,
+          targetProductCategories: Array.from(new Set((detail?.targetProductCategories ?? []).map((value) => value.trim()).filter(Boolean))),
+          targetProductIds: Array.from(new Set((detail?.targetProductIds ?? []).filter(Boolean))),
           createdAt: existing?.createdAt ?? Date.now(),
           previewUrl: productPreview,
           previewVersion: (productPreviewIs3D ? 3 : 2) as 2 | 3,
