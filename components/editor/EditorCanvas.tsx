@@ -6,7 +6,6 @@ import type { TextOptions } from '../../types/product';
 import type { ColorVariant, Product, ProductOptionValue, ProductView } from '@/src/store/useProductStore';
 import type { ExportedDesignFiles, SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
 import type { PriceCalculation } from '@/src/types/pricing';
-import Product3DModal from '@/components/editor/Product3DModal';
 import { useCanvasUsage } from '@/components/editor/useCanvasUsage';
 import { saveTemplateToStorage, updateTemplateInStorage, listSavedTemplates, getCategoryIcon } from '@/src/utils/templateStorage';
 import { clearDraft, getDraft, saveDraft, type DesignDraft } from '@/src/utils/designDraftStorage';
@@ -38,7 +37,6 @@ const DEFAULT_PANORAMIC_PRINT_AREA: PrintArea = {
   width: 100,
   height: 100 / PANORAMIC_PRINT_ASPECT,
 };
-type ThreeDViewPreview = { id: string; label: string; textureUrl: string };
 
 const resolveImageUrl = (url: string) => {
   if (!url) return '';
@@ -83,9 +81,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   const addonOrderRef = useRef<{ addons: Array<{ id: string; name: string; price: number; perSide?: boolean; userText?: string }>; basePrice: number; sideExtra: number; printingRule: 'single-sided' | 'double-sided' | 'full-wrap'; coveragePercentage: number; isDoubleSidedUsed: boolean; quantity: number; calculation: PriceCalculation | null; totalPrice: number }>({ addons: [], basePrice: initialProduct.basePrice ?? initialProduct.price, sideExtra: 0, printingRule: 'single-sided', coveragePercentage: 0, isDoubleSidedUsed: false, quantity: 1, calculation: null, totalPrice: initialProduct.basePrice ?? initialProduct.price });
   const [isCropping, setIsCropping] = useState(false);
   const [isImageSelected, setIsImageSelected] = useState(false);
-  const [is3DModalOpen, setIs3DModalOpen] = useState(false);
-  const [threeDTextureUrl, setThreeDTextureUrl] = useState('');
-  const [threeDViews, setThreeDViews] = useState<ThreeDViewPreview[]>([]);
   const [currentViewId, setCurrentViewId] = useState<string>(initialProduct.views[0]?.id ?? 'front');
   const [productViews, setProductViews] = useState<ProductView[]>(initialProduct.views);
   const panoramaModeRef = useRef(false);
@@ -2576,27 +2571,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         return mockupLoad;
       };
 
-      const open3DPreview = () => {
-        const c = fabricCanvasRef.current;
-        if (!c) return;
-        // Cada cara usa el mockup compuesto real del editor. Así no se deforma
-        // una foto 2D sobre una malla inventada y se conservan frente, espalda
-        // y cualquier vista extra creada en el producto.
-        c.discardActiveObject();
-        c.renderAll();
-        const activePreview = c.toDataURL({ format: 'png', multiplier: 1 });
-        const previews = activeProduct.views.map((view) => ({
-          id: view.id,
-          label: view.label || view.name || view.id,
-          textureUrl: view.id === currentViewIdRef.current
-            ? activePreview
-            : viewThumbnailsRef.current[view.id] || view.mockupUrl,
-        }));
-        setThreeDTextureUrl(activePreview);
-        setThreeDViews(previews);
-        setIs3DModalOpen(true);
-      };
-
       setupProductRef.current = setupProduct;
       const initialProductSetup = setupProduct(initialProduct);
       handleColorChangeRef.current = handleProductColorChange;
@@ -2609,7 +2583,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (color) handleDesignBgColorChangeRef.current?.(color);
       };
       handleDesignBgColorChangeRef.current = handleDesignBgColorChange;
-      (window as any).__openEditor3DPreview = open3DPreview;
 
       // --- Vistas de producto (frente, espalda, etc.) ---
       const finishViewSwitch = (viewId: string) => {
@@ -5938,7 +5911,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         fabricCanvasRef.current = null;
         setUsageCanvas(null);
       }
-      delete (window as any).__openEditor3DPreview;
       setupProductRef.current = null;
       window.removeEventListener('resize', handleWindowResize);
       if (containerObserver) {
@@ -6267,12 +6239,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           </button>
         </div>
       ) : null}
-      <Product3DModal
-        open={is3DModalOpen}
-        textureUrl={threeDTextureUrl}
-        views={threeDViews}
-        onClose={() => setIs3DModalOpen(false)}
-      />
       </div>
     </div>
   );

@@ -6,7 +6,6 @@ import {
   RefreshCcw,
   Undo2,
   Redo2,
-  Box,
   Copy,
   Minus,
   Plus,
@@ -118,15 +117,6 @@ export default function FloatingFooter({ onReset }: FloatingFooterProps) { // Re
         >
           <RefreshCcw size={14} />
           Reiniciar
-        </button>
-
-        <button
-          type="button"
-          onClick={() => (window as any).__openEditor3DPreview?.()}
-          className="inline-flex items-center gap-1.5 rounded-full bg-white px-2 py-1.5 text-xs font-semibold text-slate-900 transition hover:bg-slate-200"
-        >
-          <Box size={14} />
-          Ver en 3D
         </button>
       </div>
   );
