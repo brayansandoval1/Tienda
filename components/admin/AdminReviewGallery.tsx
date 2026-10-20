@@ -46,6 +46,7 @@ export default function AdminReviewGallery({ productId }: { productId: string })
   // y provocaría un mismatch de hidratación con las fotos reales.
   const [hydrated, setHydrated] = useState(false);
   const [masterViewId, setMasterViewId] = useState('');
+  const [sceneViewId, setSceneViewId] = useState('');
   const [masterArea, setMasterArea] = useState<PrintAreaPercent | null>(null);
   const [items, setItems] = useState<ReviewGalleryImage[]>([]);
   const [aspectRatios, setAspectRatios] = useState<Record<string, number>>({});
@@ -69,6 +70,7 @@ export default function AdminReviewGallery({ productId }: { productId: string })
     if (!hydrated || !product || masterArea) return;
     const viewId = product.masterPrintArea?.viewId ?? product.views[0]?.id ?? '';
     setMasterViewId(viewId);
+    setSceneViewId(viewId);
     setMasterArea(resolveMasterPrintArea(product, viewId));
     setItems(product.reviewGallery ?? []);
   }, [hydrated, product, masterArea]);
@@ -76,6 +78,22 @@ export default function AdminReviewGallery({ productId }: { productId: string })
   const activeMasterView = useMemo(
     () => product?.views.find((view) => view.id === masterViewId) ?? product?.views[0],
     [product, masterViewId],
+  );
+
+  const activeSceneView = useMemo(
+    () => product?.views.find((view) => view.id === sceneViewId) ?? product?.views[0],
+    [product, sceneViewId],
+  );
+
+  const activeSceneArea = useMemo(
+    () => viewPrintAreaToPercent(activeSceneView, product?.canvasWidth, product?.canvasHeight),
+    [activeSceneView, product?.canvasWidth, product?.canvasHeight],
+  );
+
+  const legacyMasterViewId = product?.masterPrintArea?.viewId ?? product?.views[0]?.id ?? '';
+  const activeItems = useMemo(
+    () => items.filter((item) => item.viewId === sceneViewId || (!item.viewId && sceneViewId === legacyMasterViewId)),
+    [items, sceneViewId, legacyMasterViewId],
   );
 
   // Zona que el editor tiene AHORA para esa vista: si difiere de la guardada,
@@ -86,6 +104,7 @@ export default function AdminReviewGallery({ productId }: { productId: string })
   );
 
   const isMasterDrifted = Boolean(masterArea && !areasAreEqual(masterArea, editorAreaNow));
+  const hasUnreviewedAreas = items.some((item) => item.needsAreaReview);
 
   const handleMasterChange = (area: { x: number; y: number; width: number; height: number; shape?: SafeAreaShape; radius?: number; polygon?: SafeAreaPoint[] }) => {
     setMasterArea(pickableAreaToPercent(area));
@@ -115,9 +134,12 @@ export default function AdminReviewGallery({ productId }: { productId: string })
           id: crypto.randomUUID(),
           title: titleFromFileName(file.name),
           imageUrl,
-          // Nace heredando la referencia maestra; se puede desactivar por foto.
-          useMasterArea: true,
-          customPrintArea: null,
+          viewId: sceneViewId,
+          // Cada escena usa la zona de su propia vista como guía inicial y
+          // requiere confirmación porque el producto puede cambiar de posición.
+          useMasterArea: false,
+          customPrintArea: sceneViewId === legacyMasterViewId ? masterArea ?? activeSceneArea : activeSceneArea,
+          needsAreaReview: true,
         });
       } catch (error) {
         console.error('❌ [ADMIN][REVIEW GALLERY] No se pudo procesar la imagen:', error);
@@ -145,11 +167,16 @@ export default function AdminReviewGallery({ productId }: { productId: string })
   // Al desactivar el heredado se parte de la propia zona maestra, de modo que
   // el ajuste manual sea un "retoque" y no una caja en blanco.
   const toggleInherit = (item: ReviewGalleryImage, shouldInherit: boolean) => {
+    const itemView = product?.views.find((view) => view.id === item.viewId) ?? activeMasterView;
+    const viewArea = viewPrintAreaToPercent(itemView, product?.canvasWidth, product?.canvasHeight);
+    const itemBaseArea = item.viewId
+      ? item.viewId === legacyMasterViewId ? masterArea ?? viewArea : viewArea
+      : masterArea ?? editorAreaNow;
     if (shouldInherit) {
-      updateItem(item.id, { useMasterArea: true, customPrintArea: null });
+      updateItem(item.id, { useMasterArea: true, customPrintArea: null, needsAreaReview: false });
       return;
     }
-    updateItem(item.id, { useMasterArea: false, customPrintArea: masterArea ?? editorAreaNow });
+    updateItem(item.id, { useMasterArea: false, customPrintArea: itemBaseArea, needsAreaReview: true });
   };
 
   const handleImageRatio = (id: string, width: number, height: number) => {
@@ -160,6 +187,10 @@ export default function AdminReviewGallery({ productId }: { productId: string })
   // REQUISITO 3: persiste masterPrintArea + reviewGallery en el producto.
   const handleSave = () => {
     if (!product || !masterArea) return;
+    if (hasUnreviewedAreas) {
+      setFeedback('Ajusta o confirma la zona de impresión de cada foto nueva antes de guardar.');
+      return;
+    }
     updateProduct({
       ...product,
       masterPrintArea: { ...masterArea, viewId: masterViewId },
@@ -177,12 +208,14 @@ export default function AdminReviewGallery({ productId }: { productId: string })
     reviewGallery: items.map((item) => ({
       id: item.id,
       title: item.title,
+      viewId: item.viewId ?? legacyMasterViewId,
       // El base64 no se muestra completo para no llenar la pantalla.
       imageUrl: item.imageUrl.startsWith('data:') ? `${item.imageUrl.slice(0, 24)}… (base64)` : item.imageUrl,
       useMasterArea: item.useMasterArea,
       ...(item.useMasterArea ? {} : { customPrintArea: item.customPrintArea ?? null }),
+      ...(item.needsAreaReview ? { needsAreaReview: true } : {}),
     })),
-  }), [productId, masterArea, masterViewId, items]);
+  }), [productId, masterArea, masterViewId, legacyMasterViewId, items]);
 
   // --- Render ----------------------------------------------------------------
 
@@ -220,7 +253,8 @@ export default function AdminReviewGallery({ productId }: { productId: string })
           <button
             type="button"
             onClick={handleSave}
-            disabled={storageBlocked}
+            disabled={storageBlocked || hasUnreviewedAreas}
+            title={hasUnreviewedAreas ? 'Revisa la zona de impresión de las fotos nuevas antes de guardar' : undefined}
             className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             <Check className="h-4 w-4" /> {isDirty ? 'Guardar cambios' : 'Guardar'}
@@ -254,7 +288,7 @@ export default function AdminReviewGallery({ productId }: { productId: string })
               </p>
             </div>
             <label className="text-xs font-semibold text-slate-500">
-              Vista de referencia
+              Vista de referencia y escenas
               <select
                 value={masterViewId}
                 onChange={(event) => {
@@ -342,15 +376,25 @@ export default function AdminReviewGallery({ productId }: { productId: string })
         {/* ── 2 · Fotos lifestyle / ángulos adicionales ─────────────────────── */}
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm lg:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
+            <div className="min-w-0 flex-1">
               <h2 className="text-sm font-semibold text-slate-800">2 · Fotos lifestyle y ángulos adicionales</h2>
               <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">
-                Sube varias fotos a la vez (modelo masculino, femenino, plano general...). Cada una hereda la
-                posición automática de la referencia maestra; desactívala solo si esa foto necesita un reajuste fino.
+                Estas escenas pertenecen a «{activeSceneView?.name ?? activeSceneView?.label ?? activeSceneView?.id}».
+                Sube fotos de esa vista; cada una conserva su propia zona y no modifica las escenas de las demás vistas.
               </p>
             </div>
+            <label className="text-xs font-semibold text-slate-500">
+              Vista a configurar
+              <select
+                value={sceneViewId}
+                onChange={(event) => setSceneViewId(event.target.value)}
+                className="mt-1 block h-9 min-w-[160px] rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 focus:border-indigo-400 focus:outline-none"
+              >
+                {product.views.map((view) => <option key={view.id} value={view.id}>{view.name ?? view.label ?? view.id}</option>)}
+              </select>
+            </label>
             <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
-              {items.length} {items.length === 1 ? 'foto' : 'fotos'}
+              {activeItems.length} {activeItems.length === 1 ? 'escena' : 'escenas'} en esta vista
             </span>
           </div>
 
@@ -366,10 +410,21 @@ export default function AdminReviewGallery({ productId }: { productId: string })
             <span className="text-[11px] text-slate-400">JPG o PNG · se optimizan automáticamente para el navegador</span>
           </button>
 
-          {items.length > 0 && (
+          {hasUnreviewedAreas && (
+            <p role="status" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+              Hay {items.filter((item) => item.needsAreaReview).length} foto(s) cuya zona de impresión aún debes ajustar o confirmar. Elige «Heredar posición» solo si el producto aparece en el mismo lugar que en la referencia.
+            </p>
+          )}
+
+          {activeItems.length > 0 && (
             <ul className="mt-5 grid gap-5 xl:grid-cols-2">
-              {items.map((item) => {
-                const effectiveArea = resolveReviewImagePrintArea(item, masterArea ?? editorAreaNow);
+              {activeItems.map((item) => {
+                const itemView = product.views.find((view) => view.id === item.viewId) ?? activeSceneView;
+                const viewArea = viewPrintAreaToPercent(itemView, product.canvasWidth, product.canvasHeight);
+                const itemBaseArea = item.viewId
+                  ? item.viewId === legacyMasterViewId ? masterArea ?? viewArea : viewArea
+                  : masterArea ?? editorAreaNow;
+                const effectiveArea = resolveReviewImagePrintArea(item, itemBaseArea);
                 return (
                   <li key={item.id} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                     <div className="flex flex-wrap items-center gap-2">
@@ -380,6 +435,9 @@ export default function AdminReviewGallery({ productId }: { productId: string })
                         placeholder="Título de la foto (p. ej. Modelo Frente)"
                         className="h-9 min-w-[180px] flex-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:border-indigo-400 focus:outline-none"
                       />
+                      {item.needsAreaReview && (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-semibold text-amber-800">Revisión pendiente</span>
+                      )}
                       <button type="button" onClick={() => removeItem(item.id)} aria-label={`Eliminar ${item.title}`} className="rounded-lg border border-slate-200 p-2 text-slate-400 hover:border-red-200 hover:bg-red-50 hover:text-red-600">
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -399,7 +457,7 @@ export default function AdminReviewGallery({ productId }: { productId: string })
                       <MockupAreaPicker
                         mockupUrl={item.imageUrl}
                         initialPrintArea={percentToPickableArea(effectiveArea)}
-                        onChange={(area) => updateItem(item.id, { customPrintArea: pickableAreaToPercent(area) })}
+                        onChange={(area) => updateItem(item.id, { customPrintArea: pickableAreaToPercent(area), needsAreaReview: false })}
                         readOnly={item.useMasterArea}
                         aspectRatio={aspectRatios[item.id]}
                         fallbackLabel="La foto no se pudo cargar."
@@ -415,7 +473,7 @@ export default function AdminReviewGallery({ productId }: { productId: string })
                           onChange={(event) => toggleInherit(item, event.target.checked)}
                           className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                         />
-                        Heredar posición automática (Recomendado)
+                        Heredar posición de referencia (solo si coincide)
                       </label>
                       <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${item.useMasterArea ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}`}>
                         {item.useMasterArea ? <Link2 className="h-3 w-3" /> : <Link2Off className="h-3 w-3" />}
@@ -449,7 +507,9 @@ export default function AdminReviewGallery({ productId }: { productId: string })
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3 px-4 py-3 lg:px-6">
           <p className="text-xs text-slate-500">
             {isDirty
-              ? 'Tienes cambios sin guardar en la pestaña Revisar.'
+              ? hasUnreviewedAreas
+                ? 'Ajusta o confirma la zona de las fotos nuevas para habilitar el guardado.'
+                : 'Tienes cambios sin guardar en la pestaña Revisar.'
               : 'Todo guardado. La configuración ya vive en el producto (masterPrintArea + reviewGallery).'}
           </p>
           <div className="flex items-center gap-2">
@@ -459,7 +519,7 @@ export default function AdminReviewGallery({ productId }: { productId: string })
             <button
               type="button"
               onClick={handleSave}
-              disabled={storageBlocked}
+              disabled={storageBlocked || hasUnreviewedAreas}
               className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
             >
               <Save className="h-4 w-4" /> Guardar configuración

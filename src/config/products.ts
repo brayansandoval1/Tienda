@@ -88,10 +88,14 @@ export interface ReviewGalleryImage {
   id: string;
   title: string;
   imageUrl: string;
+  /** Vista del producto a la que pertenece esta escena; ausente = escena maestra histórica. */
+  viewId?: string;
   /** true = usa `masterPrintArea`; false = usa `customPrintArea`. */
   useMasterArea: boolean;
   /** Caja propia, sólo válida cuando `useMasterArea` es false. */
   customPrintArea?: PrintAreaPercent | null;
+  /** Nueva foto que requiere confirmar o ajustar su zona antes de guardar. */
+  needsAreaReview?: boolean;
 }
 
 export interface ColorVariant {

@@ -1,6 +1,7 @@
 'use client';
 
-import { type PointerEvent, useRef } from 'react';
+import { Minus, Plus } from 'lucide-react';
+import { type PointerEvent, useEffect, useRef, useState } from 'react';
 import type { SafeAreaPoint, SafeAreaShape } from '@/src/config/products';
 import {
   normalizeSafeAreaPolygon,
@@ -116,6 +117,8 @@ interface MockupAreaPickerProps {
 export default function MockupAreaPicker({ mockupUrl, imageOpacity = 1, initialPrintArea, onChange, readOnly = false, fallbackLabel, aspectRatio, hideShapeControls = false }: MockupAreaPickerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ mode: DragMode; startX: number; startY: number; points: SafeAreaPoint[] } | null>(null);
+  const [detectedAspectRatio, setDetectedAspectRatio] = useState<number>();
+  useEffect(() => setDetectedAspectRatio(undefined), [mockupUrl]);
   const area = normalizePrintArea(initialPrintArea);
   // Sin polígono persistido (productos paramétricos heredados o forma recién
   // elegida) se derivan los nodos de la forma: el editor SIEMPRE muestra
@@ -137,6 +140,35 @@ export default function MockupAreaPicker({ mockupUrl, imageOpacity = 1, initialP
       ...(area.shape === 'rounded' && area.radius !== undefined ? { radius: area.radius } : {}),
       polygon,
     });
+  };
+
+  /** Escala todos los vértices alrededor del centro, conservando la forma. */
+  const scaleZone = (direction: 'shrink' | 'grow') => {
+    if (readOnly || points.length < MIN_POLYGON_NODES) return;
+    const centerX = bounds.x + bounds.width / 2;
+    const centerY = bounds.y + bounds.height / 2;
+    const halfWidth = bounds.width / 2;
+    const halfHeight = bounds.height / 2;
+    const minScale = Math.max(
+      halfWidth > 0 ? 1 / (halfWidth * 2) : 0.05,
+      halfHeight > 0 ? 1 / (halfHeight * 2) : 0.05,
+    );
+    const maxScale = Math.min(
+      halfWidth > 0 ? centerX / halfWidth : 1.1,
+      halfWidth > 0 ? (100 - centerX) / halfWidth : 1.1,
+      halfHeight > 0 ? centerY / halfHeight : 1.1,
+      halfHeight > 0 ? (100 - centerY) / halfHeight : 1.1,
+      1.1,
+    );
+    const factor = direction === 'shrink'
+      ? Math.max(minScale, 0.95)
+      : Math.min(maxScale, 1.05);
+    if (Math.abs(factor - 1) < 0.001) return;
+
+    commit(points.map((point) => ({
+      x: centerX + (point.x - centerX) * factor,
+      y: centerY + (point.y - centerY) * factor,
+    })));
   };
 
   const updateFromPointer = (event: PointerEvent<HTMLDivElement>) => {
@@ -220,11 +252,20 @@ export default function MockupAreaPicker({ mockupUrl, imageOpacity = 1, initialP
       onPointerUp={() => { dragRef.current = null; }}
       onPointerCancel={() => { dragRef.current = null; }}
       onLostPointerCapture={() => { dragRef.current = null; }}
-      style={aspectRatio ? { aspectRatio } : undefined}
+      style={{ aspectRatio: aspectRatio ?? detectedAspectRatio }}
       className="relative aspect-square w-full max-w-[800px] rounded-lg border bg-slate-100 touch-none select-none"
     >
       {mockupUrl
-        ? <img src={mockupUrl} alt="Vista previa del mockup" style={{ opacity: imageOpacity }} className="pointer-events-none absolute inset-0 h-full w-full rounded-lg object-contain" />
+        ? <img
+            src={mockupUrl}
+            alt="Vista previa del mockup"
+            onLoad={(event) => {
+              const { naturalWidth, naturalHeight } = event.currentTarget;
+              if (naturalWidth && naturalHeight) setDetectedAspectRatio(naturalWidth / naturalHeight);
+            }}
+            style={{ opacity: imageOpacity }}
+            className="pointer-events-none absolute inset-0 h-full w-full rounded-lg object-contain"
+          />
         : <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-xs text-slate-400">{fallbackLabel ?? 'Añade una URL de mockup para ver la zona sobre la imagen.'}</div>}
 
       {/* SVG 0-100 = porcentaje exacto del contenedor, igual que el plano lógico
@@ -283,6 +324,29 @@ export default function MockupAreaPicker({ mockupUrl, imageOpacity = 1, initialP
         {points.length} nodos · {bounds.width}% × {bounds.height}%
       </span>
     </div>
+
+    {!readOnly && (
+      <div className="flex flex-wrap items-center gap-2" aria-label="Ajustar tamaño de la zona segura">
+        <span className="mr-1 text-[11px] font-semibold text-slate-500">Tamaño uniforme:</span>
+        <button
+          type="button"
+          title="Reducir toda la zona 5% sin deformarla"
+          onClick={() => scaleZone('shrink')}
+          className="inline-flex h-8 items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-700 hover:border-emerald-400 hover:bg-emerald-50"
+        >
+          <Minus className="h-3.5 w-3.5" /> Reducir 5%
+        </button>
+        <button
+          type="button"
+          title="Aumentar toda la zona 5% conservando su forma"
+          onClick={() => scaleZone('grow')}
+          className="inline-flex h-8 items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-700 hover:border-emerald-400 hover:bg-emerald-50"
+        >
+          <Plus className="h-3.5 w-3.5" /> Aumentar 5%
+        </button>
+        <span className="text-[11px] text-slate-400">Escala todos los puntos desde el centro.</span>
+      </div>
+    )}
 
     {!hideShapeControls && (
       <div className="flex flex-wrap items-center gap-2">

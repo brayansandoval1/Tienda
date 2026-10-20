@@ -67,24 +67,35 @@ export default function ReviewStage({ product }: { product: Product }) {
   const masterArea = useMemo(() => resolveMasterPrintArea(product, masterViewId), [product, masterViewId]);
 
   /**
-   * Vistas a componer: las fotos del Admin (con su caja maestra o propia) o,
-   * si el producto aún no tiene galería, los mockups base como respaldo.
+   * Se compone cada escena sobre el lienzo de su vista. Las vistas sin escena
+   * personalizada conservan el mockup base como respaldo.
    */
   const targets = useMemo<RenderTarget[]>(() => {
-    if (gallery.length > 0) {
-      return gallery
-        .filter((image) => Boolean(image.imageUrl))
-        .map((image) => ({
+    const galleryTargets = gallery
+      .filter((image) => Boolean(image.imageUrl))
+      .map((image) => {
+        const viewId = image.viewId ?? masterViewId;
+        const targetView = product.views.find((view) => view.id === viewId);
+        const viewArea = viewPrintAreaToPercent(targetView, product.canvasWidth, product.canvasHeight);
+        const fallbackArea = image.viewId
+          ? viewId === masterViewId ? masterArea : viewArea
+          : masterArea;
+        return ({
           id: image.id,
           label: image.title || 'Foto de reseña',
           photoUrl: image.imageUrl,
-          viewId: masterViewId,
-          area: resolveReviewImagePrintArea(image, masterArea),
+          viewId,
+          area: resolveReviewImagePrintArea(image, fallbackArea),
           isMockupFallback: false,
-        }));
-    }
-    return (product.views ?? [])
+        });
+      });
+
+    // Una vista sin escenas configuradas conserva su mockup original para que
+    // el cliente siempre pueda revisar todas las caras del producto.
+    const viewsWithScenes = new Set(galleryTargets.map((target) => target.viewId));
+    const fallbackTargets = (product.views ?? [])
       .filter((view) => Boolean(view.mockupUrl))
+      .filter((view) => !viewsWithScenes.has(view.id))
       .map((view) => ({
         id: `mockup:${view.id}`,
         label: view.label || view.name || view.id,
@@ -93,6 +104,8 @@ export default function ReviewStage({ product }: { product: Product }) {
         area: viewPrintAreaToPercent(view, product.canvasWidth, product.canvasHeight),
         isMockupFallback: true,
       }));
+
+    return [...galleryTargets, ...fallbackTargets];
   }, [gallery, masterArea, masterViewId, product.canvasHeight, product.canvasWidth, product.views]);
 
   /** Resultado de composición por vista, indexado por RenderTarget.id. */
@@ -100,8 +113,6 @@ export default function ReviewStage({ product }: { product: Product }) {
   const [activeId, setActiveId] = useState<string>('');
   /** Forzar recomposición completa (botón "Actualizar renders"). */
   const [reloadNonce, setReloadNonce] = useState(0);
-
-  const hasGallery = gallery.length > 0;
 
   // La miniatura seleccionada se pierde si la galería cambió desde Admin.
   useEffect(() => {
@@ -383,7 +394,9 @@ export default function ReviewStage({ product }: { product: Product }) {
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-slate-800">{activeTarget.label}</p>
             <p className="text-[11px] text-slate-400">
-              {hasGallery ? 'Así lucirá tu diseño en esta foto' : 'Vista base del producto · configura fotos de reseña en el Admin'}
+              {activeTarget.isMockupFallback
+                ? 'Vista base del producto · puedes asignar una escena propia desde el Admin'
+                : 'Así lucirá tu diseño en esta escena'}
             </p>
           </div>
           <button
