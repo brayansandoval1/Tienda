@@ -188,7 +188,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
               debajo porque ReviewStage le pide los diseños por eventos. */}
           {activeStep === 'review' && (
               <div className="absolute inset-0 z-20 bg-[#f8f5fb]">
-              <ReviewStage product={currentProduct} />
+              <ReviewStage product={currentProduct} componentColors={componentColors} enabledMeshNames={enabledComponentMeshes} />
             </div>
           )}
           </section>

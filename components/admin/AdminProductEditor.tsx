@@ -511,10 +511,64 @@ export default function AdminProductEditor() {
     const customizableParts = form.customizableParts.map((part) => ({ ...part, label: part.label.trim(), meshName: part.meshName.trim(), defaultColor: part.defaultColor || '#cbd5e1' }));
     const basePrice = Number(form.price);
     const productId = selectedId ?? crypto.randomUUID();
+    const existingProduct = selectedId ? products.find((item) => item.id === selectedId) : undefined;
     const extraSidePrice = Math.max(0, Number(form.extraSidePrice) || 0);
     const fullWrapPrice = Math.max(0, Number(form.fullWrapPrice) || 0);
     const variantModifiers = options.flatMap((option) => option.values.map((value) => ({ variantId: value.id, priceDelta: value.priceModifier })));
-    const product: Product = { id: productId, isActive: selectedId ? products.find((item) => item.id === selectedId)?.isActive !== false : true, name: form.name.trim(), price: basePrice, basePrice, category: form.category.trim(), canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT, printWidthCm: printWidth || undefined, printHeightCm: printHeight || undefined, model3dUrl: form.model3dUrl.trim() || undefined, meshSettings, pricingRules: { hasMultipleSides: form.hasMultipleSides, extraSidePrice, fullWrapPrice }, pricingSchema: { variantModifiers, setupFee, minimumQuantity, volumeDiscounts, sidesPricing: { mode: form.sidesPricingMode, pricePerAdditionalSide: extraSidePrice, wrapPrice: fullWrapPrice } }, availableAddonIds: form.availableAddonIds, customizableParts, options: optionsWithMeshSettings, views: form.views.map((view) => { const name = view.name.trim() || 'Vista'; const polygon = parsePolygonForm(view.polygon); const area3D = serializePrintArea3D(view.area3D); const x = cleanPercentage(Number(view.x) || 0); const y = cleanPercentage(Number(view.y) || 0); return { id: view.id, name, label: name, mockupUrl: view.mockupUrl.trim(), printArea: { x, y, left: x, top: y, width: cleanPercentage(Number(view.width) || 0), height: cleanPercentage(Number(view.height) || 0), ...(view.shape !== 'rect' ? { shape: view.shape } : {}), ...(view.shape === 'rounded' ? { radius: cleanRadius(Number(view.radius)) } : {}), ...(polygon ? { polygon } : {}) }, printAreaUnit: 'percent' as const, printArea3D: area3D, printSurface3DMode: view.surfaceCustomized ? 'custom' as const : 'automatic' as const, ...(view.surfaceCustomized ? { printSurface3D: { x: cleanPercentage(Number(view.surfaceX)), y: cleanPercentage(Number(view.surfaceY)), width: cleanPercentage(Number(view.surfaceWidth)), height: cleanPercentage(Number(view.surfaceHeight)) } } : {}) }; }) };
+    const product: Product = {
+      id: productId,
+      isActive: existingProduct?.isActive !== false,
+      name: form.name.trim(),
+      price: basePrice,
+      basePrice,
+      category: form.category.trim(),
+      canvasWidth: REFERENCE_WIDTH,
+      canvasHeight: REFERENCE_HEIGHT,
+      printWidthCm: printWidth || undefined,
+      printHeightCm: printHeight || undefined,
+      model3dUrl: form.model3dUrl.trim() || undefined,
+      meshSettings,
+      pricingRules: { hasMultipleSides: form.hasMultipleSides, extraSidePrice, fullWrapPrice },
+      pricingSchema: { variantModifiers, setupFee, minimumQuantity, volumeDiscounts, sidesPricing: { mode: form.sidesPricingMode, pricePerAdditionalSide: extraSidePrice, wrapPrice: fullWrapPrice } },
+      availableAddonIds: form.availableAddonIds,
+      customizableParts,
+      options: optionsWithMeshSettings,
+      // Al editar los datos generales no se deben perder los fondos, el encuadre
+      // del modelo por vista ni la galería de revisión configurada desde su panel.
+      ...(existingProduct?.masterPrintArea ? { masterPrintArea: existingProduct.masterPrintArea } : {}),
+      ...(existingProduct?.reviewGallery ? { reviewGallery: existingProduct.reviewGallery } : {}),
+      views: form.views.map((view) => {
+        const name = view.name.trim() || 'Vista';
+        const polygon = parsePolygonForm(view.polygon);
+        const area3D = serializePrintArea3D(view.area3D);
+        const x = cleanPercentage(Number(view.x) || 0);
+        const y = cleanPercentage(Number(view.y) || 0);
+        const previousView = existingProduct?.views.find((candidate) => candidate.id === view.id);
+        return {
+          id: view.id,
+          name,
+          label: name,
+          mockupUrl: view.mockupUrl.trim(),
+          ...(previousView?.sceneBackgroundUrl ? { sceneBackgroundUrl: previousView.sceneBackgroundUrl } : {}),
+          ...(previousView?.scene3DPlacement ? { scene3DPlacement: previousView.scene3DPlacement } : {}),
+          printArea: {
+            x,
+            y,
+            left: x,
+            top: y,
+            width: cleanPercentage(Number(view.width) || 0),
+            height: cleanPercentage(Number(view.height) || 0),
+            ...(view.shape !== 'rect' ? { shape: view.shape } : {}),
+            ...(view.shape === 'rounded' ? { radius: cleanRadius(Number(view.radius)) } : {}),
+            ...(polygon ? { polygon } : {}),
+          },
+          printAreaUnit: 'percent' as const,
+          printArea3D: area3D,
+          printSurface3DMode: view.surfaceCustomized ? 'custom' as const : 'automatic' as const,
+          ...(view.surfaceCustomized ? { printSurface3D: { x: cleanPercentage(Number(view.surfaceX)), y: cleanPercentage(Number(view.surfaceY)), width: cleanPercentage(Number(view.surfaceWidth)), height: cleanPercentage(Number(view.surfaceHeight)) } } : {}),
+        };
+      }),
+    };
     selectedId ? updateProduct(product) : addProduct(product);
     try {
       await Promise.all(addonCatalog.map((addon) => {
@@ -620,7 +674,9 @@ export default function AdminProductEditor() {
                 <p role="status" className={`mt-2 text-xs ${meshInspection.status === 'error' ? 'text-red-600' : meshInspection.status === 'success' ? 'text-emerald-700' : meshInspection.status === 'loading' ? 'text-violet-700' : 'text-slate-500'}`}>{meshInspection.message || 'Sube un archivo .GLB válido para inspeccionar sus mallas y UV.'}</p>
                 {detectedMeshNames.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{detectedMeshNames.map((name) => <span key={name} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-1 font-mono text-[10px] text-violet-800">{name}</span>)}</div>}
               </div>
-              <div className="sm:col-span-2"><GLBModelPreview url={form.model3dUrl} file={localGLBFile} /></div>
+              <div className="sm:col-span-2">{activeArea3D && adminArea && adminPreviewProduct.model3dUrl
+                ? <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-xs text-sky-800">La vista 3D de calibración aparece abajo para evitar abrir dos visores WebGL al mismo tiempo.</div>
+                : <GLBModelPreview url={form.model3dUrl} file={localGLBFile} />}</div>
               {meshInspection.meshes.length > 0 && <div className="sm:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="mb-3"><h3 className="text-sm font-semibold text-slate-800">Diagnóstico de mallas y UV</h3><p className="mt-1 text-xs text-slate-500">Las UV convierten la superficie 3D en coordenadas de textura. Islas apiladas pueden repetir el diseño.</p></div>
                 <div className="space-y-2">{meshInspection.meshes.map((mesh, index) => <details key={`${mesh.name}-${index}`} className="rounded-lg border border-slate-200 bg-white p-3" open={meshInspection.meshes.length <= 2}>

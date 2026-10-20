@@ -1,8 +1,9 @@
 'use client';
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { ArrowLeft, Check, Images, Info, Link2, Link2Off, Save, Trash2, Upload } from 'lucide-react';
+import { ArrowLeft, Check, Images, Info, Link2, Link2Off, Save, Trash2, Upload, X } from 'lucide-react';
 import { useProductStore } from '@/src/store/useProductStore';
 import { compressImageFileToDataUrl } from '@/src/utils/imageCompression';
 import MockupAreaPicker from '@/components/admin/MockupAreaPicker';
@@ -20,6 +21,8 @@ import {
 /** Fotos lifestyle grandes: se comprimen para no agotar la cuota de localStorage. */
 const REVIEW_IMAGE_MAX_DIM = 1000;
 const REVIEW_IMAGE_QUALITY = 0.82;
+const DEFAULT_SCENE_3D_PLACEMENT = { x: 0, y: 0, scale: 1 };
+const Product3DViewer = dynamic(() => import('@/components/editor/Product3DViewer'), { ssr: false });
 
 /**
  * Deriva de la zona maestra respecto a la zona real del editor. Compara también
@@ -49,12 +52,26 @@ export default function AdminReviewGallery({ productId }: { productId: string })
   const [sceneViewId, setSceneViewId] = useState('');
   const [masterArea, setMasterArea] = useState<PrintAreaPercent | null>(null);
   const [items, setItems] = useState<ReviewGalleryImage[]>([]);
+  const [sceneBackgrounds, setSceneBackgrounds] = useState<Record<string, string>>({});
+  const [scenePlacements, setScenePlacements] = useState<Record<string, { x: number; y: number; scale: number }>>({});
   const [aspectRatios, setAspectRatios] = useState<Record<string, number>>({});
   const [isUploading, setIsUploading] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [storageBlocked, setStorageBlocked] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sceneBackgroundInputRef = useRef<HTMLInputElement>(null);
+  const sceneViewerRef = useRef<HTMLDivElement>(null);
+  const placementDebugRef = useRef<{
+    awaitingPointerMove: boolean;
+    awaitingScroll: boolean;
+    releasedAt: number;
+    control: 'x' | 'y' | 'scale' | null;
+    value: number | null;
+    viewId: string;
+    placement: { x: number; y: number; scale: number };
+  }>({ awaitingPointerMove: false, awaitingScroll: false, releasedAt: 0, control: null, value: null, viewId: '', placement: DEFAULT_SCENE_3D_PLACEMENT });
+  const latestPlacementRef = useRef({ viewId: '', placement: DEFAULT_SCENE_3D_PLACEMENT });
 
   useEffect(() => setHydrated(true), []);
 
@@ -73,6 +90,14 @@ export default function AdminReviewGallery({ productId }: { productId: string })
     setSceneViewId(viewId);
     setMasterArea(resolveMasterPrintArea(product, viewId));
     setItems(product.reviewGallery ?? []);
+    setSceneBackgrounds(product.views.reduce<Record<string, string>>((backgrounds, view) => {
+      if (view.sceneBackgroundUrl) backgrounds[view.id] = view.sceneBackgroundUrl;
+      return backgrounds;
+    }, {}));
+    setScenePlacements(product.views.reduce<Record<string, { x: number; y: number; scale: number }>>((placements, view) => {
+      if (view.scene3DPlacement) placements[view.id] = view.scene3DPlacement;
+      return placements;
+    }, {}));
   }, [hydrated, product, masterArea]);
 
   const activeMasterView = useMemo(
@@ -89,6 +114,107 @@ export default function AdminReviewGallery({ productId }: { productId: string })
     () => viewPrintAreaToPercent(activeSceneView, product?.canvasWidth, product?.canvasHeight),
     [activeSceneView, product?.canvasWidth, product?.canvasHeight],
   );
+  const activeScenePlacement = scenePlacements[sceneViewId] ?? DEFAULT_SCENE_3D_PLACEMENT;
+  const activeSceneViewIndex = Math.max(0, product?.views.findIndex((view) => view.id === sceneViewId) ?? 0);
+  latestPlacementRef.current = { viewId: sceneViewId, placement: activeScenePlacement };
+  useEffect(() => {
+    const handlePointerMoveAfterRelease = (event: PointerEvent) => {
+      const pending = placementDebugRef.current;
+      if (!pending.awaitingPointerMove) return;
+      pending.awaitingPointerMove = false;
+      const canvas = sceneViewerRef.current?.querySelector('canvas') ?? null;
+      const canvasRect = canvas?.getBoundingClientRect();
+      const canvasWrapper = canvas?.parentElement;
+      console.log('[scene-3d-debug] encuadre:primer-movimiento-tras-soltar', {
+        productId,
+        releasedControl: pending.control,
+        releasedValue: pending.value,
+        releasedViewId: pending.viewId,
+        releasedPlacement: pending.placement,
+        currentViewId: latestPlacementRef.current.viewId,
+        currentPlacement: latestPlacementRef.current.placement,
+        pointer: { x: event.clientX, y: event.clientY },
+        elapsedMs: Math.round(performance.now() - pending.releasedAt),
+        pageCanvasCount: document.querySelectorAll('canvas').length,
+        viewerCanvasCount: sceneViewerRef.current?.querySelectorAll('canvas').length ?? 0,
+        canvas: canvas && canvasRect ? {
+          width: canvas.width,
+          height: canvas.height,
+          displayedWidth: Math.round(canvasRect.width),
+          displayedHeight: Math.round(canvasRect.height),
+          transform: canvasWrapper ? getComputedStyle(canvasWrapper).transform : null,
+        } : null,
+      });
+    };
+    const handleWebGLContextLost = (event: Event) => {
+      console.error('[scene-3d-debug] encuadre:contexto-perdido-tras-soltar', {
+        productId,
+        awaitingPointerMove: placementDebugRef.current.awaitingPointerMove,
+        releasedControl: placementDebugRef.current.control,
+        releasedValue: placementDebugRef.current.value,
+        releasedPlacement: placementDebugRef.current.placement,
+        currentPlacement: latestPlacementRef.current.placement,
+        canvasCount: document.querySelectorAll('canvas').length,
+        canvas: event.target instanceof HTMLCanvasElement ? { width: event.target.width, height: event.target.height } : null,
+      });
+    };
+    const handleScrollAfterRelease = (event: Event) => {
+      const pending = placementDebugRef.current;
+      if (!pending.awaitingScroll) return;
+      pending.awaitingScroll = false;
+      const frame = sceneViewerRef.current;
+      const frameRect = frame?.getBoundingClientRect();
+      const canvas = frame?.querySelector('canvas') ?? null;
+      const canvasRect = canvas?.getBoundingClientRect();
+      console.log('[scene-3d-debug] encuadre:scroll-tras-soltar', {
+        productId,
+        scrollTarget: event.target instanceof Element ? `${event.target.tagName.toLowerCase()}${event.target.id ? `#${event.target.id}` : ''}` : 'document',
+        scrollPosition: { x: window.scrollX, y: window.scrollY },
+        releasedControl: pending.control,
+        releasedValue: pending.value,
+        releasedPlacement: pending.placement,
+        currentPlacement: latestPlacementRef.current.placement,
+        frame: frameRect ? { width: Math.round(frameRect.width), height: Math.round(frameRect.height), top: Math.round(frameRect.top), left: Math.round(frameRect.left) } : null,
+        canvas: canvas && canvasRect ? { bufferWidth: canvas.width, bufferHeight: canvas.height, displayedWidth: Math.round(canvasRect.width), displayedHeight: Math.round(canvasRect.height) } : null,
+        pageCanvasCount: document.querySelectorAll('canvas').length,
+      });
+    };
+    window.addEventListener('pointermove', handlePointerMoveAfterRelease);
+    window.addEventListener('webglcontextlost', handleWebGLContextLost, true);
+    document.addEventListener('scroll', handleScrollAfterRelease, true);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMoveAfterRelease);
+      window.removeEventListener('webglcontextlost', handleWebGLContextLost, true);
+      document.removeEventListener('scroll', handleScrollAfterRelease, true);
+    };
+  }, [productId]);
+  const updateScenePlacement = (patch: Partial<typeof DEFAULT_SCENE_3D_PLACEMENT>) => {
+    setScenePlacements((current) => ({
+      ...current,
+      [sceneViewId]: { ...DEFAULT_SCENE_3D_PLACEMENT, ...current[sceneViewId], ...patch },
+    }));
+    setIsDirty(true);
+  };
+  const commitScenePlacementControl = (key: 'x' | 'y' | 'scale', value: number) => {
+    const nextPlacement = { ...DEFAULT_SCENE_3D_PLACEMENT, ...scenePlacements[sceneViewId], [key]: value };
+    placementDebugRef.current = {
+      awaitingPointerMove: true,
+      awaitingScroll: true,
+      releasedAt: performance.now(),
+      control: key,
+      value,
+      viewId: sceneViewId,
+      placement: nextPlacement,
+    };
+    console.info('[scene-3d-debug] encuadre:control-confirmado', {
+      productId,
+      viewId: sceneViewId,
+      control: key,
+      value,
+      placement: nextPlacement,
+    });
+    updateScenePlacement({ [key]: value });
+  };
 
   const legacyMasterViewId = product?.masterPrintArea?.viewId ?? product?.views[0]?.id ?? '';
   const activeItems = useMemo(
@@ -154,6 +280,23 @@ export default function AdminReviewGallery({ productId }: { productId: string })
     setIsUploading(false);
   };
 
+  const handleSceneBackgroundFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file || !file.type.startsWith('image/')) return;
+    setIsUploading(true);
+    setFeedback(null);
+    try {
+      const imageUrl = await compressImageFileToDataUrl(file, REVIEW_IMAGE_MAX_DIM, REVIEW_IMAGE_QUALITY);
+      setSceneBackgrounds((current) => ({ ...current, [sceneViewId]: imageUrl }));
+      setIsDirty(true);
+    } catch {
+      setFeedback(`No se pudo procesar el fondo para «${activeSceneView?.name ?? 'esta vista'}».`);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const updateItem = (id: string, patch: Partial<ReviewGalleryImage>) => {
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
     setIsDirty(true);
@@ -195,6 +338,11 @@ export default function AdminReviewGallery({ productId }: { productId: string })
       ...product,
       masterPrintArea: { ...masterArea, viewId: masterViewId },
       reviewGallery: items,
+      views: product.views.map((view) => ({
+        ...view,
+        ...(sceneBackgrounds[view.id] ? { sceneBackgroundUrl: sceneBackgrounds[view.id] } : { sceneBackgroundUrl: undefined }),
+        ...(scenePlacements[view.id] ? { scene3DPlacement: scenePlacements[view.id] } : { scene3DPlacement: undefined }),
+      })),
     });
     setIsDirty(false);
     setStorageBlocked(false);
@@ -215,7 +363,12 @@ export default function AdminReviewGallery({ productId }: { productId: string })
       ...(item.useMasterArea ? {} : { customPrintArea: item.customPrintArea ?? null }),
       ...(item.needsAreaReview ? { needsAreaReview: true } : {}),
     })),
-  }), [productId, masterArea, masterViewId, legacyMasterViewId, items]);
+    sceneBackgrounds: Object.fromEntries(Object.entries(sceneBackgrounds).map(([viewId, imageUrl]) => [
+      viewId,
+      imageUrl.startsWith('data:') ? `${imageUrl.slice(0, 24)}… (base64)` : imageUrl,
+    ])),
+    scene3DPlacements: scenePlacements,
+  }), [productId, masterArea, masterViewId, legacyMasterViewId, items, sceneBackgrounds, scenePlacements]);
 
   // --- Render ----------------------------------------------------------------
 
@@ -396,6 +549,99 @@ export default function AdminReviewGallery({ productId }: { productId: string })
             <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
               {activeItems.length} {activeItems.length === 1 ? 'escena' : 'escenas'} en esta vista
             </span>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="max-w-2xl">
+                <h3 className="text-xs font-semibold text-slate-800">Fondo ambiental para el modelo 3D</h3>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
+                  Este fondo se usa detrás del modelo cuando el cliente elige 3D. Sube una imagen del ambiente sin el producto;
+                  las fotos con el producto impreso se configuran arriba para la opción 2D.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input ref={sceneBackgroundInputRef} type="file" accept="image/*" className="sr-only" onChange={handleSceneBackgroundFile} />
+                <button
+                  type="button"
+                  onClick={() => sceneBackgroundInputRef.current?.click()}
+                  disabled={isUploading}
+                  className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {sceneBackgrounds[sceneViewId] ? 'Cambiar fondo 3D' : 'Agregar fondo 3D'}
+                </button>
+                {sceneBackgrounds[sceneViewId] && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSceneBackgrounds((current) => {
+                        const next = { ...current };
+                        delete next[sceneViewId];
+                        return next;
+                      });
+                      setIsDirty(true);
+                    }}
+                    aria-label="Quitar fondo 3D de esta vista"
+                    title="Quitar fondo 3D de esta vista"
+                    className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(250px,0.65fr)]">
+              <div ref={sceneViewerRef} className="h-[300px] overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
+                {product.model3dUrl ? (
+                  <Product3DViewer
+                    product={product}
+                    componentColors={{}}
+                    enabledMeshNames={[]}
+                    showSafeAreaGuide
+                    safeArea={{ left: 0, top: 0, width: 800, height: 800, viewIndex: activeSceneViewIndex, viewCount: Math.max(1, product.views.length), canvasWidth: 800, canvasHeight: 800 }}
+                    activeViewIndex={activeSceneViewIndex}
+                    activeViewName={activeSceneView?.name || activeSceneView?.label}
+                    sceneBackgroundUrl={sceneBackgrounds[sceneViewId]}
+                    scene3DPlacement={activeScenePlacement}
+                    staticView
+                  />
+                ) : (
+                  <div className="grid h-full place-items-center px-6 text-center text-xs text-slate-500">
+                    Este producto todavía no tiene un modelo 3D asignado. Configura su archivo GLB para ajustar su posición en la escena.
+                  </div>
+                )}
+              </div>
+              <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-800">Ajustar modelo en la escena</h4>
+                  <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Mueve el modelo respecto al fondo y ajusta su tamaño. Se guarda por separado para cada vista.</p>
+                </div>
+                {([
+                  ['x', 'Horizontal', -40, 40, 1, '%'],
+                  ['y', 'Vertical', -40, 40, 1, '%'],
+                  ['scale', 'Tamaño', 0.5, 1.8, 0.05, '×'],
+                ] as const).map(([key, label, min, max, step, suffix]) => (
+                  <label key={key} className="block text-[11px] font-semibold text-slate-600">
+                    <span className="mb-1 flex items-center justify-between">
+                      {label}<span className="font-mono text-slate-500">{key === 'scale' ? activeScenePlacement.scale.toFixed(2) : activeScenePlacement[key]}{suffix}</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={min}
+                      max={max}
+                      step={step}
+                      value={activeScenePlacement[key]}
+                      onChange={(event) => updateScenePlacement({ [key]: Number(event.target.value) })}
+                      onPointerUp={(event) => commitScenePlacementControl(key, event.currentTarget.valueAsNumber)}
+                      onKeyUp={(event) => commitScenePlacementControl(key, event.currentTarget.valueAsNumber)}
+                      className="w-full accent-indigo-600"
+                      aria-label={`${label} del modelo 3D`}
+                    />
+                  </label>
+                ))}
+                <button type="button" onClick={() => updateScenePlacement(DEFAULT_SCENE_3D_PLACEMENT)} className="rounded-lg border border-slate-200 px-3 py-2 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">Restablecer posición y tamaño</button>
+              </div>
+            </div>
           </div>
 
           <input ref={fileInputRef} type="file" accept="image/*" multiple className="sr-only" onChange={handleFiles} />

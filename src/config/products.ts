@@ -115,6 +115,10 @@ export interface ProductView {
   label?: string;
   /** Imagen base del mockup que se muestra en el editor. */
   mockupUrl: string;
+  /** Fondo ambiental opcional (sin producto) para el modo de revisión 3D. */
+  sceneBackgroundUrl?: string;
+  /** Posición y escala del modelo 3D sobre el fondo ambiental de esta vista. */
+  scene3DPlacement?: { x: number; y: number; scale: number };
   /** Variantes visuales del mismo producto para esta vista. */
   colorVariants?: ColorVariant[];
   /** Capa opcional para composiciones de mockup más complejas. */

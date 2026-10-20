@@ -15,11 +15,14 @@
 // =============================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { ImageOff, RefreshCw, Settings2 } from 'lucide-react';
+import { Box, Image as ImageIcon, ImageOff, RefreshCw, Settings2 } from 'lucide-react';
 import { type Product } from '@/src/store/useProductStore';
 import type { PrintAreaPercent } from '@/src/config/products';
 import { resolveMasterPrintArea, resolveReviewImagePrintArea, viewPrintAreaToPercent } from '@/src/utils/reviewGallery';
+
+const Product3DViewer = dynamic(() => import('@/components/editor/Product3DViewer'), { ssr: false });
 
 /** Una vista a componer: foto de reseña de Admin o mockup base del producto. */
 interface RenderTarget {
@@ -61,7 +64,7 @@ const loadImage = (src: string) =>
     img.src = src;
   });
 
-export default function ReviewStage({ product }: { product: Product }) {
+export default function ReviewStage({ product, componentColors = {}, enabledMeshNames = [] }: { product: Product; componentColors?: Record<string, string>; enabledMeshNames?: string[] }) {
   const gallery = useMemo(() => product.reviewGallery ?? [], [product.reviewGallery]);
   const masterViewId = product.masterPrintArea?.viewId ?? product.views[0]?.id ?? 'front';
   const masterArea = useMemo(() => resolveMasterPrintArea(product, masterViewId), [product, masterViewId]);
@@ -111,6 +114,7 @@ export default function ReviewStage({ product }: { product: Product }) {
   /** Resultado de composición por vista, indexado por RenderTarget.id. */
   const [renders, setRenders] = useState<Record<string, RenderSlot>>({});
   const [activeId, setActiveId] = useState<string>('');
+  const [previewMode, setPreviewMode] = useState<'2d' | '3d'>('2d');
   /** Forzar recomposición completa (botón "Actualizar renders"). */
   const [reloadNonce, setReloadNonce] = useState(0);
 
@@ -328,6 +332,8 @@ export default function ReviewStage({ product }: { product: Product }) {
 
   const activeTarget = targets.find((target) => target.id === activeId) ?? targets[0];
   const activeSlot = activeTarget ? renders[activeTarget.id] : undefined;
+  const activeTargetView = activeTarget ? product.views.find((view) => view.id === activeTarget.viewId) : undefined;
+  const activeViewIndex = Math.max(0, product.views.findIndex((view) => view.id === activeTarget?.viewId));
 
   // Sin fotos de reseña ni mockups, no hay nada que componer: estado vacío.
   if (targets.length === 0) {
@@ -399,19 +405,56 @@ export default function ReviewStage({ product }: { product: Product }) {
                 : 'Así lucirá tu diseño en esta escena'}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setReloadNonce((current) => current + 1)}
-            disabled={activeSlot?.status === 'loading'}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <RefreshCw size={12} className={activeSlot?.status === 'loading' ? 'animate-spin' : undefined} />
-            Actualizar renders
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <div role="group" aria-label="Modo de vista previa" className="flex rounded-lg border border-slate-200 bg-white p-0.5">
+              <button
+                type="button"
+                onClick={() => setPreviewMode('2d')}
+                aria-pressed={previewMode === '2d'}
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${previewMode === '2d' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+              >
+                <ImageIcon size={13} /> 2D
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewMode('3d')}
+                disabled={!product.model3dUrl?.trim()}
+                aria-pressed={previewMode === '3d'}
+                title={product.model3dUrl?.trim() ? 'Ver el producto en 3D' : 'Este producto no tiene modelo 3D'}
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${previewMode === '3d' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+              >
+                <Box size={13} /> 3D
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReloadNonce((current) => current + 1)}
+              disabled={previewMode === '3d' || activeSlot?.status === 'loading'}
+              title={previewMode === '3d' ? 'El modelo 3D se actualiza automáticamente' : 'Actualizar vistas 2D'}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw size={12} className={activeSlot?.status === 'loading' ? 'animate-spin' : undefined} />
+              Actualizar
+            </button>
+          </div>
         </div>
 
         <div className="relative flex min-h-0 flex-1 items-center justify-center p-4 sm:p-6">
-          {activeSlot?.url ? (
+          {previewMode === '3d' && activeTarget ? (
+            <div className="h-full min-h-0 w-full">
+              <Product3DViewer
+                key={product.id}
+                product={product}
+                componentColors={componentColors}
+                enabledMeshNames={enabledMeshNames}
+                activeViewIndex={activeViewIndex}
+                activeViewName={activeTargetView?.name || activeTargetView?.label || activeTarget.label}
+                sceneBackgroundUrl={activeTargetView?.sceneBackgroundUrl}
+                scene3DPlacement={activeTargetView?.scene3DPlacement ?? { x: 0, y: 0, scale: 1 }}
+                staticView
+              />
+            </div>
+          ) : activeSlot?.url ? (
             <img
               src={activeSlot.url}
               alt={`Vista de revisión: ${activeTarget.label}`}
