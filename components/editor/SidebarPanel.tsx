@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import type { TextOptions } from '@/types/product';
 import { Search, Square, Circle, Triangle, Star, Heart, Loader2, LayoutTemplate, Shapes, Save, Trash2, Pencil, Layers, X, ChevronDown, ChevronUp, RectangleHorizontal, Diamond, Pentagon, Hexagon, Octagon, ArrowRight, Minus, MessageCircle, Cloud, Zap, Moon } from 'lucide-react';
-import { MOCK_TEMPLATES, type MockTemplate } from '@/src/data/mockTemplates';
+import type { MockTemplate } from '@/src/data/mockTemplates';
 import { listSavedTemplates, deleteSavedTemplate, getCategoryIcon, listTemplateCategories, saveTemplateCategories, saveTemplateIcon, DEFAULT_TEMPLATE_CATEGORIES, type SavedTemplate } from '@/src/utils/templateStorage';
 import type { Product } from '@/src/store/useProductStore';
 import { useProductStore } from '@/src/store/useProductStore';
@@ -105,17 +105,6 @@ const dispatchReplaceText = (id: string, text: string) => {
   window.dispatchEvent(new CustomEvent('editor:replace-text', { detail: { id, text } }));
 };
 
-/** Preview gráfica para presets y plantillas antiguas sin render persistido. */
-function TemplateGraphicPreview({ name, emoji, accent }: { name: string; emoji: string; accent: string }) {
-  return (
-    <div className={`relative aspect-square overflow-hidden bg-gradient-to-br ${accent}`}>
-      <span className="absolute -left-5 -top-5 h-16 w-16 rounded-full bg-white/40 blur-sm" />
-      <span className="absolute -bottom-7 -right-4 h-20 w-20 rounded-full border-[10px] border-white/40" />
-      <div className="relative flex h-full flex-col items-center justify-center gap-1.5 px-2 text-center"><span className="text-5xl drop-shadow-sm transition duration-300 group-hover:scale-110 group-hover:rotate-6">{emoji}</span><span className="max-w-full truncate rounded-md bg-white/55 px-1.5 py-0.5 text-[9px] font-bold text-slate-700 backdrop-blur">{name}</span></div>
-    </div>
-  );
-}
-
 export default function SidebarPanel({ product, canManageTemplates = false }: { product?: Product; canManageTemplates?: boolean }) {
   const catalogProducts = useProductStore((state) => state.products);
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
@@ -215,12 +204,8 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
     ])),
   ];
 
-  // Lista combinada: mocks de prueba + plantillas guardadas en localStorage
-  // (TODO: cuando exista BD, MOCK_TEMPLATES se sustituye por GET /api/templates
-  // y savedTemplates se refresca desde la misma fuente).
-  const allTemplates: Array<MockTemplate & { saved?: SavedTemplate }> = [
-    ...MOCK_TEMPLATES,
-    ...savedTemplates.map((saved) => ({
+  // En la galería pública solo se muestran plantillas creadas y guardadas.
+  const allTemplates: Array<MockTemplate & { saved: SavedTemplate }> = savedTemplates.map((saved) => ({
       id: saved.id,
       name: saved.name,
       description: `Diseño guardado · ${saved.templateJSON.objects?.length ?? 0} elementos`,
@@ -230,8 +215,7 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
       accent: 'from-slate-100 to-slate-200',
       templateJSON: saved.templateJSON,
       saved,
-    })),
-  ];
+    }));
 
   // Compatibilidad nueva: una plantilla puede apuntar a productos/categorías
   // explícitos. Las antiguas conservan su regla productType; las de código son universales.
@@ -783,34 +767,28 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
                 <button
                   type="button"
                   onClick={() => handleSelectTemplate(template)}
+                  aria-label={`Usar plantilla ${template.name}`}
                   className="block w-full text-left"
                 >
                 {(() => {
-                  const categoryIcon = template.saved ? getCategoryIcon(template.saved.category) : template.emoji;
-                  const previewIcon =
-                    categoryIcon !== '⭐' ? categoryIcon : template.saved?.icon ?? template.emoji;
-                  // Sólo una plantilla personalizada que ya tiene render
-                  // compuesto muestra producto. Los presets y datos antiguos
-                  // conservan una preview gráfica; así no se inyecta el mockup
-                  // en las tarjetas superiores ni se muestran capturas negras.
-                  if (template.saved?.previewUrl && (template.saved.previewVersion === 2 || template.saved.previewVersion === 3)) {
-                    return (
-                      <img
-                        src={template.saved.previewUrl}
-                        alt={template.name}
-                        className={`aspect-square w-full bg-slate-50 ${template.saved.previewVersion === 3 ? 'object-contain' : 'object-cover'}`}
-                      />
-                    );
-                  }
-                  return <TemplateGraphicPreview name={template.name} emoji={previewIcon} accent={template.accent} />;
+                  const savedProductPreview = template.saved?.previewUrl
+                    && (template.saved.previewVersion === 2 || template.saved.previewVersion === 3)
+                    ? template.saved.previewUrl
+                    : '';
+                  const productImage = savedProductPreview || product?.views[0]?.mockupUrl || '';
+                  return productImage ? (
+                    <img
+                      src={productImage}
+                      alt={product?.name ?? ''}
+                      crossOrigin="anonymous"
+                      className="aspect-square w-full scale-110 bg-slate-50 object-contain p-0"
+                    />
+                  ) : (
+                    <div className="aspect-square w-full bg-slate-50" aria-hidden="true" />
+                  );
                 })()}
-                <div className="px-3 py-2.5">
-                  <p className="truncate text-sm font-semibold text-slate-800">{template.name}</p>
-                  <p className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-slate-500">{template.description}</p>
-                  {template.productType && normalizeProductType(template.productType) === normalizeProductType(currentProductType) && (
-                    <span className="mt-2 inline-flex max-w-full truncate rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">Para {product?.category || 'este producto'}</span>
-                  )}
-                  <span className="mt-2 block text-[10px] font-bold text-violet-600 transition">Usar plantilla →</span>
+                <div className="px-3 py-3">
+                  <span className="block text-center text-sm font-bold text-violet-600 transition">Usar plantilla →</span>
                 </div>
                 </button>
               </div>
@@ -819,8 +797,8 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
             </div>
           </div>
 
-          {/* Las plantillas guardadas ya viven en la lista principal de tarjetas
-              (allTemplates = mocks + localStorage), así que no hay sección
+          {/* Las plantillas guardadas ya viven en la lista principal de tarjetas,
+              así que no hay sección
               redundante de texto plano abajo. La eliminación se hace desde los
               botones 🗑️ de cada tarjeta. */}
           <p className="text-[11px] italic text-slate-400">
