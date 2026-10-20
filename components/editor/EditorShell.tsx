@@ -173,7 +173,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
         </div>
 
         {/* Canvas Central (Lienzo) */}
-        <main className={`relative h-full min-w-0 flex-1 overflow-hidden bg-[#f1edf7] p-2 xl:p-3 ${activeStep === 'design' ? 'grid grid-cols-1 gap-2 xl:grid-cols-[minmax(0,0.6fr)_minmax(0,1.4fr)] xl:gap-3' : 'flex items-center justify-center'}`}>
+        <main className={`relative h-full min-w-0 flex-1 overflow-hidden bg-[#f8f5fb] p-2 xl:p-3 ${activeStep === 'design' ? 'grid grid-cols-1 gap-2 xl:grid-cols-[minmax(0,0.6fr)_minmax(0,1.4fr)] xl:gap-3' : 'flex items-center justify-center'}`}>
           {activeStep === 'design' && <div key={currentProduct.id} className="hidden min-h-0 min-w-0 xl:block"><Product3DViewer key={currentProduct.id} product={currentProduct} componentColors={componentColors} enabledMeshNames={enabledComponentMeshes} /></div>}
           <section className={`relative min-h-0 min-w-0 overflow-hidden ${activeStep === 'design' ? '' : 'h-full w-full'}`}>
           <EditorCanvas

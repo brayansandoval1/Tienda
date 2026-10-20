@@ -13,6 +13,8 @@ export type DesignDraft = {
   views: Record<string, string>;
   /** JSON completo de la vista actualmente abierta. */
   canvasJSON: Record<string, unknown>;
+  /** Miniaturas del producto con el diseño aplicado, una por vista. */
+  thumbnails?: Record<string, string>;
   /** Imágenes compartidas una sola vez entre las vistas del borrador. */
   assets?: Record<string, string>;
 };

@@ -2440,12 +2440,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           mockups.forEach((mockup: any) => mockup.set('excludeFromExport', false));
           try {
             const thumbnail = c.toDataURL({ format: 'png', multiplier: 0.25 });
-            setViewThumbnails((current) => {
-              if (current[viewId] === thumbnail) return current;
-              const next = { ...current, [viewId]: thumbnail };
+            if (viewThumbnailsRef.current[viewId] !== thumbnail) {
+              const next = { ...viewThumbnailsRef.current, [viewId]: thumbnail };
               viewThumbnailsRef.current = next;
-              return next;
-            });
+              setViewThumbnails(next);
+            }
           } finally {
             mockups.forEach((mockup: any, index: number) => mockup.set('excludeFromExport', originalExportFlags[index]));
           }
@@ -2671,8 +2670,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // Persistir la vista de origen antes de iniciar cargas asíncronas. No
         // vaciamos el canvas aún: así el diseño sigue visible mientras prepara
         // el mockup y los objetos de destino.
-        flushDraftSave();
         captureViewThumbnail(currentViewIdRef.current, true);
+        flushDraftSave();
         canvasDataRef.current[currentViewIdRef.current] = snapshotCurrentObjects();
         viewObjectsRef.current[currentViewIdRef.current] = c.getObjects()
           .filter((obj: any) => !obj.isMockup && !obj.isGuide && !obj.isGuideLine && !obj.isDesignBackground);
@@ -2782,6 +2781,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           currentViewId: currentViewIdRef.current,
           views,
           canvasJSON,
+          thumbnails: { ...viewThumbnailsRef.current },
         };
         publish3DViewSnapshots();
         if (saveDraft(draft)) {
@@ -2854,6 +2854,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         } else {
           await restoreDraftCanvas(draft.canvasJSON);
         }
+        const restoredThumbnails = Object.fromEntries(
+          Object.entries(draft.thumbnails ?? {}).filter(([viewId, thumbnail]) =>
+            activeProduct.views.some((view) => view.id === viewId) && typeof thumbnail === 'string' && thumbnail.startsWith('data:image/'),
+          ),
+        );
+        viewThumbnailsRef.current = restoredThumbnails;
+        setViewThumbnails(restoredThumbnails);
         // `loadFromJSON` limpia la instancia de Fabric. Aunque se reinserten
         // las referencias de la base, una carga de mockup previa puede seguir
         // en vuelo (por ejemplo, tras vaciar la caché del navegador). Volver a
@@ -2870,12 +2877,16 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           activeOptionSelections,
         );
         await loadResolvedViewBackground(restoredView, restoredResolvedView);
+        // setupProduct captures the product before the draft is restored.
+        // Refresh the active preview after the restored artwork is visible.
+        captureViewThumbnail(currentViewIdRef.current, true);
         publish3DViewSnapshots();
         historyRef.current = [snapshotCurrentObjects()];
         redoStackRef.current = [];
         updateHistoryButtons();
         isHydratingDraftRef.current = false;
         setDraftStatus('saved');
+        persistDraft();
         traceDesignFlow('draft:restored', { updatedAt: draft.updatedAt, restoredViewId: currentViewIdRef.current });
         window.dispatchEvent(new CustomEvent('editor:canvas-usage-refresh'));
       };
@@ -5955,7 +5966,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
   return (
     <div
-      className="relative mx-auto flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-slate-100/50"
+      className="relative mx-auto flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f8f5fb]"
     >
       {productViews.length > 1 && !isPanoramaActive && (
         <nav aria-label="Vistas del producto" className="z-20 flex w-full shrink-0 justify-center px-2 py-2">

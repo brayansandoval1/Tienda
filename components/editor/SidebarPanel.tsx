@@ -1101,7 +1101,7 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
       <div className="order-3 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
         <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Archivos subidos</p>
         <label htmlFor="upload-image" className="flex cursor-pointer items-center justify-between rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-white">
-          <span>Subir imagen</span>
+          <span>Sube tu diseño</span>
           <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white text-lg text-slate-700 shadow-sm">+</span>
         </label>
         <input
