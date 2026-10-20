@@ -158,7 +158,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
     <div className="flex h-screen w-screen min-h-0 flex-col overflow-hidden bg-[#f8f5fb] text-slate-900">
       <CartDrawer />
       <header className="z-40 h-14 shrink-0 px-5 lg:px-7">
-        <Header activeStep={activeStep} onStepChange={handleStepChange} canContinue={quantityValid} />
+        <Header activeStep={activeStep} onStepChange={handleStepChange} canContinue={quantityValid} productId={currentProduct.id} />
       </header>
 
       {/* Franja de herramientas contextual: barra blanca de ancho completo y fija,
@@ -168,7 +168,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
 
       <div className="flex-1 flex flex-row overflow-hidden relative">
         {/* Panel Izquierdo: herramientas de diseño */}
-        <div className={`${activeStep === 'design' ? 'w-[clamp(250px,16vw,320px)]' : 'w-0 border-r-0'} h-full min-w-0 shrink-0 bg-[#fcfaff] border-r border-slate-200 flex flex-col z-10 overflow-hidden transition-[width] duration-200`} aria-hidden={activeStep !== 'design'}>
+        <div className={`${activeStep === 'design' ? 'w-[clamp(270px,17vw,340px)]' : 'w-0 border-r-0'} h-full min-w-0 shrink-0 bg-[#fcfaff] border-r border-slate-200 flex flex-col z-10 overflow-hidden transition-[width] duration-200`} aria-hidden={activeStep !== 'design'}>
           <SidebarPanel product={currentProduct} canManageTemplates={canManageTemplates} />
         </div>
 

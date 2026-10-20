@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ChevronRight, Download, Save } from 'lucide-react';
+import Link from 'next/link';
+import { ArrowLeft, ChevronRight, Download, Save, X } from 'lucide-react';
 import type { SaveDesignResult } from '@/src/types/editorDesign';
 
 export type EditorStep = 'design' | 'options' | 'review';
 
-export default function Header({ activeStep, onStepChange, canContinue = true }: { activeStep: EditorStep; onStepChange: (step: EditorStep) => void; canContinue?: boolean }) {
+export default function Header({ activeStep, onStepChange, canContinue = true, productId }: { activeStep: EditorStep; onStepChange: (step: EditorStep) => void; canContinue?: boolean; productId?: string }) {
+  const [exitMenuOpen, setExitMenuOpen] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveMessage, setSaveMessage] = useState('');
   const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'done' | 'error'>('idle');
@@ -66,15 +68,31 @@ export default function Header({ activeStep, onStepChange, canContinue = true }:
           <button className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-800 transition hover:bg-slate-100" aria-label="Cerrar editor">
             ✕
           </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saveState === 'saving'}
-            className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700 disabled:cursor-wait disabled:opacity-60"
-          >
-            <Save size={16} />
-            {saveState === 'saving' ? 'Guardando…' : 'Guardar diseño'}
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              aria-expanded={exitMenuOpen}
+              aria-haspopup="dialog"
+              onClick={() => setExitMenuOpen((open) => !open)}
+              className="inline-flex items-center gap-2 rounded-full bg-cyan-100 px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-cyan-200"
+            >
+              <X size={17} /> Guardar y salir
+            </button>
+            {exitMenuOpen && (
+              <div role="dialog" aria-label="Guardar y salir" className="absolute left-0 top-[calc(100%+12px)] z-[100] w-72 rounded-2xl border border-slate-100 bg-white p-4 text-slate-900 shadow-xl sm:w-80">
+                <span className="absolute -top-2 left-7 h-4 w-4 rotate-45 border-l border-t border-slate-100 bg-white" />
+                <h2 className="relative mb-2 text-base font-bold">¿A dónde quieres ir?</h2>
+                <button type="button" onClick={() => setExitMenuOpen(false)} className="relative flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left text-sm hover:bg-slate-50">
+                  <ArrowLeft size={19} /> Seguir diseñando
+                </button>
+                {productId && <Link href={`/editor/${productId}`} onClick={() => setExitMenuOpen(false)} className="relative flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left text-sm hover:bg-slate-50"><ArrowLeft size={19} /> Volver a este producto</Link>}
+                <Link href="/#catalogo" onClick={() => setExitMenuOpen(false)} className="relative flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left text-sm hover:bg-slate-50"><ArrowLeft size={19} /> Explorar el catálogo</Link>
+                <Link href="/disenos-guardados" onClick={() => setExitMenuOpen(false)} className="relative flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left text-sm hover:bg-slate-50"><ArrowLeft size={19} /> Ir a mis diseños guardados</Link>
+                <p className="relative mt-2 border-t border-slate-100 pt-3 pl-8 text-xs leading-5 text-slate-500">Tu trabajo se guarda automáticamente en este navegador.</p>
+                <button type="button" onClick={handleSave} disabled={saveState === 'saving'} className="relative mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"><Save size={15} /> {saveState === 'saving' ? 'Preparando…' : 'Preparar archivos para imprenta'}</button>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
