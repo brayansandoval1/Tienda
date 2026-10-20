@@ -371,7 +371,7 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
    * mismo `templateJSON` al evento 'editor:apply-template'.
    */
   const handleSelectTemplate = (template: MockTemplate) => {
-    console.log('📐 [PLANTILLA] Aplicando:', template.name);
+
     window.dispatchEvent(
       new CustomEvent('editor:apply-template', {
         detail: { templateId: template.id, objects: template.templateJSON.objects },
@@ -517,7 +517,7 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
             <input value={templateSearch} onChange={(event) => setTemplateSearch(event.target.value)} placeholder="Buscar plantillas" className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-100" />
           </label>
 
-          
+
           {canManageTemplates && <>
           {/* Modo Administrador: guardar/actualizar el diseño actual como plantilla.
               TODO: cuando exista BD, este dispatch pasa a POST (o PUT si es edición). */}
@@ -1144,7 +1144,7 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
                     if (exists) return prev;
                     return [...prev, dataUrl];
                   });
-                  
+
                   // ✅ 2. LUEGO agregar al canvas
                   window.dispatchEvent(new CustomEvent('editor:add-image', { detail: { dataUrl } }));
                 }
@@ -1177,9 +1177,9 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
                 key={item.label}
                 type="button"
                 onClick={() => {
-                  console.log("Disparando forma:", item.shape);
-                  window.dispatchEvent(new CustomEvent('editor:add-shape', { 
-                    detail: { type: item.shape } 
+
+                  window.dispatchEvent(new CustomEvent('editor:add-shape', {
+                    detail: { type: item.shape }
                   }));
                 }}
                 className="flex min-h-12 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 text-left text-xs font-medium text-slate-700 transition hover:border-violet-300 hover:bg-white hover:shadow-sm"

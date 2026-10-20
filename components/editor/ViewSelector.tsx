@@ -1,9 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, LockKeyhole, PackageCheck, ShieldCheck, ShoppingBag } from 'lucide-react';
+import { CheckCircle2, LockKeyhole, PackageCheck, ShieldCheck, ShoppingBag, Sparkles } from 'lucide-react';
 import { type Product, type ProductOptionValue } from '@/src/store/useProductStore';
-import ProductSelector from '@/components/editor/ProductSelector';
 import ComponentColorsPanel from '@/components/editor/ComponentColorsPanel';
 import { getEffectiveMockup } from '@/src/utils/getEffectiveMockup';
 import type { Addon } from '@/types/addon';
@@ -41,6 +40,9 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
     setQuantity(Math.max(1, product.pricingSchema?.minimumQuantity ?? 1));
     setSelectedAddonIds([]);
     setAddonTexts({});
+    setUsedViewIds([]);
+    setCoveragePercentage(0);
+    setBackgroundCoversArea(false);
     getAddonsByProduct(product.id, product.availableAddonIds).then(setAvailableAddons).catch((error) => { console.error('No se pudieron cargar los extras del producto:', error); setAvailableAddons([]); });
     setSelectedColorId(product.colors?.[0]?.id ?? product.views[0]?.colorVariants?.[0]?.id ?? '');
 
@@ -77,7 +79,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
   }, [panel]);
 
   useEffect(() => {
-    console.log('📌 [UI OPTIONS] Opciones seleccionadas actuales:', selectedOptions);
+
   }, [selectedOptions]);
 
   useEffect(() => {
@@ -105,23 +107,16 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
   }, []);
 
   const handleOptionSelect = (optionId: string, value: ProductOptionValue) => {
-    console.log('👇 [UI OPTIONS] Clic detectado en:', {
-      groupName: optionId,
-      value,
-    });
+
+
     // Una URL vacía no es un mockup válido: se elimina del valor seleccionado
     // para que el resolvedor vuelva a la vista base en lugar de reutilizar la
     // imagen de una variante previa.
     const selectedValue = value.mockupUrl?.trim()
       ? value
       : { ...value, mockupUrl: undefined };
-    console.log('🔍 [OPCIÓN SELECCIONADA]:', {
-      optionId,
-      selectedValueName: selectedValue.label,
-      hasCustomViews: Boolean(selectedValue.views?.length),
-      customMockupUrl: selectedValue.mockupUrl,
-      customPrintArea: selectedValue.printArea,
-    });
+
+
     // Sustituye exclusivamente el valor de su categoría; nunca bloquea ni
     // alterna implícitamente el valor que ya estaba activo.
     // Reinsertar la clave al final conserva un único valor por categoría y
@@ -131,12 +126,12 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
     const newSelections: Record<string, ProductOptionValue> = {
       [optionId]: selectedValue,
     };
-    console.log('🔄 [UI OPTIONS] Nuevas opciones que se enviarán al estado:', newSelections);
+
     setSelectedOptions((currentSelections) => {
       const updated: Record<string, ProductOptionValue> = {
         [optionId]: selectedValue,
       };
-      console.log('🔄 [NUEVO ESTADO OPCIONES]:', updated);
+
       return updated;
     });
     const currentViewId = product.views[activeViewIndex]?.id ?? product.views[0]?.id ?? 'front';
@@ -187,6 +182,15 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
   const selectedAddons = useMemo(() => availableAddons.filter((addon) => selectedAddonIds.includes(addon.id)).map((addon) => ({ id: addon.id, name: addon.name, price: addon.price, perSide: addon.perSide, ...(addon.requiresInput ? { userText: addonTexts[addon.id] ?? '' } : {}) })), [availableAddons, selectedAddonIds, addonTexts]);
   const usedExtraViews = usedViewIds.filter((viewId) => viewId !== product.views[0]?.id);
   const isDoubleSidedUsed = usedExtraViews.length > 0 && usedViewIds.length > 1;
+  const designedViews = product.views.filter((view) => usedViewIds.includes(view.id));
+  const designProgress = product.views.length
+    ? Math.round((designedViews.length / product.views.length) * 100)
+    : 0;
+  const designInsight = designedViews.length === 0
+    ? 'Empieza con una imagen o texto. El diseño se conserva al recorrer las vistas.'
+    : designedViews.length < product.views.length
+      ? `Tu diseño está en ${designedViews.map((view) => view.label || view.name).join(', ')}. Puedes completar las otras vistas si quieres imprimir más caras.`
+      : 'Tu diseño ya está presente en todas las vistas. Revisa cada cara antes de continuar.';
   const selectedVariant = useMemo(() => selectedValues.length > 0 ? {
     id: selectedValues[selectedValues.length - 1].id,
     variantIds: selectedValues.map((value) => value.id),
@@ -285,7 +289,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
 
   // Depuración: verifica cuántas variantes reales recibe el frontend por grupo.
   (product.options ?? []).forEach((option) => {
-    console.log(`[DEBUG] Variantes de "${option.name}" (${option.id}):`, valuesForOption(option));
+
   });
 
   return (
@@ -450,6 +454,36 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
               </div>
             </details>
           </div>
+          {workflowStep === 'design' && <section className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 to-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="grid h-8 w-8 place-items-center rounded-xl bg-indigo-100 text-indigo-700"><Sparkles size={16} /></span>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Estado del diseño</h3>
+                  <p className="text-xs text-slate-500">{designedViews.length} de {product.views.length} vistas con diseño</p>
+                </div>
+              </div>
+              <span className="text-xs font-semibold tabular-nums text-indigo-700">{designProgress}%</span>
+            </div>
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-indigo-100" role="progressbar" aria-label="Progreso de vistas diseñadas" aria-valuemin={0} aria-valuemax={100} aria-valuenow={designProgress}>
+              <div className="h-full rounded-full bg-indigo-600 transition-[width]" style={{ width: `${designProgress}%` }} />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {product.views.map((view) => {
+                const hasDesign = usedViewIds.includes(view.id);
+                return <button
+                  key={view.id}
+                  type="button"
+                  onClick={() => window.dispatchEvent(new CustomEvent('editor:request-view', { detail: { viewId: view.id } }))}
+                  className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${hasDesign ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100' : 'border-slate-200 bg-white text-slate-500 hover:border-indigo-200 hover:text-indigo-700'}`}
+                >
+                  {hasDesign ? <CheckCircle2 size={12} /> : <span className="h-2 w-2 rounded-full border border-current opacity-50" />}
+                  {view.label || view.name}
+                </button>;
+              })}
+            </div>
+            <p className="mt-3 text-xs leading-5 text-slate-600">{designInsight}</p>
+          </section>}
         </div>
       ) : (
         <div className="space-y-4">
@@ -468,11 +502,6 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
         </div>
       )}
 
-      {/* Productos relacionados / modelos de funda (selector compacto) */}
-      <div className="mt-5 border-t border-slate-100 pt-4">
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Productos relacionados</p>
-        <ProductSelector selectedId={product.id} />
-      </div>
       </div>
     </aside>
   );

@@ -47,12 +47,6 @@ export function getEffectiveMockup(
 ): EffectiveMockupResult {
   const currentView = product.views.find((view) => view.id === currentViewId) ?? product.views[0];
   const safeViewId = currentView?.id ?? currentViewId;
-  console.log('🔍 [RESOLVER MOCKUP - INICIO]:', {
-    activeViewId: currentView?.id,
-    activeViewName: currentView?.name,
-    selectedOptionValues: Object.values(selectedOptions),
-  });
-
   const defaultPrintArea: ProductView['printArea'] = currentView?.printArea ?? {
     x: 0,
     y: 0,
@@ -62,15 +56,6 @@ export function getEffectiveMockup(
 
   const resolveFromValue = (value: ProductOptionValue): EffectiveMockupResult | null => {
     const keyedConfig = resolveViewConfig(value, currentView, product.views);
-    console.log('🔍 [RESOLVER MOCKUP - INICIO]:', {
-      activeViewId: currentView?.id,
-      activeViewName: currentView?.name,
-      selectedOptionValue: value,
-      availableViewsConfigKeys: [
-        ...(value.views?.map((view) => view.viewId) ?? []),
-        ...Object.keys(value.mockupUrls ?? {}),
-      ],
-    });
     const currentViewName = currentView?.name.trim().toLowerCase();
     const matchedView = value.views?.find((view) => view.viewId === safeViewId)
       ?? value.views?.find((view) => currentViewName && view.name.trim().toLowerCase() === currentViewName)
@@ -80,11 +65,6 @@ export function getEffectiveMockup(
       || matchedMockup
       || value.mockupUrls?.[safeViewId]?.trim();
     const finalMockup = optionViewImage || currentView?.mockupUrl?.trim() || '';
-    console.log('🔍 [RESOLVER MOCKUP - RESULTADO]:', {
-      matchedImage: optionViewImage,
-      fallbackImage: currentView?.mockupUrl,
-      finalRenderedUrl: finalMockup,
-    });
     if (keyedConfig?.mockupUrl?.trim()) {
       return {
         mockupUrl: keyedConfig.mockupUrl.trim(),

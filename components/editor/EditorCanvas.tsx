@@ -193,6 +193,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   const viewThumbnailsRef = useRef<Record<string, string>>({});
   const thumbnailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushDraftSaveRef = useRef<(() => void) | null>(null);
   const isHydratingDraftRef = useRef(true);
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [isExporting, setIsExporting] = useState(false);
@@ -207,11 +208,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   // reconstruyen su mockup y guía. Esto evita renderizados sobre un contexto
   // ya destruido por React.
   useEffect(() => {
-    console.log('📌 [EDITOR - PRODUCTO BASE CARGADO]:', {
-      id: initialProduct?.id,
-      name: initialProduct?.name,
-      baseViews: initialProduct?.views,
-    });
+
+
     setupProductRef.current?.(initialProduct);
   }, [initialProduct]);
 
@@ -232,6 +230,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
     if (!canvasRef.current) return;
 
     let isMounted = true;
+    const flushDraftOnRequest = () => flushDraftSaveRef.current?.();
+    const handleRequestedView = (event: Event) => {
+      const viewId = (event as CustomEvent<{ viewId?: string }>).detail?.viewId;
+      if (viewId) switchViewRef.current?.(viewId);
+    };
     // Referencia al "zoom to fit" definido dentro de la carga asíncrona de
     // Fabric, para poder reaplicarlo desde el listener de resize y limpiarlo.
     let fitOnResize: (() => void) | null = null;
@@ -785,11 +788,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const objectType = String((object as any).type).toLowerCase();
         if (PRESERVE_ASPECT_TYPES.includes(objectType)) {
           applyAspectSafeControls(object as any);
-          // Un objeto heredado de un borrador/plantilla puede venir ya
-          // estirado (así se guardaron las imágenes deformadas). Se corrige
-          // al reenlivenarlo para que a partir de ese momento la imagen
-          // vuelva a ser siempre fiel a su proporción original.
-          if (objectType === 'image') enforceUniformScale(object as any);
+          // Reaplicar controles no debe cambiar la geometría serializada. La
+          // escala sólo se normaliza durante una transformación interactiva.
         }
         if (!panoramaModeRef.current) applyPrintAreaClip(object as any);
         return object;
@@ -833,7 +833,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         updateHistoryButtons();
       };
 
-            
+
       // ── Panel de edición rápida (Smart Inputs) ────────────────────────────
       // Cada objeto de texto recibe un ID de sesión (__sid). La barra lateral
       // escucha 'editor:smart-inputs' para renderizar un input por texto y
@@ -916,8 +916,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         emitSmartInputs();
       };
 
-      
-
 
       let activeProduct: Product = initialProduct;
       let activeView: ProductView = initialProduct.views[0];
@@ -940,6 +938,40 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         viewId: string; sourceX: number; sourceY: number; sourceWidth: number;
         sourceHeight: number; destX: number; destWidth: number; scale: number;
       }> = [];
+
+      const traceDesignFlow = (stage: string, detail: Record<string, unknown> = {}) => {
+        if (process.env.NODE_ENV !== 'development') return;
+        const objects = fabricCanvasRef.current?.getObjects?.()
+          .filter((object: any) => !object.isMockup && !object.isGuide && !object.isGuideLine
+            && !object.isCropOverlay && !object.isDesignBackground && !object.isPanoramaBackground)
+          .map((object: any) => ({
+            id: object.id ?? null,
+            logicalId: object.panoramaDesignId ?? null,
+            type: object.type,
+            left: Number((Number(object.left) || 0).toFixed(1)),
+            top: Number((Number(object.top) || 0).toFixed(1)),
+            scaleX: Number((Number(object.scaleX) || 1).toFixed(3)),
+            scaleY: Number((Number(object.scaleY) || 1).toFixed(3)),
+          })) ?? [];
+        const idCounts = new Map<string, number>();
+        const logicalIdCounts = new Map<string, number>();
+        objects.forEach((object: any) => {
+          const id = String(object.id ?? '(missing)');
+          idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
+          const logicalId = String(object.logicalId ?? '');
+          if (logicalId) logicalIdCounts.set(logicalId, (logicalIdCounts.get(logicalId) ?? 0) + 1);
+        });
+        console.info('[design-flow]', stage, {
+          productId: activeProduct.id,
+          viewId: currentViewIdRef.current,
+          mode: panoramaModeRef.current ? 'panorama' : '2d',
+          count: objects.length,
+          duplicateIds: [...idCounts.entries()].filter(([, count]) => count > 1),
+          duplicateLogicalIds: [...logicalIdCounts.entries()].filter(([, count]) => count > 1),
+          objects,
+          ...detail,
+        });
+      };
 
       // Dimensiones LÓGICAS del plano de trabajo (800×800). Con el "zoom to
       // fit" activo, canvas.getWidth() devuelve píxeles de pantalla
@@ -1019,12 +1051,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             printArea: hasValidPrintArea ? resolvedView.printArea! : DEFAULT_PANORAMIC_PRINT_AREA,
             ...(!hasValidPrintArea ? { printAreaUnit: 'percent' as const } : {}),
           };
-          console.log('🔍 [RESOLVIENDO VISTA]:', {
-            vistaIndicePedido: currentViewIndex,
-            baseViewEsperada: baseView,
-            opcionesSeleccionadas: selectedOptionsMap,
-            vistaResueltaFinal: safeResolvedView,
-          });
+
+
           return safeResolvedView;
         };
 
@@ -1087,7 +1115,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             // `null`/cadena vacía significa explícitamente: no sustituir esta
             // cara. Se ignora la variante y se permite el fallback base.
             if (!matchedView || (!matchedView.mockupUrl && !matchedView.printArea && !matchedView.printArea3D)) continue;
-            console.log('✅ [RESOLVER VISTA] Usando vista dinámica específica:', matchedView);
+
             return logResolvedView({
               mockupUrl: matchedView.mockupUrl || baseView.mockupUrl,
               printArea: matchedView.printArea || baseView.printArea,
@@ -1097,7 +1125,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           }
         }
 
-        console.log('🏠 [RESOLVER VISTA] Usando vista BASE del producto:', baseView);
+
         const selectedVariant = baseView.colorVariants?.find(
           (variant) => variant.id === selectedColorIdsRef.current[baseView.id],
         );
@@ -1273,20 +1301,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       };
       const setUnrestrictedDesignMode = (enabled: boolean) => {
         if (unrestrictedDesignRef.current === enabled && panoramaModeRef.current) {
-          console.debug('[EditorCanvas][unrestricted] unchanged during panorama; skip persist', {
-            enabled,
-            viewId: currentViewIdRef.current,
-            canvasObjectCount: fabricCanvasRef.current?.getObjects?.().filter(isDraftDesignObject).length ?? 0,
-          });
           return;
         }
-        console.info('[EditorCanvas][unrestricted] toggle', {
-          from: unrestrictedDesignRef.current,
-          to: enabled,
-          panorama: panoramaModeRef.current,
-          viewId: currentViewIdRef.current,
-          canvas: summarizeDesignObjects(fabricCanvasRef.current?.getObjects?.() ?? []),
-        });
+        traceDesignFlow('unrestricted:toggle', { from: unrestrictedDesignRef.current, to: enabled });
         unrestrictedDesignRef.current = enabled;
         const c = fabricCanvasRef.current;
         if (!c) return;
@@ -1306,12 +1323,15 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const clipAddedDesignObject = (event: any) => {
         const addedObject = event?.target;
         if (addedObject && !addedObject.isGuide && !addedObject.isMockup && !addedObject.isDesignBackground) {
-          console.info('[EditorCanvas][object-added]', {
-            mode: panoramaModeRef.current ? 'panorama' : unrestrictedDesignRef.current ? 'unrestricted' : 'view',
-            viewId: currentViewIdRef.current,
-            object: summarizeDesignObjects([addedObject])[0],
-            designObjectCount: canvas.getObjects().filter(isDraftDesignObject).length,
-          });
+          const occupiedIds = new Set(canvas.getObjects()
+            .filter((object: any) => object !== addedObject && !object.isGuide && !object.isMockup)
+            .map((object: any) => String(object.id ?? ''))
+            .filter(Boolean));
+          if (!addedObject.id || occupiedIds.has(String(addedObject.id))) {
+            addedObject.id = crypto.randomUUID();
+          }
+          if (!addedObject.panoramaDesignId) addedObject.panoramaDesignId = addedObject.id;
+          traceDesignFlow('object:added', { object: summarizeDesignObjects([addedObject])[0] });
         }
         if (panoramaModeRef.current) {
           const object = addedObject;
@@ -1379,7 +1399,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             nonScaling: true,
           }),
         });
-        console.log('📐 [MOCKUP AJUSTADO]', { naturalWidth, naturalHeight, scale, renderedBounds: activeMockupBounds });
+
       };
 
       const loadProductMockup = async (view: ProductView, mockupUrlOverride?: string) => {
@@ -1408,7 +1428,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           const applyMockupImage = async (img: any) => {
             try {
             if (requestId !== currentLoadRequestId.current || renderToken !== currentRenderToken) {
-                console.log('⛔ Petición obsoleta descartada:', mockupUrl);
+
                 resolve();
                 return;
               }
@@ -1424,23 +1444,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
                 return;
               }
 
-              console.log('5. Imagen cargada con éxito en Fabric.js. Renderizando canvas...', { mockupUrl });
+
               const rawWidth = img.width;
               const rawHeight = img.height;
-              console.log('📸 MOCKUP CARGADO CON ÉXITO:', {
-                url: mockupUrl,
-                dimensiones: `${rawWidth}x${rawHeight}`,
-              });
+
 
               const mockupScale = Math.min(ADMIN_BASE_SIZE / rawWidth, ADMIN_BASE_SIZE / rawHeight);
-              console.log('📐 DIAGNÓSTICO DE ESCALADO MOCKUP:', {
-                url: mockupUrl,
-                dimensionesOriginales: `${rawWidth}x${rawHeight}`,
-                tamanoCanvas: `${ADMIN_BASE_SIZE}x${ADMIN_BASE_SIZE}`,
-                escalaCalculada: mockupScale,
-                anchoFinalEnCanvas: rawWidth * mockupScale,
-                altoFinalEnCanvas: rawHeight * mockupScale,
-              });
+
 
               img.set({
                 lockMovementX: true,
@@ -1463,8 +1473,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
                 .filter((obj: any) => obj?.isMockup)
                 .forEach((obj: any) => canvas.remove(obj));
 
-              canvas.add(img);
-              img.sendToBack();
               // Flag propio para que guías/interactividad/exportación reconozcan
               // el mockup como base fija y no lo traten como objeto de usuario.
               // `isProductImage` es el alias canónico pedido para la exclusión
@@ -1472,8 +1480,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
               (img as any).isMockup = true;
               (img as any).isProductImage = true;
               (img as any).excludeFromExport = true;
+              // Fabric emite `object:added` dentro de add(). Marcar la imagen
+              // antes evita que clipAddedDesignObject le asigne identidad de
+              // diseño o aplique el recorte imprimible como si fuera arte.
+              canvas.add(img);
+              img.sendToBack();
 
-              console.log('✅ Mockup anclado como objeto base del escenario');
+
               setupSafeAreaAndClipping(view);
               canvas.renderAll();
               canvas.requestRenderAll();
@@ -1501,12 +1514,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           }
 
           try {
-            console.log('[EditorCanvas][mockup-load] start', {
-              viewId: view.id,
-              sourceLength: mockupUrl.length,
-              isEmbeddedDataUrl: mockupUrl.startsWith('data:'),
-              sourcePrefix: mockupUrl.slice(0, 48),
-            });
+
+
             const imageResult = (fabric.Image.fromURL as any)(
               mockupUrl,
               (img: any) => {
@@ -1559,11 +1568,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           printAreaUnit: 'percent',
         };
         activeView = resolvedCanvasView;
-        console.log('🎨 [VISTA RESUELTA -> FABRIC]:', {
-          viewId: resolvedCanvasView.id,
-          mockupUrl: resolvedView.mockupUrl,
-          printArea: resolvedView.printArea,
-        });
+
+
         await loadProductMockup(resolvedCanvasView, resolvedView.mockupUrl);
         setupSafeAreaAndClipping(resolvedCanvasView);
         // NO mover diseños al recargar el fondo: la zona segura de una
@@ -1602,7 +1608,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
        */
       // Manejador de variantes: reemplaza sólo el mockup de Fabric.
       const handleProductColorChange = async (variant: ColorVariant) => {
-        console.log('1. Color cliqueado:', variant);
+
         setSelectedColor(variant);
         const c = fabricCanvasRef.current;
         const nextSelectedColors = activeProduct.views.reduce<Record<string, string>>(
@@ -1613,7 +1619,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         setSelectedColorIds(nextSelectedColors);
         const mockupUrl = getColorMockupUrl(activeView, variant);
         const renderToken = ++currentRenderToken;
-        console.log('2. URL de la imagen a cargar:', mockupUrl, { viewId: activeView.id });
+
 
         if (!mockupUrl) {
           console.error('❌ ERROR: color.mockupUrl está vacío o indefinido', { variant, viewId: activeView.id });
@@ -1624,11 +1630,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           return;
         }
 
-        console.log('3. Reemplazando el fondo de Fabric con:', mockupUrl);
+
         try {
           await loadProductMockup(activeView, mockupUrl);
           if (renderToken !== currentRenderToken) {
-            console.log('⛔ Petición obsoleta descartada:', mockupUrl);
+
             return;
           }
 
@@ -1636,7 +1642,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           c.renderAll();
           c.requestRenderAll();
 
-          console.log('✅ Mockup de color actualizado correctamente', { mockupUrl, viewId: activeView.id });
+
         } catch (err) {
           console.error('❌ Error al cambiar el mockup de color:', err);
         }
@@ -1646,11 +1652,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       // con la vista que utiliza Fabric. Así las miniaturas nunca quedan con
       // el mockup anterior al cambiar una opción.
       const syncEditorWithVariant = (selections: Record<string, ProductOptionValue>, preferredValue?: ProductOptionValue) => {
-        console.log('🔁 [SYNC VARIANTE] Inicio:', {
-          activeViewId: currentViewIdRef.current,
-          selectedOptionIds: Object.fromEntries(Object.entries(selections).map(([optionId, value]) => [optionId, value.id])),
-          preferredValue: preferredValue?.label,
-        });
+
+
         activeOptionSelections = selections;
         const currentViewIndex = Math.max(0, baseProductViews.findIndex((view) => view.id === currentViewIdRef.current));
         const selectedValues = Object.values(selections);
@@ -1684,11 +1687,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // una variante global se usa su printArea opcional.
         activeOptionPrintArea = null;
         setProductViews(nextViews);
-        console.log('✅ [SYNC VARIANTE] Vistas activas actualizadas:', nextViews.map((view) => ({
-          id: view.id,
-          mockupUrl: view.mockupUrl,
-          printArea: view.printArea,
-        })));
+
+
         return { mockupUrl: resolvedCurrentView.mockupUrl, printArea: resolvedCurrentView.printArea };
       };
 
@@ -1723,7 +1723,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
           void loadProductMockup(targetView, incomingMockupUrl).then(() => {
             if (renderToken !== currentRenderToken) {
-              console.log('⛔ Petición obsoleta descartada:', incomingMockupUrl);
+
               return;
             }
             if (panoramaModeRef.current) return;
@@ -1737,7 +1737,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             // object:moving/scaled/rotating), decisión del usuario.
             c.renderAll();
             c.requestRenderAll();
-            console.log('✅ Canvas sincronizado correctamente con mockup resuelto:', incomingMockupUrl);
+
           });
           return;
         }
@@ -1747,11 +1747,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           const currentViewIndex = Math.max(0, baseProductViews.findIndex((view) => view.id === currentViewIdRef.current));
           const baseView = baseProductViews[currentViewIndex] || baseProductViews[0];
           const baseResolvedView = resolveCurrentViewData(baseProductViews, currentViewIndex, {});
-          console.log('🔄 Estado vacío detectado. Restaurando vista base en Fabric.js...', {
-            currentViewIndex,
-            baseView,
-            baseResolvedView,
-          });
+
+
           activeOptionSelections = {};
           activeOptionPrintArea = null;
           syncEditorWithVariant({});
@@ -1767,16 +1764,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (!synced) return;
         const mockupUrl = synced.mockupUrl;
         const renderToken = ++currentRenderToken;
-        console.log('🎨 [APLICANDO AL CANVAS]:', {
-          viewId: activeView.id,
-          mockupUrl,
-          printArea: synced.printArea,
-        });
-        console.log('🖼️ [CANVAS VARIANTE] Cargando fondo y zona segura:', {
-          viewId: activeView.id,
-          mockupUrl,
-          printArea: getPercentPrintArea(activeView),
-        });
+
+
         if (!mockupUrl) {
           activeOptionPrintArea = null;
           setupSafeAreaAndClipping(activeView);
@@ -1788,7 +1777,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         activeOptionPrintArea = synced.printArea ?? null;
         void loadProductMockup(activeView, mockupUrl).then(() => {
           if (renderToken !== currentRenderToken) {
-            console.log('⛔ Petición obsoleta descartada:', mockupUrl);
+
             return;
           }
           setupSafeAreaAndClipping(activeView);
@@ -1796,7 +1785,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           // variante solo recorta visualmente, jamás mueve el diseño.
           c.renderAll();
           c.requestRenderAll();
-          console.log('✅ Canvas sincronizado correctamente');
+
         });
       };
 
@@ -1815,11 +1804,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           const currentViewIndex = Math.max(0, baseProductViews.findIndex((view) => view.id === currentViewIdRef.current));
           const baseView = baseProductViews[currentViewIndex] || baseProductViews[0];
           const baseResolvedView = resolveCurrentViewData(baseProductViews, currentViewIndex, {});
-          console.log('🔄 Estado vacío detectado. Restaurando vista base en Fabric.js...', {
-            currentViewIndex,
-            baseView,
-            baseResolvedView,
-          });
+
+
           activeOptionPrintArea = null;
           syncEditorWithVariant({});
           if (fabricCanvasRef.current && baseView) void loadResolvedViewBackground(baseView, baseResolvedView);
@@ -2235,9 +2221,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         selectedObjects.forEach((object: any) => {
           if (String(object?.type).toLowerCase() !== 'image') return;
           applyAspectSafeControls(object);
-          // Imágenes que ya venían deformadas de un borrador o de un
-          // `setSrc` se enderezan al seleccionarlas.
-          enforceUniformScale(object);
           object.setCoords?.();
         });
       };
@@ -2253,22 +2236,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const scaleX = Number(object.scaleX || 0);
         const scaleY = Number(object.scaleY || 0);
         const transform = (canvas as any)._currentTransform;
-        console.log('[EditorCanvas] Diagnóstico de escala de imagen', {
-          phase,
-          id: object.id ?? object.data?.id ?? null,
-          control: transform?.corner ?? transform?.action ?? null,
-          sourceSize: { width: naturalWidth, height: naturalHeight },
-          scale: { x: scaleX, y: scaleY },
-          renderedSize: { width: Number(object.width || 0) * scaleX, height: Number(object.height || 0) * scaleY },
-          sourceAspectRatio: naturalHeight ? naturalWidth / naturalHeight : null,
-          renderedAspectRatio: naturalHeight && scaleY ? (naturalWidth * scaleX) / (naturalHeight * scaleY) : null,
-          scaleRatio: scaleY ? scaleX / scaleY : null,
-          noScaleCache: object.noScaleCache,
-          objectCaching: object.objectCaching,
-          hasClipPath: Boolean(object.clipPath),
-          centeredScaling: object.centeredScaling,
-          anchor: transform ? { originX: transform.originX, originY: transform.originY } : null,
-        });
+
+
       };
 
       const snapshotCurrentObjects = () => {
@@ -2277,10 +2246,18 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // Serializar directamente los objetos de diseño evita que Fabric
         // omita imágenes/capas que estén marcadas como excludeFromExport por
         // flujos auxiliares del mockup. Las guías y fondos se reconstruyen.
+        const usedIds = new Set<string>();
         const objects = c.getObjects()
           .filter((object: any) => !object.isMockup && !object.isGuide && !object.isGuideLine
             && !object.isCropOverlay && !object.isDesignBackground && !object.isPanoramaBackground)
-          .map((object: any) => object.toObject(['id', 'label', 'layerName', 'isLock']));
+          .map((object: any) => {
+            let id = String(object.id ?? '');
+            if (!id || usedIds.has(id)) id = crypto.randomUUID();
+            object.id = id;
+            usedIds.add(id);
+            if (!object.panoramaDesignId) object.panoramaDesignId = id;
+            return object.toObject(['id', 'label', 'layerName', 'isLock', 'panoramaDesignId']);
+          });
         return JSON.stringify(objects);
       };
 
@@ -2300,56 +2277,39 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         }));
 
       const removeDuplicateDesignObjects = (objects: any[], context: string) => {
+        const usedIds = new Set<string>();
+        const usedImageFingerprints = new Set<string>();
         const kept: any[] = [];
-        const imageBounds: Array<{ object: any; src: string; left: number; top: number; right: number; bottom: number }> = [];
         objects.forEach((object: any) => {
-          const id = String(object.panoramaDesignId ?? object.id ?? '');
-          if (id && kept.some((candidate) => String(candidate.panoramaDesignId ?? candidate.id ?? '') === id)) {
-            console.warn('[EditorCanvas][dedupe] duplicate stable ID removed', { context, id, object: summarizeDesignObjects([object])[0] });
+          let id = String(object.id ?? '');
+          const logicalId = String(object.panoramaDesignId ?? '');
+          if (!id) {
+            id = crypto.randomUUID();
+            object.id = id;
+            if (!logicalId) object.panoramaDesignId = id;
+          }
+          const stableId = logicalId || id;
+          if (usedIds.has(stableId)) {
+            console.warn('[EditorCanvas][restore] removed repeated logical object', { context, id: stableId });
             object.dispose?.();
             return;
           }
+          if (!object.panoramaDesignId) object.panoramaDesignId = id;
           if (object.type === 'image' && typeof object.getSrc === 'function') {
-            const src = object.getSrc();
-            const bounds = object.getBoundingRect?.(true);
-            if (src && bounds) {
-              const candidate = {
-                object,
-                src,
-                left: Number(bounds.left),
-                top: Number(bounds.top),
-                right: Number(bounds.left) + Number(bounds.width),
-                bottom: Number(bounds.top) + Number(bounds.height),
-              };
-              const duplicateOf = imageBounds.find((previous) => {
-                if (previous.src !== candidate.src) return false;
-                const overlapWidth = Math.max(0, Math.min(previous.right, candidate.right) - Math.max(previous.left, candidate.left));
-                const overlapHeight = Math.max(0, Math.min(previous.bottom, candidate.bottom) - Math.max(previous.top, candidate.top));
-                const overlap = overlapWidth * overlapHeight;
-                const candidateArea = Math.max(1, (candidate.right - candidate.left) * (candidate.bottom - candidate.top));
-                const previousArea = Math.max(1, (previous.right - previous.left) * (previous.bottom - previous.top));
-                return overlap / Math.min(candidateArea, previousArea) >= 0.8;
-              });
-              if (duplicateOf) {
-                console.warn('[EditorCanvas][dedupe] overlapping legacy image removed', {
-                  context,
-                  keptId: duplicateOf.object.id ?? null,
-                  removedId: object.id ?? null,
-                  overlapRatioThreshold: 0.8,
-                  kept: summarizeDesignObjects([duplicateOf.object])[0],
-                  removed: summarizeDesignObjects([object])[0],
-                });
-                object.dispose?.();
-                return;
-              }
-              imageBounds.push(candidate);
+            const fingerprint = JSON.stringify([
+              object.getSrc(), object.left, object.top, object.width, object.height,
+              object.scaleX, object.scaleY, object.angle, object.cropX, object.cropY,
+            ]);
+            if (usedImageFingerprints.has(fingerprint)) {
+              console.warn('[EditorCanvas][restore] removed exact duplicate image', { context, id });
+              object.dispose?.();
+              return;
             }
+            usedImageFingerprints.add(fingerprint);
           }
+          usedIds.add(stableId);
           kept.push(object);
         });
-        if (kept.length !== objects.length) {
-          console.info('[EditorCanvas][dedupe] cleaned stored view', { context, before: objects.length, after: kept.length });
-        }
         return kept;
       };
 
@@ -2375,6 +2335,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
               if (!record) return;
               if (record.id != null) object.id = record.id;
               if (record.panoramaDesignId != null) object.panoramaDesignId = record.panoramaDesignId;
+              if (!object.id) object.id = crypto.randomUUID();
+              if (!object.panoramaDesignId) object.panoramaDesignId = object.id;
             });
             resolve(objects);
           });
@@ -2541,7 +2503,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             if (!obj.isCropOverlay) {
               const objectType = String(obj.type).toLowerCase();
               if (PRESERVE_ASPECT_TYPES.includes(objectType)) applyAspectSafeControls(obj);
-              if (objectType === 'image') enforceUniformScale(obj);
+              // Rehabilitar controles no debe reescalar el objeto restaurado.
             }
             obj.setCoords?.();
           }
@@ -2570,14 +2532,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         baseProductViews = activeProduct.views.map((view) => ({ ...view }));
         activeOptionSelections = getInitialSelectedOptions(product);
         activeView = activeProduct.views[0];
-        console.log('🎨 [CANVAS INIT] Selecciones de opciones iniciales:', {
-          productId: product.id,
-          selectedOptions: activeOptionSelections,
-          activeView: {
-            id: activeView?.id,
-            name: activeView?.name,
-          },
-        });
+
+
         // La carga inicial muestra siempre la vista base, sin aplicar la
         // primera opción/variante automáticamente.
         activeOptionPrintArea = null;
@@ -2690,20 +2646,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const switchView = async (viewId: string) => {
         const c = fabricCanvasRef.current;
         if (!c) return;
-        console.groupCollapsed('[EditorCanvas][view-switch] start', {
-          from: currentViewIdRef.current,
-          to: viewId,
-          panorama: panoramaModeRef.current,
-          unrestricted: unrestrictedDesignRef.current,
-          canvas: summarizeDesignObjects(c.getObjects()),
-          storedCounts: Object.fromEntries(Object.entries(canvasDataRef.current).map(([id, json]) => {
-            try {
-              const objects = JSON.parse(json || '[]');
-              return [id, Array.isArray(objects) ? objects.length : 0];
-            } catch { return [id, 'invalid-json']; }
-          })),
-        });
-        console.groupEnd();
+        traceDesignFlow('view-switch:start', { from: currentViewIdRef.current, to: viewId });
         if (panoramaModeRef.current) await setPanoramaMode(false);
         if (fabricCanvasRef.current !== c) return;
         if (viewId === currentViewIdRef.current) {
@@ -2723,21 +2666,19 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         pendingViewId = viewId;
 
         const requestedViewIndex = activeProduct.views.findIndex((view) => view.id === viewId);
-        console.log('👁️ [CAMBIO DE VISTA]: Index pedido ->', requestedViewIndex);
-        console.log('👁️ [VISTA APUNTADA]:', activeProduct.views[requestedViewIndex]);
+
 
         // Persistir la vista de origen antes de iniciar cargas asíncronas. No
         // vaciamos el canvas aún: así el diseño sigue visible mientras prepara
         // el mockup y los objetos de destino.
+        flushDraftSave();
         captureViewThumbnail(currentViewIdRef.current, true);
         canvasDataRef.current[currentViewIdRef.current] = snapshotCurrentObjects();
         viewObjectsRef.current[currentViewIdRef.current] = c.getObjects()
           .filter((obj: any) => !obj.isMockup && !obj.isGuide && !obj.isGuideLine && !obj.isDesignBackground);
         const nextView = getView(viewId);
-        console.log('🔍 [EDITOR - VISTA ACTIVA]:', {
-          id: nextView?.id,
-          name: nextView?.name,
-        });
+
+
         const currentViewIndex = Math.max(0, baseProductViews.findIndex((view) => view.id === viewId));
         const syncedView = Object.keys(activeOptionSelections).length
           ? syncEditorWithVariant(activeOptionSelections)
@@ -2746,11 +2687,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         // La zona de opción anterior no debe filtrarse a la siguiente cara;
         // cada vista usa su printArea ya resuelto en `activeProduct.views`.
         activeOptionPrintArea = null;
-        console.log('🎨 [CAMBIO DE VISTA -> FABRIC]:', {
-          viewId,
-          resolvedMockupUrl: resolvedView.mockupUrl,
-          resolvedPrintArea: resolvedView.printArea,
-        });
+
 
         const stored = canvasDataRef.current[viewId];
         let restoredObjects = viewObjectsRef.current[viewId] ?? [];
@@ -2775,12 +2712,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           object.toObject(['id', 'label', 'layerName', 'isLock', 'panoramaDesignId']),
         ));
 
-        console.info('[EditorCanvas][view-switch] restore prepared', {
-          to: viewId,
-          source: restoreSource,
-          restoredCount: restoredObjects.length,
-          restored: summarizeDesignObjects(restoredObjects),
-        });
+        traceDesignFlow('view-switch:restore-prepared', { to: viewId, source: restoreSource, restoredCount: restoredObjects.length, restored: summarizeDesignObjects(restoredObjects) });
 
         activeView = nextView;
         await loadResolvedViewBackground(nextView, resolvedView);
@@ -2803,10 +2735,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         c.calcOffset();
         if (safeZoneRef.current) c.sendToBack(safeZoneRef.current);
         c.requestRenderAll();
-        console.info('[EditorCanvas][view-switch] complete', {
-          activeViewId: viewId,
-          canvas: summarizeDesignObjects(c.getObjects()),
-        });
+        traceDesignFlow('view-switch:complete', { activeViewId: viewId });
         finishViewSwitch(viewId);
         if (switchToken === viewSwitchToken) pendingViewId = null;
         // Refresca el panel de textos de la sidebar para la vista cargada.
@@ -2825,12 +2754,12 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const serializeCurrentDraftView = () => {
         // Estas propiedades son parte del contrato del diseño y deben viajar
         // intactas a localStorage (y después al endpoint de persistencia).
-        const canvasJSON = canvas.toJSON(['id', 'label', 'layerName', 'isLock']);
+        const canvasJSON = canvas.toJSON(['id', 'label', 'layerName', 'isLock', 'panoramaDesignId']);
         // Las capas del sistema no forman parte del diseño: se recrean a partir
         // del producto activo al recuperar el borrador.
         canvasJSON.objects = canvas.getObjects()
           .filter(isDraftDesignObject)
-          .map((object: any) => object.toJSON(['id', 'label', 'layerName', 'isLock']));
+          .map((object: any) => object.toJSON(['id', 'label', 'layerName', 'isLock', 'panoramaDesignId']));
         return canvasJSON as Record<string, unknown>;
       };
 
@@ -2855,7 +2784,15 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           canvasJSON,
         };
         publish3DViewSnapshots();
-        if (saveDraft(draft)) setDraftStatus('saved');
+        if (saveDraft(draft)) {
+          setDraftStatus('saved');
+          traceDesignFlow('draft:saved', {
+            views: Object.fromEntries(Object.entries(views).map(([viewId, serialized]) => {
+              try { return [viewId, JSON.parse(serialized || '[]').length]; }
+              catch { return [viewId, 'invalid-json']; }
+            })),
+          });
+        }
       };
 
       const scheduleDraftSave = () => {
@@ -2867,6 +2804,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           persistDraft();
         }, 1000);
       };
+
+      const flushDraftSave = () => {
+        if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+        draftSaveTimerRef.current = null;
+        persistDraft();
+      };
+      flushDraftSaveRef.current = flushDraftSave;
 
       const restoreDraftCanvas = (canvasJSON: Record<string, any>) => new Promise<void>((resolve) => {
         const preservedBase = canvas.getObjects().filter(
@@ -2932,6 +2876,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         updateHistoryButtons();
         isHydratingDraftRef.current = false;
         setDraftStatus('saved');
+        traceDesignFlow('draft:restored', { updatedAt: draft.updatedAt, restoredViewId: currentViewIdRef.current });
         window.dispatchEvent(new CustomEvent('editor:canvas-usage-refresh'));
       };
 
@@ -3137,16 +3082,11 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       const setPanoramaMode = async (enabled: boolean) => {
         const c = fabricCanvasRef.current;
         if (!c || panoramaModeRef.current === enabled || baseProductViews.length < 2) return;
-        console.info('[EditorCanvas][panorama] transition start', {
-          enabled,
-          viewId: currentViewIdRef.current,
+        traceDesignFlow(enabled ? 'panorama:enter-start' : 'panorama:exit-start', {
           unrestricted: unrestrictedDesignRef.current,
-          canvas: summarizeDesignObjects(c.getObjects()),
           storedCounts: Object.fromEntries(Object.entries(canvasDataRef.current).map(([id, json]) => {
-            try {
-              const objects = JSON.parse(json || '[]');
-              return [id, Array.isArray(objects) ? objects.length : 0];
-            } catch { return [id, 'invalid-json']; }
+            try { return [id, Array.isArray(JSON.parse(json || '[]')) ? JSON.parse(json || '[]').length : 0]; }
+            catch { return [id, 'invalid-json']; }
           })),
         });
         // Invalida cualquier loadViewObjects en curso: entrar o salir del modo
@@ -3155,6 +3095,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         viewSwitchToken += 1;
         const modeToken = viewSwitchToken;
         if (enabled) {
+          flushDraftSave();
           // Invalidar cargas de imagen ya iniciadas; un callback atrasado no
           // debe volver a insertar el termo después de limpiar el lienzo.
           currentLoadRequestId.current += 1;
@@ -3162,26 +3103,30 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           // Capturar todo ANTES de borrar mockup/guías del canvas actual.
           const currentId = currentViewIdRef.current;
           canvasDataRef.current[currentId] = snapshotCurrentObjects();
-          viewObjectsRef.current[currentId] = c.getObjects().filter(isDraftDesignObject);
           const panoramaSourceData: Record<string, string> = {};
-          const panoramaLiveObjects: Record<string, any[]> = {};
           baseProductViews.forEach((view) => {
-            const liveObjects = view.id === currentId
-              ? c.getObjects().filter(isDraftDesignObject)
-              : (viewObjectsRef.current[view.id] ?? []);
-            panoramaLiveObjects[view.id] = [...liveObjects];
-            const stored = canvasDataRef.current[view.id];
-            panoramaSourceData[view.id] = liveObjects.length
-              ? JSON.stringify(liveObjects.map((object: any) => object.toObject(['id', 'label', 'layerName', 'isLock', 'panoramaDesignId'])))
-              : (stored ?? '[]');
-            canvasDataRef.current[view.id] = panoramaSourceData[view.id];
+            // Una sola fuente por vista evita combinar instancias vivas con
+            // sus serializaciones y volver a insertar la misma imagen dos veces.
+            panoramaSourceData[view.id] = canvasDataRef.current[view.id] ?? '[]';
           });
-          console.info('[EditorCanvas] Preparando lienzo 360 desde las vistas:', baseProductViews.map((view) => ({
+          const sourceCounts = baseProductViews.map((view) => ({
             viewId: view.id,
-            viewName: view.name,
-            liveObjects: panoramaLiveObjects[view.id]?.length ?? 0,
             serializedObjects: (() => { try { return JSON.parse(panoramaSourceData[view.id] || '[]').length; } catch { return 0; } })(),
-          })));
+            objects: (() => {
+              try {
+                return JSON.parse(panoramaSourceData[view.id] || '[]').map((object: any) => ({
+                  id: object.id ?? null,
+                  logicalId: object.panoramaDesignId ?? null,
+                  type: object.type,
+                  left: object.left,
+                  top: object.top,
+                  scaleX: object.scaleX,
+                  scaleY: object.scaleY,
+                }));
+              } catch { return []; }
+            })(),
+          }));
+          traceDesignFlow('panorama:source-snapshots', { sourceCounts });
 
           // Leer la geometría real publicada por el editor individual. Para
           // vistas nunca visitadas se usa el printArea porcentual del producto.
@@ -3222,17 +3167,16 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           segments.forEach((segment) => ensurePanoramaBackgroundRect(segment.viewId));
 
           const restoredDesignIds = new Set<string>();
-          const restoredImageBounds: Array<{ src: string; left: number; top: number; right: number; bottom: number }> = [];
           const restoreTasks = baseProductViews.map(async (view) => {
             const serialized = panoramaSourceData[view.id] || '[]';
             const segment = segments.find((candidate) => candidate.viewId === view.id)!;
-            let objects = panoramaLiveObjects[view.id] ?? [];
-            if (!objects.length) objects = await enlivenDesignObjects(serialized, `panorama:${view.id}`);
-            objects.forEach((object: any) => {
+            let objects = await enlivenDesignObjects(serialized, `panorama:${view.id}`);
+            objects = removeDuplicateDesignObjects(objects, `panorama:${view.id}`);
+            objects = objects.filter((object: any) => {
               const designId = String(object.panoramaDesignId ?? object.id ?? '');
               if (designId && restoredDesignIds.has(designId)) {
                 object.dispose?.();
-                return;
+                return false;
               }
               if (designId) restoredDesignIds.add(designId);
               object.set({
@@ -3245,55 +3189,15 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
               object.panoramaViewId = view.id;
               applyPanoramaSegmentClip(object, segment);
               object.setCoords?.();
-
-              // Los borradores antiguos no tenían un ID compartido entre las
-              // copias por vista. Si aún existen, evita volver a apilar la
-              // misma imagen en el panorama cuando ambas copias representan
-              // prácticamente la misma posición y tamaño.
-              if (object.type === 'image' && typeof object.getSrc === 'function') {
-                const src = object.getSrc();
-                const bounds = object.getBoundingRect?.(true);
-                if (src && bounds) {
-                  const candidate = {
-                    src,
-                    left: Number(bounds.left),
-                    top: Number(bounds.top),
-                    right: Number(bounds.left) + Number(bounds.width),
-                    bottom: Number(bounds.top) + Number(bounds.height),
-                  };
-                  const duplicate = restoredImageBounds.some((previous) => {
-                    if (previous.src !== candidate.src) return false;
-                    const overlapWidth = Math.max(0, Math.min(previous.right, candidate.right) - Math.max(previous.left, candidate.left));
-                    const overlapHeight = Math.max(0, Math.min(previous.bottom, candidate.bottom) - Math.max(previous.top, candidate.top));
-                    const overlap = overlapWidth * overlapHeight;
-                    const candidateArea = Math.max(1, (candidate.right - candidate.left) * (candidate.bottom - candidate.top));
-                    const previousArea = Math.max(1, (previous.right - previous.left) * (previous.bottom - previous.top));
-                    return overlap / Math.min(candidateArea, previousArea) >= 0.8;
-                  });
-                  if (duplicate) {
-                    object.dispose?.();
-                    return;
-                  }
-                  restoredImageBounds.push(candidate);
-                }
-              }
+              return true;
             });
             return objects;
           });
           const restoredByView = await Promise.all(restoreTasks);
           if (!panoramaModeRef.current || viewSwitchToken !== modeToken || fabricCanvasRef.current !== c) return;
-          console.info('[EditorCanvas] Objetos colocados en lienzo 360:', restoredByView.map((objects, index) => ({
-            viewId: baseProductViews[index]?.id,
-            count: objects.length,
-            segment: segments[index] && { x: segments[index].destX, width: segments[index].destWidth, scale: segments[index].scale },
-          })));
-          console.info('[EditorCanvas][panorama] restore result', {
-            restoredCount: restoredByView.reduce((sum, objects) => sum + objects.length, 0),
-            restoredByView: restoredByView.map((objects, index) => ({
-              viewId: baseProductViews[index]?.id,
-              objects: summarizeDesignObjects(objects),
-            })),
-            canvas: summarizeDesignObjects(c.getObjects()),
+          traceDesignFlow('panorama:enter-restored', {
+            restoredByView: restoredByView.map((objects, index) => ({ viewId: baseProductViews[index]?.id, count: objects.length })),
+            segments: segments.map(({ viewId, destX, destWidth, scale }) => ({ viewId, destX, destWidth, scale })),
           });
           restoredByView.flat().forEach((object) => c.add(makeObjectInteractive(object)));
 
@@ -3321,14 +3225,14 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         }
 
         persistPanoramaViews();
-        console.info('[EditorCanvas][panorama] persisted before exit', {
+        flushDraftSave();
+        traceDesignFlow('panorama:exit-persisted', {
           viewCounts: Object.fromEntries(baseProductViews.map((view) => {
             try {
               const objects = JSON.parse(canvasDataRef.current[view.id] || '[]');
               return [view.id, Array.isArray(objects) ? objects.length : 0];
             } catch { return [view.id, 'invalid-json']; }
           })),
-          canvas: summarizeDesignObjects(c.getObjects()),
         });
         panoramaModeRef.current = false;
         // Los diseños sin límites se guardan primero en todas las vistas; al
@@ -3350,8 +3254,20 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         redoStackRef.current = [];
         updateHistoryButtons();
         isUpdatingHistory.current = false;
+        traceDesignFlow('panorama:exit-complete', { activeViewId: view.id });
         publish3DViewSnapshots();
         window.dispatchEvent(new CustomEvent('editor:panorama-mode-changed', { detail: { enabled: false } }));
+        // El cambio de modo vuelve a mostrar la barra de vistas y cambia el
+        // tamaño disponible del contenedor. Esperar a que React y ResizeObserver
+        // apliquen ese layout antes de medir y pintar el canvas 2D evita que el
+        // mockup quede invisible hasta el primer evento de puntero.
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+          if (fabricCanvasRef.current !== c || panoramaModeRef.current) return;
+          fitCanvasToContainer();
+          c.calcOffset();
+          c.renderAll();
+          c.requestRenderAll();
+        }));
       };
       panoramaToggleRef.current = (enabled) => { void setPanoramaMode(enabled); };
       if (isPanoramaActive) void setPanoramaMode(true);
@@ -4818,13 +4734,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const { dataUrl } = customEvent.detail || {};
         if (!dataUrl) return;
         const addRequestId = crypto.randomUUID();
-        console.info('[EditorCanvas][add-image] requested', {
+        traceDesignFlow('image:requested', {
           requestId: addRequestId,
-          viewId: currentViewIdRef.current,
-          panorama: panoramaModeRef.current,
-          unrestricted: unrestrictedDesignRef.current,
           sourceLength: dataUrl.length,
-          sourcePrefix: dataUrl.slice(0, 40),
         });
 
         // Crear un elemento img HTML oculto para precargar la imagen Base64
@@ -4858,11 +4770,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           fabricImage.setCoords();
 
           fabricCanvasRef.current.add(fabricImage);
-          console.info('[EditorCanvas][add-image] inserted', {
+          traceDesignFlow('image:inserted', {
             requestId: addRequestId,
             objectId: (fabricImage as any).id,
-            viewId: currentViewIdRef.current,
-            objectCount: fabricCanvasRef.current.getObjects().filter(isDraftDesignObject).length,
             object: summarizeDesignObjects([fabricImage])[0],
           });
           fabricCanvasRef.current.setActiveObject(fabricImage);
@@ -4901,7 +4811,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (!fabricCanvasRef.current) return;
         const activeObject = canvas.getActiveObject();
         if (!activeObject) return;
-        
+
         activeObject.clone((clonedObj: any) => {
           canvas.discardActiveObject();
           // `clone` reconstruye el objeto desde su JSON, que no incluye los
@@ -5058,13 +4968,13 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           if (!focusIsOnCanvas) return;
           handleDelete();
         }
-        
+
         // Keyboard shortcuts for undo/redo
         if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
           e.preventDefault();
           handleUndo();
         }
-        
+
         if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
           e.preventDefault();
           handleRedo();
@@ -5243,7 +5153,6 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
       window.addEventListener('editor:crop-mode-active', handleCropStart);
       window.addEventListener('editor:crop-mode-inactive', handleCropEnd);
-
 
 
       handleAddShape = (e: any) => {
@@ -5502,6 +5411,16 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             clampToPrintArea(object);
           });
           canvas.renderAll();
+          // Sustituir una plantilla también sustituye la instantánea de esta
+          // vista. Mantener sincronizadas las tres fuentes evita que al volver
+          // a la vista o recargar reaparezca el diseño anterior.
+          const viewId = currentViewIdRef.current;
+          const designObjects = canvas.getObjects().filter(isDraftDesignObject);
+          viewObjectsRef.current[viewId] = designObjects;
+          canvasDataRef.current[viewId] = snapshotCurrentObjects();
+          flushDraftSave();
+          publish3DViewSnapshots();
+          traceDesignFlow('template:applied', { viewId, objectCount: designObjects.length });
           window.dispatchEvent(
             new CustomEvent('editor:selection-changed', { detail: { selectedObject: null } }),
           );
@@ -5805,6 +5724,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       window.addEventListener('editor:apply-template', handleApplyTemplate);
       window.addEventListener('editor:replace-text', handleReplaceText);
       window.addEventListener('editor:clear-draft', handleClearDraft);
+      window.addEventListener('editor:flush-draft', flushDraftOnRequest);
+      window.addEventListener('editor:request-view', handleRequestedView);
       window.addEventListener('editor:add-to-cart', handleAddToCart);
       window.addEventListener('editor:buy-now', handleAddToCart);
       window.addEventListener('editor:purchase-completed', handleClearDraft);
@@ -5862,6 +5783,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
     return () => {
       isMounted = false;
+      // El canvas se desmonta al cambiar de producto. Persistir antes de
+      // disponer Fabric evita perder la última edición si el debounce seguía
+      // pendiente.
+      flushDraftSaveRef.current?.();
       if (previewRefreshFrameRef.current) window.cancelAnimationFrame(previewRefreshFrameRef.current);
       previewRefreshFrameRef.current = 0;
       panoramaModeRef.current = false;
@@ -5937,6 +5862,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         window.removeEventListener('editor:apply-template', handleApplyTemplate);
       }
       if (handleClearDraft) window.removeEventListener('editor:clear-draft', handleClearDraft);
+      window.removeEventListener('editor:flush-draft', flushDraftOnRequest);
+      window.removeEventListener('editor:request-view', handleRequestedView);
       if (handleAddToCart) window.removeEventListener('editor:add-to-cart', handleAddToCart);
       if (handleAddToCart) window.removeEventListener('editor:buy-now', handleAddToCart);
       if (handleClearDraft) window.removeEventListener('editor:purchase-completed', handleClearDraft);
@@ -6010,6 +5937,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       clearTimeout(resizeTimer);
       if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
       draftSaveTimerRef.current = null;
+      flushDraftSaveRef.current = null;
       if (thumbnailTimerRef.current) clearTimeout(thumbnailTimerRef.current);
       thumbnailTimerRef.current = null;
       fitOnResize = null;

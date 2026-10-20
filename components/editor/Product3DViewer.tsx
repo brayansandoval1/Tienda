@@ -149,22 +149,14 @@ function WebGLDiagnostics() {
   useEffect(() => {
     const previewWindow = window as Window & { __editorProductPreviewCanvas?: HTMLCanvasElement };
     previewWindow.__editorProductPreviewCanvas = gl.domElement;
-    const context = gl.getContext();
-    console.info('[Product3DViewer] Canvas WebGL inicializado:', {
-      vendor: context.getParameter(context.VENDOR),
-      renderer: context.getParameter(context.RENDERER),
-    });
     const handleContextLost = (event: Event) => {
       console.error('[Product3DViewer] Se perdió el contexto WebGL mientras el visor estaba activo.', event);
     };
-    const handleContextRestored = () => console.info('[Product3DViewer] Contexto WebGL restaurado.');
     gl.domElement.addEventListener('webglcontextlost', handleContextLost);
-    gl.domElement.addEventListener('webglcontextrestored', handleContextRestored);
     return () => {
       // El renderer se desmonta al ir a Opciones/Revisar; no dejamos listeners
       // colgados que interpreten el cierre normal del canvas como un fallo.
       gl.domElement.removeEventListener('webglcontextlost', handleContextLost);
-      gl.domElement.removeEventListener('webglcontextrestored', handleContextRestored);
       if (previewWindow.__editorProductPreviewCanvas === gl.domElement) {
         delete previewWindow.__editorProductPreviewCanvas;
       }
@@ -421,23 +413,8 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     const now = Date.now();
     if (now - (projectionDiagnosticTimes.get(diagnosticKey) ?? 0) > 1000) {
       projectionDiagnosticTimes.set(diagnosticKey, now);
-      console.log('[Product3DViewer] Diagnóstico de proyección segura 2D → UV:', JSON.stringify({
-        viewId: area?.viewId,
-        viewName: area?.viewName,
-        viewIndex,
-        viewCount,
-        segmentIndex,
-        texture: { width: target.width, height: target.height, segmentWidth: sideWidth, segmentLeft: sideLeft },
-        sourceArea2D: {
-          left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height,
-          canvasWidth, canvasHeight,
-          relative: { left: bounds.left / canvasWidth * 100, top: bounds.top / canvasHeight * 100, width: bounds.width / canvasWidth * 100, height: bounds.height / canvasHeight * 100 },
-        },
-        destinationArea3D: { left: targetLeft, top: targetTop, width: targetWidth, height: targetHeight, x: destX, y: destY, widthPx: destW, heightPx: destH },
-        transform: { scaleX, scaleY, offsetX, offsetY, sourceBounds: { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height } },
-        designObjects: { count: visibleObjects.length, bounds: Number.isFinite(objectBounds.left) ? { left: objectBounds.left, top: objectBounds.top, width: objectWidth, height: objectHeight } : null, projectedSize: { width: objectWidth * scaleX, height: objectHeight * scaleY } },
-        targetFit: { horizontal: destW / Math.max(1, objectWidth * scaleX), vertical: destH / Math.max(1, objectHeight * scaleY) },
-      }));
+
+
     }
 
     context.save();
@@ -592,18 +569,8 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
     canvas.height = panoramic
       ? Math.max(1, Math.round(meshSettings.textureHeight))
       : Math.max(1, Math.round(canvas.width / textureAspectRatio));
-    console.log('[Product3DViewer] printArea real:', {
-      left: printArea?.left ?? 0,
-      top: printArea?.top ?? 0,
-      width: printArea?.width ?? 800,
-      height: printArea?.height ?? 800,
-      aspectRatio: (printArea?.width ?? 800) / Math.max(1, printArea?.height ?? 800),
-    });
-    console.log('[Product3DViewer] printCanvas buffer:', {
-      width: canvas.width,
-      height: canvas.height,
-      aspectRatio: canvas.width / Math.max(1, canvas.height),
-    });
+
+
     const context = canvas.getContext('2d');
     if (context) {
       context.fillStyle = '#f8fafc';
@@ -841,18 +808,8 @@ function resetTextureUvTransform(texture: THREE.CanvasTexture, panoramic: boolea
   texture.rotation = 0;
   texture.matrixAutoUpdate = true;
   texture.needsUpdate = true;
-  console.log('[Product3DViewer] Transformación de textura:', {
-    canvasWidth,
-    canvasHeight,
-    canvasAspect,
-    cylinderAspect,
-    totalViews: Math.max(1, totalViews),
-    frontSegmentCenterU: 0.5 / Math.max(1, totalViews),
-    repeatX: texture.repeat.x,
-    offsetX: texture.offset.x,
-    center: texture.center.toArray(),
-    wrapS: texture.wrapS,
-  });
+
+
 }
 
 function panoramicUvRange(mesh: THREE.Mesh) {
@@ -882,7 +839,6 @@ function normalizePanoramicUvSeam(mesh: THREE.Mesh) {
   // diminuta del diseño en el cierre entre la primera y última vista. Desplazar
   // los UV bajos una vuelta conserva la continuidad; RepeatWrapping los vuelve
   // a mapear al borde 0 de la textura.
-  let unwrappedTriangles = 0;
   for (let start = 0; start + 2 < uv.count; start += 3) {
     const values = [uv.getX(start), uv.getX(start + 1), uv.getX(start + 2)];
     const minU = Math.min(...values);
@@ -891,15 +847,9 @@ function normalizePanoramicUvSeam(mesh: THREE.Mesh) {
     for (let vertex = 0; vertex < 3; vertex += 1) {
       if (values[vertex] < 0.5) uv.setX(start + vertex, values[vertex] + 1);
     }
-    unwrappedTriangles += 1;
   }
   uv.needsUpdate = true;
   mesh.geometry = geometry;
-  console.info('[Product3DViewer] Costura UV panorámica corregida:', {
-    mesh: mesh.name,
-    unwrappedTriangles,
-    vertexCount: uv.count,
-  });
 }
 
 function getMeshUvAngleOffset(mesh: THREE.Mesh) {
@@ -990,7 +940,6 @@ function GLBModel({ url, texture, panoramic, viewCount, onSurfaceAspectChange, o
       const alignment = getMeshUvAngleOffset(printMesh);
       if (alignment) {
         onUvAngleOffsetChange(alignment.angle, alignment.direction);
-        console.info('[Product3DViewer] Alineación angular UV/cámara:', { mesh: printMesh.name, angleOffset: alignment.angle, angleDegrees: THREE.MathUtils.radToDeg(alignment.angle), direction: alignment.direction, confidence: alignment.confidence });
       }
     }
     const size = printMesh?.geometry.boundingBox?.getSize(new THREE.Vector3());
@@ -1000,15 +949,8 @@ function GLBModel({ url, texture, panoramic, viewCount, onSurfaceAspectChange, o
         ? (Math.PI * diameter) / size.y
         : size.x / size.y;
       onSurfaceAspectChange(aspectRatio);
-      console.info('[Product3DViewer] Proporción de superficie del GLB:', {
-        mesh: printMesh.name,
-        dimensions: `${size.x.toFixed(3)} × ${size.y.toFixed(3)} × ${size.z.toFixed(3)}`,
-        aspectRatio,
-      });
     }
-    console.info(`[Product3DViewer] GLB cargado: ${url}`);
-    if (meshes.length) console.table(meshes);
-    else console.error(`[Product3DViewer] El GLB no contiene mallas: ${url}`);
+    if (!meshes.length) console.error(`[Product3DViewer] El GLB no contiene mallas: ${url}`);
   }, [gltf.scene, onSurfaceAspectChange, onUvAngleOffsetChange, panoramic, url, viewCount]);
   const scene = useMemo(() => {
     const clonedScene = gltf.scene.clone(true);
@@ -1049,7 +991,6 @@ function GLBModel({ url, texture, panoramic, viewCount, onSurfaceAspectChange, o
     if (printMesh && !printableMesh && !bodyMesh && !geometryMesh) {
       console.warn('[Product3DViewer] No se encontró una malla llamada printable, body o geometry_0; se usará la malla con más vértices.', printMesh.name, selectionDetails);
     } else {
-      console.info('[Product3DViewer] Malla elegida para aplicar la textura:', printMesh?.name || '(ninguna)', selectionDetails);
     }
     if (panoramic && printMesh) normalizePanoramicUvSeam(printMesh);
     if (printMesh) {
@@ -1063,13 +1004,8 @@ function GLBModel({ url, texture, panoramic, viewCount, onSurfaceAspectChange, o
           maxU = Math.max(maxU, u);
           maxV = Math.max(maxV, v);
         }
-        console.log('[Product3DViewer] Malla y rango UV de impresión:', {
-          printMesh: printMesh.name,
-          minU,
-          maxU,
-          minV,
-          maxV,
-        });
+
+
         resetTextureUvTransform(texture, panoramic, viewCount);
       } else {
         console.error(`[Product3DViewer] La malla "${printMesh.name}" no tiene UV; no se puede proyectar el diseño.`, { url });
@@ -1224,7 +1160,6 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
   const [meshSettings, setMeshSettings] = useState<MeshSettings>(product.meshSettings ?? DEFAULT_MESH_SETTINGS);
   const [partColors, setPartColors] = useState<ProductPartColors>({ body: product.colors?.[0]?.hexColor ?? '#f8fafc', ...neutralPartColors });
   useEffect(() => {
-    console.info('[Product3DViewer] Producto activo:', { id: product.id, name: product.name, model3dUrl: model3dUrl || '(vacío)' });
     setMeshSettings(product.meshSettings ?? DEFAULT_MESH_SETTINGS);
     setPartColors({ body: defaultBodyColor, ...neutralPartColors });
     const handleProductColor = (event: Event) => {

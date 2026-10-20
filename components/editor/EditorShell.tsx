@@ -12,6 +12,7 @@ import { useProductStore, type Product } from '@/src/store/useProductStore';
 import ViewSelector from '@/components/editor/ViewSelector';
 import ReviewStage from '@/components/editor/ReviewStage';
 import CartDrawer from '@/components/editor/CartDrawer';
+import { getDraft, saveDraft } from '@/src/utils/designDraftStorage';
 
 
 const EditorCanvas = dynamic(() => import('@/components/editor/EditorCanvas'), { ssr: false });
@@ -92,13 +93,66 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   useEffect(() => {
     const handleSwitchProduct = (e: Event) => {
       const customEvent = e as CustomEvent<{ product: Product }>;
-      setCurrentProduct(customEvent.detail.product);
+      const nextProduct = customEvent.detail.product;
+      if (!nextProduct || nextProduct.id === currentProduct.id) return;
+
+      // Pedir al canvas actual que cierre su debounce y guarde la vista activa
+      // antes de leer el borrador para transferirlo al producto siguiente.
+      window.dispatchEvent(new Event('editor:flush-draft'));
+      const sourceDraft = getDraft(currentProduct.id);
+      if (sourceDraft) {
+        const targetDraft = getDraft(nextProduct.id);
+        const targetViews = { ...(targetDraft?.views ?? {}) };
+        const sourceViewIds = new Set<string>();
+        const normalize = (value?: string) => value?.trim().toLocaleLowerCase() ?? '';
+
+        currentProduct.views.forEach((sourceView, sourceIndex) => {
+          const serialized = sourceDraft.views[sourceView.id];
+          if (typeof serialized !== 'string') return;
+          const matchingView = nextProduct.views.find((view) => normalize(view.name) === normalize(sourceView.name))
+            ?? nextProduct.views[sourceIndex];
+          if (!matchingView) return;
+          // Un diseño vacío no borra el trabajo que el destino ya tenía.
+          try {
+            if (!JSON.parse(serialized || '[]').length) return;
+          } catch {
+            return;
+          }
+          targetViews[matchingView.id] = serialized;
+          sourceViewIds.add(sourceView.id);
+        });
+
+        const sourceCurrentView = currentProduct.views.find((view) => view.id === sourceDraft.currentViewId);
+        const mappedCurrentView = sourceCurrentView
+          ? nextProduct.views.find((view) => normalize(view.name) === normalize(sourceCurrentView.name))
+            ?? nextProduct.views[currentProduct.views.indexOf(sourceCurrentView)]
+          : undefined;
+        const targetCurrentViewId = mappedCurrentView && sourceViewIds.has(sourceDraft.currentViewId)
+          ? mappedCurrentView.id
+          : targetDraft?.currentViewId && nextProduct.views.some((view) => view.id === targetDraft.currentViewId)
+            ? targetDraft.currentViewId
+            : nextProduct.views[0]?.id;
+        if (targetCurrentViewId) {
+          const canvasJSON = sourceViewIds.has(sourceDraft.currentViewId)
+            ? sourceDraft.canvasJSON
+            : targetDraft?.canvasJSON ?? sourceDraft.canvasJSON;
+          saveDraft({
+            ...(targetDraft ?? sourceDraft),
+            productId: nextProduct.id,
+            updatedAt: Date.now(),
+            currentViewId: targetCurrentViewId,
+            views: targetViews,
+            canvasJSON,
+          });
+        }
+      }
+      setCurrentProduct(nextProduct);
     };
     window.addEventListener('editor:switch-product', handleSwitchProduct);
     return () => {
       window.removeEventListener('editor:switch-product', handleSwitchProduct);
     };
-  }, []);
+  }, [currentProduct]);
 
   return (
     <div className="flex h-screen w-screen min-h-0 flex-col overflow-hidden bg-[#f8f5fb] text-slate-900">

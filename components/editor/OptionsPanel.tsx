@@ -52,7 +52,7 @@ export default function OptionsPanel({ product, onClose }: OptionsPanelProps) {
   }, [product]);
 
   useEffect(() => {
-    console.log('📌 [UI OPTIONS] Opciones seleccionadas actuales:', selections);
+
   }, [selections]);
 
   useEffect(() => {
@@ -70,13 +70,10 @@ export default function OptionsPanel({ product, onClose }: OptionsPanelProps) {
   const totalPrice = product.price + selectedValues.reduce((sum, value) => sum + value.priceModifier, 0);
 
   const choose = (option: ProductOption, value: ProductOptionValue) => {
-    console.log('👇 [UI OPTIONS] Clic detectado en:', {
-      groupName: option.id,
-      groupLabel: optionGroupName(option),
-      value,
-    });
+
+
     const next: Record<string, string> = { [option.id]: value.id };
-    console.log('🔄 [UI OPTIONS] Nuevas opciones que se enviarán al estado:', next);
+
     const selectedOptionsMap = Object.fromEntries(
       (product.options ?? []).flatMap((item) => {
         const selectedValue = item.values.find((candidate) => candidate.id === next[item.id]);
