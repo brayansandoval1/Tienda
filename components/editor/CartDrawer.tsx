@@ -70,6 +70,7 @@ export default function CartDrawer() {
                           <button type="button" onClick={() => removeItem(item.id)} className="text-slate-400 transition hover:text-rose-500" aria-label="Eliminar producto"><Trash2 size={15} /></button>
                         </div>
                         <p className="mt-1 text-[11px] text-slate-400">{isCatalogItem ? 'Diseño base del catálogo' : 'Render personalizado · HD'}</p>
+                        {isCatalogItem && item.selectedOptions && item.selectedOptions.length > 0 && <div className="mt-1 space-y-0.5">{item.selectedOptions.map((option) => <p key={option.optionId} className="truncate text-[10px] text-slate-500">{option.optionName}: {option.valueLabel}</p>)}</div>}
                         <div className="mt-3 flex items-center justify-between">
                           <div className="inline-flex items-center rounded-lg border border-violet-100 bg-violet-50">
                             <button type="button" disabled={quantity <= minimumQuantity} onClick={() => updateQuantity(item.id, quantity - 1)} className="p-1.5 text-slate-500 hover:text-violet-700 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Reducir cantidad"><Minus size={13} /></button>

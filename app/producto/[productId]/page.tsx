@@ -185,6 +185,7 @@ export default function ProductDetailPage() {
   const [hydrated, setHydrated] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [addedToCart, setAddedToCart] = useState(false);
+  const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (useProductStore.persist.hasHydrated()) {
@@ -197,8 +198,16 @@ export default function ProductDetailPage() {
   const minimumQuantity = Math.max(1, Math.floor(product?.pricingSchema?.minimumQuantity ?? 1));
   useEffect(() => setQuantity(minimumQuantity), [minimumQuantity, productId]);
   useEffect(() => setAddedToCart(false), [productId]);
+  useEffect(() => {
+    setSelectedOptions({});
+  }, [productId, product?.options]);
 
-  const price = product?.basePrice ?? product?.price ?? 0;
+  const selectedOptionValues = useMemo(() => (product?.options ?? []).flatMap((option) => {
+    const value = option.values.find((item) => item.id === selectedOptions[option.id]);
+    return value ? [{ optionId: option.id, optionName: option.name, valueId: value.id, valueLabel: value.label, priceModifier: Number(value.priceModifier) || 0 }] : [];
+  }), [product?.options, selectedOptions]);
+  const isStandardSelected = selectedOptionValues.length === 0;
+  const price = Math.max(0, (product?.basePrice ?? product?.price ?? 0) + selectedOptionValues.reduce((sum, value) => sum + value.priceModifier, 0));
   const total = useMemo(() => price * quantity, [price, quantity]);
 
   const addProductToCart = () => {
@@ -216,6 +225,7 @@ export default function ProductDetailPage() {
       quantity,
       minimumQuantity,
       totalPrice: total,
+      selectedOptions: selectedOptionValues,
       addedAt: Date.now(),
     });
     setAddedToCart(true);
@@ -268,6 +278,30 @@ export default function ProductDetailPage() {
             <Link href={`/editor/${product.id}`} className="mt-3 inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-indigo-800 px-6 py-4 text-base font-semibold text-white shadow-lg shadow-indigo-900/15 transition hover:-translate-y-0.5 hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200">
               Personalizar este diseño <ArrowUpRight size={18} />
             </Link>
+
+            <section className="mt-6" aria-labelledby="product-model-style">
+              <h2 id="product-model-style" className="text-xs font-bold uppercase tracking-[.18em] text-slate-400">Modelo / estilo</h2>
+              <button type="button" onClick={() => { setSelectedOptions({}); setAddedToCart(false); }} aria-pressed={isStandardSelected} className={`mt-3 w-full rounded-2xl border-2 px-4 py-3.5 text-left transition ${isStandardSelected ? 'border-blue-500 bg-blue-50/80 ring-1 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300'}`}>
+                <span className={`font-semibold ${isStandardSelected ? 'text-blue-600' : 'text-slate-700'}`}>Estándar</span><span className="ml-2 text-sm text-slate-500">Producto base</span>
+              </button>
+            </section>
+
+            {(product.options ?? []).filter((option) => option.values.length > 0).map((option) => (
+              <section key={option.id} className="mt-6 border-t border-slate-100 pt-5" aria-labelledby={`product-option-${option.id}`}>
+                <h2 id={`product-option-${option.id}`} className="text-xs font-bold uppercase tracking-[.18em] text-slate-400">{option.name}</h2>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-2">
+                  {option.values.map((value) => {
+                    const selected = selectedOptions[option.id] === value.id;
+                    const modifier = Number(value.priceModifier) || 0;
+                    return <button key={value.id} type="button" onClick={() => { setSelectedOptions((current) => ({ ...current, [option.id]: value.id })); setAddedToCart(false); }} aria-pressed={selected} className={`group rounded-2xl border p-2.5 text-left transition ${selected ? 'border-blue-500 bg-blue-50/70 ring-1 ring-blue-500' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-slate-50'}`}>
+                      {value.thumbnailUrl ? <img src={value.thumbnailUrl} alt="" className="h-20 w-full rounded-xl bg-slate-50 object-contain" loading="lazy" /> : <span className="grid h-20 place-items-center rounded-xl bg-slate-50 text-sm font-semibold text-slate-500">{value.label}</span>}
+                      <span className="mt-2 block truncate text-sm font-medium text-slate-800">{value.label}</span>
+                      <span className="mt-0.5 block text-xs text-slate-500">{modifier > 0 ? `+$${modifier.toFixed(2)}` : modifier < 0 ? `−$${Math.abs(modifier).toFixed(2)}` : 'Incluido'}</span>
+                    </button>;
+                  })}
+                </div>
+              </section>
+            ))}
 
             <div className="mt-7 grid gap-3 border-t border-slate-200 pt-6 sm:grid-cols-2">
               <div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-lg bg-emerald-50 text-emerald-700"><Box size={17} /></span><div><p className="text-xs font-semibold text-slate-800">Modelo interactivo 3D</p><p className="mt-0.5 text-xs text-slate-500">Gíralo para revisar el diseño</p></div></div>

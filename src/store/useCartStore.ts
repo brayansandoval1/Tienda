@@ -38,6 +38,7 @@ export type CartCatalogItem = {
   totalPrice: number;
   quantity: number;
   minimumQuantity: number;
+  selectedOptions?: Array<{ optionId: string; optionName: string; valueId: string; valueLabel: string; priceModifier: number }>;
   addedAt: number;
 };
 
