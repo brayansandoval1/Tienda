@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowUpRight, Image as ImageIcon, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { Heart, Image as ImageIcon, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useProductStore, type Product } from '@/src/store/useProductStore';
 
@@ -20,7 +20,7 @@ function getProductImages(product: Product) {
   ].filter((url): url is string => Boolean(url)))];
 }
 
-function CatalogCard({ product }: { product: CatalogProduct }) {
+function CatalogCard({ product, favorite, onToggleFavorite }: { product: CatalogProduct; favorite: boolean; onToggleFavorite: (id: string) => void }) {
   const [imageIndex, setImageIndex] = useState(0);
   const imageSrc = product.catalogImages[imageIndex] ?? '';
   const isShowingCatalogCover = imageIndex === 0 && Boolean(product.catalogCoverUrl);
@@ -28,7 +28,7 @@ function CatalogCard({ product }: { product: CatalogProduct }) {
   useEffect(() => setImageIndex(0), [product.catalogImages]);
 
   return (
-    <article className="group overflow-hidden rounded-[1.6rem] border border-white bg-white/85 p-2 shadow-[0_15px_40px_rgba(109,88,150,.08)] transition duration-300 hover:-translate-y-1.5 hover:border-violet-200 hover:shadow-[0_24px_55px_rgba(139,92,246,.16)]">
+    <article className="group relative overflow-hidden rounded-[1.6rem] border border-white bg-white/85 p-2 shadow-[0_15px_40px_rgba(109,88,150,.08)] transition duration-300 hover:-translate-y-1.5 hover:border-violet-200 hover:shadow-[0_24px_55px_rgba(139,92,246,.16)]">
       <Link href={`/producto/${product.id}`} aria-label={`Ver detalles de ${product.name}`} className="block">
         <div className="relative aspect-[4/3] overflow-hidden rounded-[1.2rem] bg-[radial-gradient(circle_at_50%_18%,rgba(221,214,254,.9),transparent_34%),linear-gradient(145deg,#fff9fc,#f2eeff_62%,#e9f4ff)] sm:aspect-[1.08]">
           {imageSrc ? (
@@ -49,9 +49,9 @@ function CatalogCard({ product }: { product: CatalogProduct }) {
             {product.category || 'Personalizable'}
           </span>
           {isShowingCatalogCover && <span className="absolute bottom-3 left-3 z-[1] inline-flex items-center gap-1 rounded-full border border-white/70 bg-slate-900/45 px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur"><Sparkles size={12} /> Diseño destacado</span>}
-          <span className="absolute right-3 top-3 z-[1] grid h-8 w-8 place-items-center rounded-full border border-white/80 bg-white/85 text-violet-600 shadow-sm transition group-hover:bg-violet-600 group-hover:text-white"><ArrowUpRight size={16} /></span>
         </div>
       </Link>
+      <button type="button" onClick={() => onToggleFavorite(product.id)} aria-label={favorite ? `Quitar ${product.name} de favoritos` : `Agregar ${product.name} a favoritos`} aria-pressed={favorite} className={`absolute right-4 top-4 z-10 grid h-10 w-10 place-items-center rounded-full border border-white/90 shadow-md backdrop-blur transition hover:scale-105 ${favorite ? 'bg-rose-500 text-white' : 'bg-white/90 text-slate-600 hover:text-rose-500'}`}><Heart size={19} fill={favorite ? 'currentColor' : 'none'} /></button>
       <div className="px-3 pb-2 pt-4">
         <div className="flex items-start justify-between gap-3">
           <h3 className="line-clamp-2 text-[15px] font-semibold tracking-[-.02em] text-slate-800">{product.name}</h3>
@@ -67,6 +67,16 @@ export default function ProductCatalog() {
   const products = useProductStore((state) => state.products);
   const [category, setCategory] = useState('Todos');
   const [query, setQuery] = useState('');
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
+  const [favoritesLoaded, setFavoritesLoaded] = useState(false);
+
+  useEffect(() => {
+    try {
+      const storedFavorites = JSON.parse(window.localStorage.getItem('stylecute:favorites') ?? '[]');
+      if (Array.isArray(storedFavorites)) setFavoriteIds(storedFavorites.filter((id): id is string => typeof id === 'string'));
+    } catch { /* Una preferencia local dañada no debe bloquear el catálogo. */ }
+    setFavoritesLoaded(true);
+  }, []);
 
   const categories = useMemo(() => [...new Set(products
     .filter((product) => product.isActive !== false)
@@ -82,11 +92,23 @@ export default function ProductCatalog() {
       .map((product) => ({ ...product, catalogImages: getProductImages(product) }));
   }, [category, products, query]);
 
+  const favoriteProducts = useMemo(() => products
+    .filter((product) => product.isActive !== false && favoriteIds.includes(product.id))
+    .map((product) => ({ ...product, catalogImages: getProductImages(product) })), [favoriteIds, products]);
+
+  const toggleFavorite = (productId: string) => {
+    const nextFavorites = favoriteIds.includes(productId)
+      ? favoriteIds.filter((id) => id !== productId)
+      : [...favoriteIds, productId];
+    setFavoriteIds(nextFavorites);
+    try { window.localStorage.setItem('stylecute:favorites', JSON.stringify(nextFavorites)); } catch { /* La lista se mantiene activa durante esta visita. */ }
+  };
+
   useEffect(() => {
     if (category !== 'Todos' && !categories.includes(category)) setCategory('Todos');
   }, [categories, category]);
 
-  return (
+  return <>
     <section id="catalogo" className="premium-grid relative scroll-mt-24 overflow-hidden bg-[#fdfaff] px-5 py-24 sm:px-8 lg:px-12">
       <div className="pointer-events-none absolute left-1/2 top-0 h-96 w-96 -translate-x-1/2 rounded-full bg-violet-200/35 blur-[110px]" />
       <div className="relative mx-auto max-w-7xl">
@@ -107,7 +129,7 @@ export default function ProductCatalog() {
           {['Todos', ...categories].map((item) => <button key={item} type="button" onClick={() => setCategory(item)} aria-pressed={category === item} className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${category === item ? 'border-purple-600 bg-purple-600 text-white shadow-lg shadow-purple-500/25' : 'border-white bg-white/80 text-slate-500 shadow-sm hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700'}`}>{item}</button>)}
         </div>}
 
-        {visibleProducts.length ? <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{visibleProducts.map((product) => <CatalogCard key={product.id} product={product} />)}</div> : (
+        {visibleProducts.length ? <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{visibleProducts.map((product) => <CatalogCard key={product.id} product={product} favorite={favoriteIds.includes(product.id)} onToggleFavorite={toggleFavorite} />)}</div> : (
           <div className="mt-10 rounded-3xl border border-dashed border-violet-200 bg-white/70 py-16 text-center">
             <p className="font-semibold text-slate-700">{products.some((product) => product.isActive !== false) ? 'No encontramos productos con esa búsqueda' : 'Pronto habrá productos disponibles'}</p>
             {products.some((product) => product.isActive !== false) && <button type="button" onClick={() => { setQuery(''); setCategory('Todos'); }} className="mt-2 text-sm font-semibold text-violet-600">Limpiar búsqueda</button>}
@@ -115,5 +137,11 @@ export default function ProductCatalog() {
         )}
       </div>
     </section>
-  );
+    {favoritesLoaded && <section id="favoritos" className="scroll-mt-24 border-t border-violet-100 bg-white px-5 py-16 sm:px-8 lg:px-12">
+      <div className="mx-auto max-w-7xl">
+        <div className="flex items-end justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[.22em] text-rose-500">Tu colección</p><h2 className="mt-2 text-3xl font-semibold tracking-[-.045em] text-slate-800">Mis favoritos <span className="ml-1 text-xl font-medium text-slate-400">{favoriteProducts.length}</span></h2><p className="mt-2 text-sm text-slate-500">Guarda aquí los productos que quieras volver a ver.</p></div><Heart className="mb-1 text-rose-400" size={25} /></div>
+        {favoriteProducts.length ? <div className="mt-7 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{favoriteProducts.map((product) => <CatalogCard key={product.id} product={product} favorite onToggleFavorite={toggleFavorite} />)}</div> : <div className="mt-6 rounded-2xl border border-dashed border-rose-200 bg-rose-50/45 px-5 py-8 text-center"><p className="text-sm font-semibold text-slate-700">Todavía no guardas favoritos</p><p className="mt-1 text-xs text-slate-500">Pulsa el corazón de cualquier producto para añadirlo aquí.</p></div>}
+      </div>
+    </section>}
+  </>;
 }
