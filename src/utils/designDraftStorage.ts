@@ -15,9 +15,13 @@ export type DesignDraft = {
   canvasJSON: Record<string, unknown>;
   /** Miniaturas del producto con el diseño aplicado, una por vista. */
   thumbnails?: Record<string, string>;
+  /** Encuadre 3D del modelo por vista, capturado al girarlo en el editor. */
+  modelPoses?: Record<string, Draft3DViewPose>;
   /** Imágenes compartidas una sola vez entre las vistas del borrador. */
   assets?: Record<string, string>;
 };
+
+export type Draft3DViewPose = { theta: number; phi: number; zoom: number };
 
 const ASSET_REF_PREFIX = '__design_asset_ref__:';
 

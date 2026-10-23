@@ -1,3 +1,5 @@
+import type { Draft3DViewPose } from '@/src/utils/designDraftStorage';
+
 /**
  * Persistencia de plantillas del editor en IndexedDB. Las imágenes y diseños
  * Fabric pueden superar la cuota pequeña disponible en localStorage.
@@ -31,8 +33,11 @@ export interface SavedTemplate {
 
 const STORAGE_KEY = 'editor_templates';
 const DB_NAME = 'tienda_editor';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'templates';
+const PRODUCT_DESIGN_STORE = 'product_design_templates';
+
+export interface ProductDesignTemplate { schemaVersion: 1; productId: string; updatedAt: number; views: Record<string, string>; modelPoses?: Record<string, Draft3DViewPose> }
 
 function openTemplateDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -40,6 +45,7 @@ function openTemplateDatabase(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(PRODUCT_DESIGN_STORE)) db.createObjectStore(PRODUCT_DESIGN_STORE, { keyPath: 'productId' });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -80,6 +86,36 @@ async function withTemplateStore<T>(mode: IDBTransactionMode, action: (store: ID
     tx.onerror = () => { db.close(); reject(tx.error); };
     tx.onabort = () => { db.close(); reject(tx.error); };
   });
+}
+
+async function withProductDesignStore<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  if (typeof indexedDB === 'undefined') throw new Error('IndexedDB no está disponible en este navegador.');
+  const db = await openTemplateDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PRODUCT_DESIGN_STORE, mode);
+    const request = action(tx.objectStore(PRODUCT_DESIGN_STORE));
+    let result: T;
+    request.onsuccess = () => { result = request.result; };
+    request.onerror = () => reject(request.error);
+    tx.oncomplete = () => { db.close(); resolve(result); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error); };
+  });
+}
+
+export async function saveProductDesignTemplate(template: ProductDesignTemplate): Promise<boolean> {
+  try { await withProductDesignStore('readwrite', (store) => store.put(template)); return true; }
+  catch (error) { console.error('No se pudo guardar el diseño base del producto:', error); return false; }
+}
+
+export async function getProductDesignTemplate(productId: string): Promise<ProductDesignTemplate | null> {
+  try { return (await withProductDesignStore('readonly', (store) => store.get(productId))) ?? null; }
+  catch (error) { console.error('No se pudo leer el diseño base del producto:', error); return null; }
+}
+
+export async function deleteProductDesignTemplate(productId: string): Promise<void> {
+  try { await withProductDesignStore('readwrite', (store) => store.delete(productId)); }
+  catch (error) { console.error('No se pudo quitar el diseño base del producto:', error); }
 }
 
 export async function listSavedTemplates(): Promise<SavedTemplate[]> {
@@ -202,6 +238,3 @@ export function saveTemplateCategories(categories: string[]): string[] {
   }
   return merged;
 }
-
-// Las plantillas y sus imágenes se guardan en IndexedDB para evitar la cuota
-// reducida de localStorage. La primera lectura migra automáticamente los datos antiguos.

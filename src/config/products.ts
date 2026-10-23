@@ -198,6 +198,12 @@ export interface Product {
   id: string;
   /** Controla si el producto aparece disponible en el catálogo público. */
   isActive?: boolean;
+  /** Portada lifestyle lista para el catálogo (producto + diseño + escena). */
+  catalogCoverUrl?: string;
+  /** Fondo ambiental sin producto para componer la vista previa de portada. */
+  catalogSceneUrl?: string;
+  /** Posición y escala del modelo al componer la portada de catálogo. */
+  catalogModelPlacement?: { x: number; y: number; scale: number };
   /** Habilita el lienzo de diseño continuo para productos envolventes. */
   allowPanorama360?: boolean;
   /** Marca de invalidación para propagar cambios del Admin al editor. */
@@ -242,6 +248,12 @@ export interface Product {
   /** Configuraciones vendibles que pueden modificar el precio final. */
   options?: ProductOption[];
   views: ProductView[];
+  /** Diseño inicial editable por vista, creado en el editor y asignado desde Administración. */
+  designTemplate?: {
+    schemaVersion: 1;
+    updatedAt: number;
+    viewIds: string[];
+  };
   /**
    * Zona segura maestra en porcentaje respecto a la imagen base. Se hereda a
    * cada foto de `reviewGallery` para saber dónde colocar el diseño del cliente.

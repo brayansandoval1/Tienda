@@ -8,7 +8,8 @@ import type { ExportedDesignFiles, SaveDesignResult, SavedDesignPayload } from '
 import type { PriceCalculation } from '@/src/types/pricing';
 import { useCanvasUsage } from '@/components/editor/useCanvasUsage';
 import { saveTemplateToStorage, updateTemplateInStorage, listSavedTemplates, getCategoryIcon } from '@/src/utils/templateStorage';
-import { clearDraft, getDraft, saveDraft, type DesignDraft } from '@/src/utils/designDraftStorage';
+import { clearDraft, getDraft, saveDraft, type DesignDraft, type Draft3DViewPose } from '@/src/utils/designDraftStorage';
+import { getProductDesignTemplate } from '@/src/utils/templateStorage';
 import { useCartStore } from '@/src/store/useCartStore';
 import { loadGoogleFonts } from '@/lib/googleFonts';
 import { libraryFontWeights } from '@/lib/googleFontLibrary';
@@ -189,6 +190,8 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
   const thumbnailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flushDraftSaveRef = useRef<(() => void) | null>(null);
+  const scheduleDraftSaveRef = useRef<(() => void) | null>(null);
+  const modelPosesRef = useRef<Record<string, Draft3DViewPose>>({});
   const isHydratingDraftRef = useRef(true);
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [isExporting, setIsExporting] = useState(false);
@@ -226,6 +229,12 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
     let isMounted = true;
     const flushDraftOnRequest = () => flushDraftSaveRef.current?.();
+    const handle3DViewPoseChanged = (event: Event) => {
+      const pose = (event as CustomEvent<{ pose?: Draft3DViewPose }>).detail?.pose;
+      if (!pose || !Number.isFinite(pose.theta) || !Number.isFinite(pose.phi) || !Number.isFinite(pose.zoom)) return;
+      modelPosesRef.current = { ...modelPosesRef.current, [currentViewIdRef.current]: pose };
+      scheduleDraftSaveRef.current?.();
+    };
     const handleRequestedView = (event: Event) => {
       const viewId = (event as CustomEvent<{ viewId?: string }>).detail?.viewId;
       if (viewId) switchViewRef.current?.(viewId);
@@ -2505,6 +2514,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       };
 
       const setupProduct = (product: Product) => {
+        modelPosesRef.current = {};
         const productColors: ColorVariant[] = product.colors?.length
           ? product.colors
           : [{
@@ -2753,6 +2763,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           updatedAt: Date.now(),
           currentViewId: currentViewIdRef.current,
           views,
+          modelPoses: { ...modelPosesRef.current },
           canvasJSON,
           thumbnails: { ...viewThumbnailsRef.current },
         };
@@ -2777,6 +2788,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           persistDraft();
         }, 1000);
       };
+      scheduleDraftSaveRef.current = scheduleDraftSave;
 
       const flushDraftSave = () => {
         if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
@@ -2813,8 +2825,31 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       });
 
       const hydrateDraft = async () => {
-        const draft = getDraft(activeProduct.id);
+        let draft = getDraft(activeProduct.id);
         await initialProductSetup;
+        if (!draft && activeProduct.designTemplate) {
+          const template = await getProductDesignTemplate(activeProduct.id);
+          if (template) {
+            const validViews = Object.fromEntries(Object.entries(template.views).filter(([viewId, serialized]) => {
+              if (!activeProduct.views.some((view) => view.id === viewId)) return false;
+              try { return Array.isArray(JSON.parse(serialized)); } catch { return false; }
+            }));
+            const templateViewId = validViews[currentViewIdRef.current] ? currentViewIdRef.current : Object.keys(validViews)[0];
+            if (templateViewId) {
+              let objects: unknown[] = [];
+              try { objects = JSON.parse(validViews[templateViewId]); } catch { objects = []; }
+              draft = {
+                schemaVersion: 1,
+                productId: activeProduct.id,
+                updatedAt: template.updatedAt,
+                currentViewId: templateViewId,
+                views: validViews,
+                modelPoses: template.modelPoses,
+                canvasJSON: { version: '5.3.0', objects },
+              };
+            }
+          }
+        }
         if (!draft || fabricCanvasRef.current !== canvas) {
           isHydratingDraftRef.current = false;
           publish3DViewSnapshots();
@@ -2822,6 +2857,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         }
 
         canvasDataRef.current = { ...draft.views };
+        modelPosesRef.current = { ...(draft.modelPoses ?? {}) };
         if (draft.currentViewId !== currentViewIdRef.current && activeProduct.views.some((view) => view.id === draft.currentViewId)) {
           await switchView(draft.currentViewId);
         } else {
@@ -5709,6 +5745,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       window.addEventListener('editor:replace-text', handleReplaceText);
       window.addEventListener('editor:clear-draft', handleClearDraft);
       window.addEventListener('editor:flush-draft', flushDraftOnRequest);
+      window.addEventListener('editor:3d-pose-changed', handle3DViewPoseChanged);
       window.addEventListener('editor:request-view', handleRequestedView);
       window.addEventListener('editor:add-to-cart', handleAddToCart);
       window.addEventListener('editor:buy-now', handleAddToCart);
@@ -5847,6 +5884,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       }
       if (handleClearDraft) window.removeEventListener('editor:clear-draft', handleClearDraft);
       window.removeEventListener('editor:flush-draft', flushDraftOnRequest);
+      window.removeEventListener('editor:3d-pose-changed', handle3DViewPoseChanged);
       window.removeEventListener('editor:request-view', handleRequestedView);
       if (handleAddToCart) window.removeEventListener('editor:add-to-cart', handleAddToCart);
       if (handleAddToCart) window.removeEventListener('editor:buy-now', handleAddToCart);
@@ -5921,6 +5959,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
       draftSaveTimerRef.current = null;
       flushDraftSaveRef.current = null;
+      scheduleDraftSaveRef.current = null;
       if (thumbnailTimerRef.current) clearTimeout(thumbnailTimerRef.current);
       thumbnailTimerRef.current = null;
       fitOnResize = null;

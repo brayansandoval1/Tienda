@@ -6,9 +6,10 @@ import { Grid, OrbitControls, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Product } from '@/src/store/useProductStore';
 import { DEFAULT_MESH_SETTINGS, type MeshSettings, type ProductVariant } from '@/src/config/products';
+import type { Draft3DViewPose } from '@/src/utils/designDraftStorage';
 import { decodeDesignBackground } from './designBackground';
 
-type FabricCanvasLike = {
+export type FabricCanvasLike = {
   getElement: () => HTMLCanvasElement;
   getObjects: () => Array<any>;
   backgroundColor?: unknown;
@@ -47,7 +48,7 @@ export type PrintAreaBounds = {
   /** Zona de destino calibrada en porcentajes de la cara desplegada. */
   projectionArea?: PrintAreaBounds;
 };
-type PrintViewSnapshot = {
+export type PrintViewSnapshot = {
   viewId: string;
   viewName?: string;
   viewIndex: number;
@@ -65,6 +66,7 @@ const DEFAULT_PRINT_TEXTURE_SIZE = {
   height: CYLINDER_TEXTURE_HEIGHT,
 };
 const projectionDiagnosticTimes = new Map<string, number>();
+const catalogProjectionLogTimes = new Map<string, number>();
 
 function paintDesignBackground(context: CanvasRenderingContext2D, raw: string | undefined, x: number, y: number, width: number, height: number) {
   const background = decodeDesignBackground(raw);
@@ -165,7 +167,7 @@ function WebGLDiagnostics() {
   return null;
 }
 
-function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, angleDirection = 1, lockRotation = false, modelScale = 1, debugProductId, debugViewName }: { viewIndex?: number; viewCount?: number; angleOffset?: number; angleDirection?: 1 | -1; lockRotation?: boolean; modelScale?: number; debugProductId?: string; debugViewName?: string }) {
+function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, angleDirection = 1, lockRotation = false, modelScale = 1, viewPose, debugProductId, debugViewName }: { viewIndex?: number; viewCount?: number; angleOffset?: number; angleDirection?: 1 | -1; lockRotation?: boolean; modelScale?: number; viewPose?: Draft3DViewPose; debugProductId?: string; debugViewName?: string }) {
   const { camera } = useThree();
   const controlsRef = useRef<any>(null);
   const zoomRef = useRef(1);
@@ -200,8 +202,10 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, 
     const spherical = new THREE.Spherical().setFromVector3(direction);
     const count = Math.max(1, Math.floor(viewCount));
     const normalizedIndex = Math.max(0, Math.min(count - 1, Math.floor(viewIndex)));
-    spherical.theta = angleDirection * ((normalizedIndex + 0.5) * 2 * Math.PI / count) + angleOffset;
-    if (lockRotation) spherical.radius = baseDistance / Math.max(0.5, modelScale);
+      spherical.theta = viewPose?.theta ?? (angleDirection * ((normalizedIndex + 0.5) * 2 * Math.PI / count) + angleOffset);
+      spherical.phi = viewPose?.phi ?? spherical.phi;
+      if (viewPose?.zoom) spherical.radius = baseDistance / Math.max(0.25, modelScale * viewPose.zoom);
+      else if (lockRotation) spherical.radius = baseDistance / Math.max(0.5, modelScale);
     camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical));
     camera.lookAt(controls.target);
     controls.update();
@@ -217,7 +221,7 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, 
         cameraPosition: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
       });
     }
-  }, [angleDirection, angleOffset, camera, debugProductId, debugViewName, lockRotation, modelScale, viewCount, viewIndex]);
+  }, [angleDirection, angleOffset, camera, debugProductId, debugViewName, lockRotation, modelScale, viewCount, viewIndex, viewPose]);
 
   useEffect(() => {
     const handleZoom = (event: Event) => {
@@ -243,8 +247,22 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, 
   const syncZoomFromOrbit = () => {
     const controls = controlsRef.current;
     if (!controls) return;
-    const distance = camera.position.distanceTo(controls.target);
+    const direction = camera.position.clone().sub(controls.target);
+    const distance = direction.length();
     if (distance > 0) zoomRef.current = Math.min(maxZoom, Math.max(minZoom, baseDistance / distance));
+    if (!lockRotation && distance > 0) {
+      const spherical = new THREE.Spherical().setFromVector3(direction);
+      window.dispatchEvent(new CustomEvent('editor:3d-pose-changed', {
+        detail: {
+          viewIndex,
+          pose: {
+            theta: spherical.theta,
+            phi: spherical.phi,
+            zoom: Math.min(maxZoom, Math.max(minZoom, baseDistance / distance)),
+          } satisfies Draft3DViewPose,
+        },
+      }));
+    }
   };
 
   return <OrbitControls
@@ -255,6 +273,7 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, 
     enableZoom={!lockRotation}
     enableDamping={!lockRotation}
     dampingFactor={0.08}
+    onEnd={() => { if (!lockRotation) window.dispatchEvent(new Event('editor:flush-draft')); }}
     minDistance={baseDistance / maxZoom}
     maxDistance={baseDistance / minZoom}
     minPolarAngle={Math.PI / 3.2}
@@ -267,7 +286,11 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
   // Si falta el área publicada por el editor, recorta una faja panorámica
   // centrada en el espacio lógico cuadrado de Fabric. El buffer conserva la
   // resolución/aspecto de la plantilla de impresión.
-  const sourceCanvas = fabricCanvas.getElement();
+  // StaticCanvas puede desmontarse mientras una actualización de textura
+  // quedó encolada. En ese caso se espera el siguiente render con el canvas nuevo.
+  let sourceCanvas: HTMLCanvasElement | undefined;
+  try { sourceCanvas = fabricCanvas.getElement?.(); } catch { return; }
+  if (!sourceCanvas || typeof sourceCanvas.width !== 'number' || typeof sourceCanvas.height !== 'number') return;
   const logicalWidth = Math.max(1, sourceCanvas.width || 800);
   const logicalHeight = Math.max(1, sourceCanvas.height || 800);
   const fallbackHeight = panoramic
@@ -402,6 +425,33 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     const visibleObjects = (objectsOverride ?? fabricCanvas.getObjects()).filter((object) =>
       object && object.visible !== false && !object.isMockup && !object.isGuide && !object.isGuideLine && !object.isCropOverlay && !object.isDesignBackground,
     );
+    if (safeAreaOutlineColor === '#0284c7') {
+      const logKey = `${area?.viewId ?? area?.viewIndex ?? 'view'}:${visibleObjects.length}:${target.width}x${target.height}`;
+      const now = Date.now();
+      if (now - (catalogProjectionLogTimes.get(logKey) ?? 0) > 3000) {
+        catalogProjectionLogTimes.set(logKey, now);
+        console.info('[catalog-design-debug] Textura de catálogo proyectada.', JSON.stringify({
+          viewId: area?.viewId,
+          viewIndex: area?.viewIndex,
+          sourceCanvas: { width: logicalWidth, height: logicalHeight },
+          sourceArea: { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height },
+          destinationUv: projectionArea,
+          visibleObjectCount: visibleObjects.length,
+          visibleObjects: JSON.stringify(visibleObjects.slice(0, 30).map((object) => ({
+            type: object.type,
+            name: object.name ?? object.label ?? object.layerName,
+            text: typeof object.text === 'string' ? object.text.slice(0, 80) : undefined,
+            imageSource: typeof object.getSrc === 'function' && typeof object.getSrc() === 'string'
+              ? (object.getSrc().startsWith('data:') ? `${object.getSrc().slice(0, object.getSrc().indexOf(';') + 1)} (${object.getSrc().length} chars)` : object.getSrc().slice(0, 160))
+              : undefined,
+            left: object.left,
+            top: object.top,
+            width: object.width,
+            height: object.height,
+          }))),
+        }));
+      }
+    }
     const objectBounds = visibleObjects.reduce((combined, object) => {
       const objectBounds = typeof object.getBoundingRect === 'function'
         ? object.getBoundingRect(true)
@@ -538,7 +588,7 @@ async function enlivenDesignObjects(serializedObjects: any[]) {
   });
 }
 
-function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectRatio, modelUrl, meshSettings, partColors, componentColors, enabledMeshNames, adminArea, totalViews, onUvAngleOffsetChange, onUvAlignmentReady }: { fabricCanvas: FabricCanvasLike; phoneCase: boolean; panoramic: boolean; printAspectRatio: number; modelUrl: string; meshSettings: MeshSettings; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[]; adminArea?: PrintAreaBounds; totalViews: number; onUvAngleOffsetChange: (angle: number, direction: 1 | -1) => void; onUvAlignmentReady: () => void }) {
+function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectRatio, modelUrl, meshSettings, partColors, componentColors, enabledMeshNames, adminArea, designViewSnapshots, totalViews, onUvAngleOffsetChange, onUvAlignmentReady }: { fabricCanvas: FabricCanvasLike; phoneCase: boolean; panoramic: boolean; printAspectRatio: number; modelUrl: string; meshSettings: MeshSettings; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[]; adminArea?: PrintAreaBounds; designViewSnapshots?: PrintViewSnapshot[]; totalViews: number; onUvAngleOffsetChange: (angle: number, direction: 1 | -1) => void; onUvAlignmentReady: () => void }) {
   const textureRef = useRef<THREE.CanvasTexture | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUpdatingTexture = useRef(false);
@@ -565,6 +615,12 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
     setSurfaceAspectRatio((current) => Math.abs(current - aspectRatio) > 0.001 ? aspectRatio : current);
   }, []);
   useEffect(() => {
+    if (adminArea) {
+      const adminSnapshots = designViewSnapshots ?? [];
+      designViewsRef.current = adminSnapshots;
+      setDesignViews(adminSnapshots);
+      return;
+    }
     const initialViews = (window as Window & { __editor3DViews?: PrintViewSnapshot[] }).__editor3DViews ?? [];
     designViewsRef.current = initialViews;
     setDesignViews(initialViews);
@@ -575,7 +631,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
     };
     window.addEventListener('editor:3d-views-changed', handleViewsChanged);
     return () => window.removeEventListener('editor:3d-views-changed', handleViewsChanged);
-  }, []);
+  }, [adminArea, designViewSnapshots]);
   const printCanvas = useMemo(() => {
     const canvas = document.createElement('canvas');
     const textureAspectRatio = Number.isFinite(surfaceAspectRatio) && surfaceAspectRatio > 0
@@ -626,9 +682,9 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
         const renderTexture = async () => {
           isUpdatingTexture.current = true;
           try {
-            const snapshots = adminArea ? [] : designViewsRef.current;
+            const snapshots = adminArea ? (designViewSnapshots ?? []) : designViewsRef.current;
             if (!snapshots.length) {
-              const liveArea3D = !adminArea ? printArea?.printArea3D : undefined;
+              const liveArea3D = printArea?.printArea3D;
               const liveProjection = liveArea3D ? {
                 left: Number(liveArea3D.x ?? liveArea3D.left ?? 0),
                 top: Number(liveArea3D.y ?? liveArea3D.top ?? 0),
@@ -728,7 +784,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
       window.removeEventListener('editor:design-background-changed', handleDesignBackgroundChanged);
       textureRef.current = null;
     };
-  }, [adminArea, designViews, fabricCanvas, panoramic, partColors.body, printArea, printCanvas, printableSurfaceColor, texture]);
+  }, [adminArea, designViewSnapshots, designViews, fabricCanvas, panoramic, partColors.body, printArea, printCanvas, printableSurfaceColor, texture]);
 
   useEffect(() => () => {
     snapshotObjectsCache.current.forEach(({ objects }) => {
@@ -939,6 +995,7 @@ function GLBModel({ url, texture, panoramic, viewCount, onSurfaceAspectChange, o
         uvRange,
         dimensions: size ? `${size.x.toFixed(3)} × ${size.y.toFixed(3)} × ${size.z.toFixed(3)}` : 'sin geometría',
         materials: materials.map((material) => material.name || material.type).join(', '),
+        materialMaps: materials.map((material) => Boolean((material as THREE.MeshStandardMaterial).map)),
         materialGroups: mesh.geometry.groups.length,
       });
     });
@@ -1007,6 +1064,13 @@ function GLBModel({ url, texture, panoramic, viewCount, onSurfaceAspectChange, o
       materiales: printMesh ? (Array.isArray(printMesh.material) ? printMesh.material : [printMesh.material]).map((material) => material.name || material.type) : [],
       grupos: printMesh?.geometry.groups.length ?? 0,
     };
+    console.info('[catalog-design-debug] Malla del modelo elegida para imprimir.', {
+      url,
+      selectedMesh: printMesh?.name,
+      strategy: selectionStrategy,
+      selectedMaterialMaps: printMesh ? (Array.isArray(printMesh.material) ? printMesh.material : [printMesh.material]).map((material) => Boolean((material as THREE.MeshStandardMaterial).map)) : [],
+      meshes,
+    });
     if (printMesh && !printableMesh && !bodyMesh && !geometryMesh) {
       console.warn('[Product3DViewer] No se encontró una malla llamada printable, body o geometry_0; se usará la malla con más vértices.', printMesh.name, selectionDetails);
     } else {
@@ -1112,7 +1176,7 @@ class ModelLoadBoundary extends Component<{ fallback: ReactNode; children: React
   render() { return this.state.failed ? this.props.fallback : this.props.children; }
 }
 
-function ProductModel({ product, fabricCanvas, meshSettings, partColors, componentColors, enabledMeshNames, adminArea, onUvAngleOffsetChange, onUvAlignmentReady }: { product: Product; fabricCanvas: FabricCanvasLike | null; meshSettings: MeshSettings; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[]; adminArea?: PrintAreaBounds; onUvAngleOffsetChange: (angle: number, direction: 1 | -1) => void; onUvAlignmentReady: () => void }) {
+function ProductModel({ product, fabricCanvas, meshSettings, partColors, componentColors, enabledMeshNames, adminArea, designViewSnapshots, onUvAngleOffsetChange, onUvAlignmentReady }: { product: Product; fabricCanvas: FabricCanvasLike | null; meshSettings: MeshSettings; partColors: ProductPartColors; componentColors: ComponentColors; enabledMeshNames: string[]; adminArea?: PrintAreaBounds; designViewSnapshots?: PrintViewSnapshot[]; onUvAngleOffsetChange: (angle: number, direction: 1 | -1) => void; onUvAlignmentReady: () => void }) {
   const phoneCase = /funda|iphone|phone|case/i.test(`${product.id} ${product.name}`);
   const hasPhysicalPrintSize = (product.printWidthCm ?? 0) > 0 && (product.printHeightCm ?? 0) > 0;
   const printAspect = hasPhysicalPrintSize
@@ -1139,10 +1203,10 @@ function ProductModel({ product, fabricCanvas, meshSettings, partColors, compone
     console.error('[Product3DViewer] El producto llegó al Canvas sin model3dUrl.', { productId: product.id });
     return fallback;
   }
-  return <FabricTextureSurface key={product.id} fabricCanvas={fabricCanvas} phoneCase={phoneCase} panoramic={panoramic} printAspectRatio={textureAspectRatio} modelUrl={modelUrl} meshSettings={meshSettings} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} adminArea={adminArea} totalViews={Math.max(1, product.views?.length || 1)} onUvAngleOffsetChange={onUvAngleOffsetChange} onUvAlignmentReady={onUvAlignmentReady} />;
+  return <FabricTextureSurface key={product.id} fabricCanvas={fabricCanvas} phoneCase={phoneCase} panoramic={panoramic} printAspectRatio={textureAspectRatio} modelUrl={modelUrl} meshSettings={meshSettings} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} adminArea={adminArea} designViewSnapshots={designViewSnapshots} totalViews={Math.max(1, product.views?.length || 1)} onUvAngleOffsetChange={onUvAngleOffsetChange} onUvAlignmentReady={onUvAlignmentReady} />;
 }
 
-export default function Product3DViewer({ product, componentColors, enabledMeshNames, showSafeAreaGuide = false, safeArea, activeViewIndex, activeViewName, sceneBackgroundUrl, scene3DPlacement, staticView = false }: { product: Product; componentColors: ComponentColors; enabledMeshNames: string[]; showSafeAreaGuide?: boolean; safeArea?: PrintAreaBounds; activeViewIndex?: number; activeViewName?: string; sceneBackgroundUrl?: string; scene3DPlacement?: { x: number; y: number; scale: number }; staticView?: boolean }) {
+export default function Product3DViewer({ product, componentColors, enabledMeshNames, showSafeAreaGuide = false, safeArea, activeViewIndex, activeViewName, sceneBackgroundUrl, scene3DPlacement, designCanvas, designViewSnapshots, viewPose, staticView = false }: { product: Product; componentColors: ComponentColors; enabledMeshNames: string[]; showSafeAreaGuide?: boolean; safeArea?: PrintAreaBounds; activeViewIndex?: number; activeViewName?: string; sceneBackgroundUrl?: string; scene3DPlacement?: { x: number; y: number; scale: number }; designCanvas?: FabricCanvasLike; designViewSnapshots?: PrintViewSnapshot[]; viewPose?: Draft3DViewPose; staticView?: boolean }) {
   const sceneFrameRef = useRef<HTMLElement | null>(null);
   const [sceneFrameSize, setSceneFrameSize] = useState({ width: 1, height: 1 });
   const [sceneBackgroundAspect, setSceneBackgroundAspect] = useState<number | null>(null);
@@ -1188,7 +1252,7 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
     return { getElement: () => canvas, getObjects: () => [], on: () => {}, off: () => {} };
   }, []);
   const previewMode = showSafeAreaGuide;
-  const resolvedFabricCanvas = previewMode ? adminFabricCanvas : fabricCanvas;
+  const resolvedFabricCanvas = previewMode ? designCanvas ?? adminFabricCanvas : fabricCanvas;
   const previewViewCount = Math.max(1, Number(safeArea?.viewCount) || 1);
   const activeAdminViewIndex = Math.max(0, Math.min(previewViewCount - 1, activeViewIndex ?? 0));
   const [editorViewIndex, setEditorViewIndex] = useState(Math.max(0, Math.floor(Number(printArea?.viewIndex) || 0)));
@@ -1304,13 +1368,13 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
       <ambientLight intensity={1.05} />
       <directionalLight castShadow position={[3, 5, 4]} intensity={2} />
       <directionalLight position={[-4, 1, 2]} intensity={0.7} color="#c4b5fd" />
-      <ProductModel product={product} fabricCanvas={resolvedFabricCanvas} meshSettings={meshSettings} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} adminArea={adminArea} onUvAngleOffsetChange={handleUvAngleOffsetChange} onUvAlignmentReady={handleUvAlignmentReady} />
+      <ProductModel product={product} fabricCanvas={resolvedFabricCanvas} meshSettings={meshSettings} partColors={partColors} componentColors={componentColors} enabledMeshNames={enabledMeshNames} adminArea={adminArea} designViewSnapshots={designViewSnapshots} onUvAngleOffsetChange={handleUvAngleOffsetChange} onUvAlignmentReady={handleUvAlignmentReady} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.55, 0]} receiveShadow>
         <planeGeometry args={[200, 200]} />
         <shadowMaterial opacity={0.12} />
       </mesh>
       {!sceneBackgroundUrl && <Grid position={[0, -1.54, 0]} rotation={[0, 0, 0]} infiniteGrid cellSize={0.35} sectionSize={1.4} fadeDistance={12} fadeStrength={1.2} cellColor="#cbd5e1" sectionColor="#94a3b8" />}
-      <ZoomableOrbitControls viewIndex={previewMode ? activeAdminViewIndex : controlledViewIndex} viewCount={previewMode ? previewViewCount : viewCount} angleOffset={uvAlignment.angle} angleDirection={uvAlignment.direction} lockRotation={staticView} modelScale={placementScale} debugProductId={staticView ? product.id : undefined} debugViewName={staticView ? debugViewName : undefined} />
+      <ZoomableOrbitControls viewIndex={previewMode ? activeAdminViewIndex : controlledViewIndex} viewCount={previewMode ? previewViewCount : viewCount} angleOffset={uvAlignment.angle} angleDirection={uvAlignment.direction} lockRotation={staticView} modelScale={placementScale} viewPose={staticView ? viewPose : undefined} debugProductId={staticView ? product.id : undefined} debugViewName={staticView ? debugViewName : undefined} />
     </Canvas>
     {!isStaticViewReady && <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center bg-white/20 text-xs font-semibold text-slate-600 backdrop-blur-[1px]">Preparando encuadre de la vista…</div>}
     {!staticView && <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/80 bg-white/75 px-3 py-1.5 text-[10px] font-medium text-slate-500 shadow-sm backdrop-blur">Arrastra para girar · rueda para acercar</div>}

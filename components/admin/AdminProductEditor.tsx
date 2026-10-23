@@ -17,12 +17,15 @@ import GLBModelPreview from '@/components/admin/GLBModelPreview';
 import { DEFAULT_MESH_SETTINGS, type MeshSettings, type SafeAreaPoint, type SafeAreaShape } from '@/src/config/products';
 import { seedSafeAreaPolygon } from '@/src/utils/safeAreaPolygon';
 import { validateGLBArrayBuffer } from '@/src/utils/glbValidation';
+import { getDraft, type Draft3DViewPose } from '@/src/utils/designDraftStorage';
+import { deleteProductDesignTemplate, getProductDesignTemplate, saveProductDesignTemplate } from '@/src/utils/templateStorage';
+import type { FabricCanvasLike, PrintAreaBounds, PrintViewSnapshot } from '@/components/editor/Product3DViewer';
 
 const Product3DViewer = dynamic(() => import('@/components/editor/Product3DViewer'), { ssr: false, loading: () => <div className="grid h-full min-h-[280px] place-items-center text-xs text-slate-500">Cargando visor 3D…</div> });
 
 type ProductViewForm = { id: string; name: string; mockupUrl: string; x: string; y: string; width: string; height: string; shape: SafeAreaShape; radius: string; /** Nodos del contorno libre serializados ('' = forma paramétrica). */ polygon: string; area3D: PrintArea; surfaceX: string; surfaceY: string; surfaceWidth: string; surfaceHeight: string; surfaceCustomized: boolean };
 type ProductForm = { name: string; price: string; category: string; printWidthCm: string; printHeightCm: string; model3dUrl: string; textureWidth: string; textureHeight: string; hasMultipleSides: boolean; extraSidePrice: string; fullWrapPrice: string; sidesPricingMode: 'per_side' | 'wrap'; setupFee: string; minimumQuantity: string; volumeDiscounts: Array<{ minQty: string; discountPercentage: string }>; availableAddonIds: string[]; customizableParts: CustomizablePart[]; options: ProductOption[]; views: ProductViewForm[] };
-type ProductFormTab = 'basics' | 'pricing' | 'model' | 'views' | 'variants';
+type ProductFormTab = 'basics' | 'pricing' | 'model' | 'views' | 'variants' | 'template';
 type MeshInspection = { name: string; vertexCount: number; triangleCount: number; dimensions: string; materialNames: string[]; uvCount: number; uvRange: string | null; uvOutsideCount: number; overlappingUvTriangles: number };
 type MeshInspectionState = { status: 'idle' | 'loading' | 'success' | 'error'; message: string; meshes: MeshInspection[] };
 
@@ -230,6 +233,8 @@ export default function AdminProductEditor() {
   const removeProduct = useProductStore((state) => state.removeProduct);
   const [form, setForm] = useState<ProductForm>(emptyForm);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [designTemplate, setDesignTemplate] = useState<Product['designTemplate']>();
+  const [templateMessage, setTemplateMessage] = useState('');
   const [activeTab, setActiveTab] = useState(0);
   const [activeProductFormTab, setActiveProductFormTab] = useState<ProductFormTab>('basics');
   const [productQuery, setProductQuery] = useState('');
@@ -237,6 +242,10 @@ export default function AdminProductEditor() {
   const [productStatusFilter, setProductStatusFilter] = useState('all');
   const [productSetupFilter, setProductSetupFilter] = useState('all');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const catalogSceneInputRef = useRef<HTMLInputElement>(null);
+  const [catalogCoverUrl, setCatalogCoverUrl] = useState('');
+  const [catalogSceneUrl, setCatalogSceneUrl] = useState('');
+  const [catalogModelPlacement, setCatalogModelPlacement] = useState({ x: 0, y: 0, scale: 1 });
   const modelFileInputRef = useRef<HTMLInputElement>(null);
   const meshInspectRequestRef = useRef(0);
   const [meshInspection, setMeshInspection] = useState<MeshInspectionState>({ status: 'idle', message: '', meshes: [] });
@@ -255,6 +264,7 @@ export default function AdminProductEditor() {
   const baseViews = useMemo(() => form.views.map((view) => ({ id: view.id, name: view.name || 'Vista', mockupUrl: view.mockupUrl, printArea: normalizePrintArea({ x: Number(view.x), y: Number(view.y), width: Number(view.width), height: Number(view.height), shape: view.shape, radius: Number(view.radius), polygon: parsePolygonForm(view.polygon) }) })), [form.views]);
   const adminPreviewProduct: Product = useMemo(() => ({
     id: selectedId ?? 'admin-product-preview', name: form.name || 'Vista previa', category: form.category,
+    ...(designTemplate ? { designTemplate } : {}),
     price: Number(form.price) || 0, canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT,
     printWidthCm: printWidth || undefined, printHeightCm: printHeight || undefined,
     model3dUrl: form.model3dUrl.trim() || localGLBUrl || undefined,
@@ -265,18 +275,26 @@ export default function AdminProductEditor() {
     views: form.views.map((view) => ({
       id: view.id, name: view.name || 'Vista', mockupUrl: view.mockupUrl,
       printArea: { x: Number(view.x), y: Number(view.y), left: Number(view.x), top: Number(view.y), width: Number(view.width), height: Number(view.height), ...(view.shape !== 'rect' ? { shape: view.shape } : {}), ...(view.shape === 'rounded' ? { radius: Number(view.radius) } : {}), ...(parsePolygonForm(view.polygon) ? { polygon: parsePolygonForm(view.polygon) } : {}) },
+      printArea3D: (() => { const area = normalizePrintArea(view.area3D); return { x: area.x, y: area.y, left: area.x, top: area.y, width: area.width, height: area.height, shape: area.shape, radius: area.radius, polygon: area.polygon, nodes: area.polygon }; })(),
       printAreaUnit: 'percent',
     })),
-  }), [selectedId, form, products, printWidth, printHeight, localGLBUrl]);
-  const adminArea = activeView && activeArea3D ? {
-    left: activeArea3D.x * 8, top: activeArea3D.y * 8,
-    width: activeArea3D.width * 8, height: activeArea3D.height * 8,
+  }), [selectedId, form, products, printWidth, printHeight, localGLBUrl, designTemplate]);
+  const activePrintArea = activeView ? normalizePrintArea({ x: Number(activeView.x), y: Number(activeView.y), width: Number(activeView.width), height: Number(activeView.height), shape: activeView.shape, radius: Number(activeView.radius), polygon: parsePolygonForm(activeView.polygon) }) : null;
+  const adminArea = activeView && activeArea3D && activePrintArea ? {
+    // El arte nace en la zona 2D del editor; la zona 3D calibrada es el destino UV.
+    left: activePrintArea.x * 8, top: activePrintArea.y * 8,
+    width: activePrintArea.width * 8, height: activePrintArea.height * 8,
     canvasWidth: REFERENCE_WIDTH, canvasHeight: REFERENCE_HEIGHT,
-    shape: activeArea3D.shape,
-    radius: activeArea3D.radius,
-    polygon: activeArea3D.polygon?.map((point) => ({ x: point.x * 8, y: point.y * 8 })),
+    shape: activePrintArea.shape,
+    radius: activePrintArea.radius,
+    polygon: activePrintArea.polygon?.map((point) => ({ x: point.x * 8, y: point.y * 8 })),
+    printArea3D: {
+      x: activeArea3D.x, y: activeArea3D.y, width: activeArea3D.width, height: activeArea3D.height,
+      shape: activeArea3D.shape, radius: activeArea3D.radius, polygon: activeArea3D.polygon,
+    },
     viewIndex: activeIndex, viewCount: Math.max(1, form.views.length), viewId: activeView.id, viewName: activeView.name,
   } : null;
+  const hasAssignedDesignForActiveView = Boolean(activeView && designTemplate?.viewIds.includes(activeView.id));
   const area3DAspectRatio = Number(form.textureWidth) / Math.max(1, Number(form.textureHeight) * Math.max(1, form.views.length));
   const productCategories = useMemo(() => [...new Set(products.map((product) => product.category.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es')), [products]);
   const filteredProducts = useMemo(() => products.filter((product) => {
@@ -460,10 +478,44 @@ export default function AdminProductEditor() {
   });
   const handleAddView = () => setForm((current) => { const next = [...current.views, createViewForm(current.views.length)]; setActiveTab(next.length - 1); return { ...current, views: next }; });
   const removeView = (index: number) => setForm((current) => ({ ...current, views: current.views.filter((_, viewIndex) => viewIndex !== index) }));
-  const resetForm = () => { setSelectedId(null); setForm(emptyForm()); setLocalGLBFile(null); setMeshInspection({ status: 'idle', message: '', meshes: [] }); setActiveTab(0); setActiveProductFormTab('basics'); };
-  const handleSelect = (product: Product) => { setSelectedId(product.id); setForm(toForm(product)); setLocalGLBFile(null); setMeshInspection({ status: 'idle', message: '', meshes: [] }); setActiveTab(0); setActiveProductFormTab('basics'); };
+  const resetForm = () => { setSelectedId(null); setForm(emptyForm()); setDesignTemplate(undefined); setCatalogCoverUrl(''); setCatalogSceneUrl(''); setCatalogModelPlacement({ x: 0, y: 0, scale: 1 }); setTemplateMessage(''); setLocalGLBFile(null); setMeshInspection({ status: 'idle', message: '', meshes: [] }); setActiveTab(0); setActiveProductFormTab('basics'); };
+  const handleSelect = (product: Product) => { setSelectedId(product.id); setForm(toForm(product)); setDesignTemplate(product.designTemplate); setCatalogSceneUrl(product.catalogSceneUrl ?? (!product.catalogSceneUrl ? product.catalogCoverUrl ?? '' : '')); setCatalogCoverUrl(product.catalogSceneUrl ? product.catalogCoverUrl ?? '' : ''); setCatalogModelPlacement(product.catalogModelPlacement ?? { x: 0, y: 0, scale: 1 }); setTemplateMessage(''); setLocalGLBFile(null); setMeshInspection({ status: 'idle', message: '', meshes: [] }); setActiveTab(0); setActiveProductFormTab('basics'); };
+  const importDesignTemplate = async () => {
+    if (!selectedId) { setTemplateMessage('Guarda primero el producto para poder preparar su diseño base.'); return; }
+    const draft = getDraft(selectedId);
+    if (!draft) {
+      console.warn('[catalog-design-debug] No hay borrador local para importar.', { productId: selectedId });
+      setTemplateMessage('No hay un borrador de diseño guardado para este producto. Ábrelo en el editor, prepara el diseño y vuelve aquí.'); return;
+    }
+    console.info('[catalog-design-debug] Borrador encontrado.', JSON.stringify({
+      productId: selectedId,
+      draftViewIds: Object.keys(draft.views),
+      adminViews: form.views.map(({ id, name }) => ({ id, name })),
+      objectCounts: Object.fromEntries(Object.entries(draft.views).map(([viewId, serialized]) => {
+        try { return [viewId, JSON.parse(serialized).length]; } catch { return [viewId, 'JSON inválido']; }
+      })),
+    }));
+    const matchingViews = Object.fromEntries(form.views.flatMap((view) => {
+      const serialized = draft.views[view.id];
+      if (!serialized) return [];
+      try {
+        const parsed = JSON.parse(serialized);
+        return Array.isArray(parsed) ? [[view.id, serialized]] : [];
+      } catch { return []; }
+    }));
+    if (!Object.keys(matchingViews).length) {
+      console.error('[catalog-design-debug] No coinciden los IDs de vista del borrador y del producto.', { draftViewIds: Object.keys(draft.views), adminViewIds: form.views.map((view) => view.id) });
+      setTemplateMessage('El borrador no contiene diseños para las vistas actuales del producto. Revisa la consola: los IDs de vista no coinciden.'); return;
+    }
+    const template = { schemaVersion: 1 as const, productId: selectedId, updatedAt: Date.now(), views: matchingViews, modelPoses: draft.modelPoses ?? {} };
+    if (!await saveProductDesignTemplate(template)) { setTemplateMessage('No se pudo guardar en el almacenamiento local. Revisa el espacio disponible e inténtalo de nuevo.'); return; }
+    console.info('[catalog-design-debug] Plantilla importada en IndexedDB.', JSON.stringify({ productId: selectedId, viewIds: Object.keys(matchingViews), updatedAt: template.updatedAt }));
+    setDesignTemplate({ schemaVersion: 1, updatedAt: template.updatedAt, viewIds: Object.keys(matchingViews) });
+    setTemplateMessage(`Diseño base importado para ${Object.keys(matchingViews).length} ${Object.keys(matchingViews).length === 1 ? 'vista' : 'vistas'}. Guarda el producto para conservarlo.`);
+  };
   const handleDeleteProduct = (productId: string) => {
     removeProduct(productId);
+    void deleteProductDesignTemplate(productId);
     if (selectedId === productId) resetForm();
   };
   const handleMockupFile = (file?: File) => {
@@ -475,6 +527,12 @@ export default function AdminProductEditor() {
       .catch((error) => console.error('❌ [ADMIN] Error al procesar el mockup:', error));
   };
   const handleReplaceMockup = () => fileInputRef.current?.click();
+  const handleCatalogSceneFile = (file?: File) => {
+    if (!file || !file.type.startsWith('image/')) return;
+    compressImageFileToDataUrl(file, 1600, 0.82)
+      .then(setCatalogSceneUrl)
+      .catch((error) => console.error('No se pudo procesar el fondo de escena del catálogo:', error));
+  };
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const setupFee = Number(form.setupFee);
@@ -518,6 +576,9 @@ export default function AdminProductEditor() {
     const product: Product = {
       id: productId,
       isActive: existingProduct?.isActive !== false,
+      ...(catalogCoverUrl.trim() ? { catalogCoverUrl: catalogCoverUrl.trim() } : {}),
+      ...(catalogSceneUrl.trim() ? { catalogSceneUrl: catalogSceneUrl.trim() } : {}),
+      ...(catalogSceneUrl.trim() ? { catalogModelPlacement: { x: Math.max(-40, Math.min(40, catalogModelPlacement.x)), y: Math.max(-40, Math.min(40, catalogModelPlacement.y)), scale: Math.max(0.5, Math.min(1.8, catalogModelPlacement.scale)) } } : {}),
       name: form.name.trim(),
       price: basePrice,
       basePrice,
@@ -568,8 +629,10 @@ export default function AdminProductEditor() {
           ...(view.surfaceCustomized ? { printSurface3D: { x: cleanPercentage(Number(view.surfaceX)), y: cleanPercentage(Number(view.surfaceY)), width: cleanPercentage(Number(view.surfaceWidth)), height: cleanPercentage(Number(view.surfaceHeight)) } } : {}),
         };
       }),
+      ...(designTemplate && designTemplate.viewIds.length ? { designTemplate } : {}),
     };
     selectedId ? updateProduct(product) : addProduct(product);
+    if (!designTemplate && existingProduct?.designTemplate) void deleteProductDesignTemplate(productId);
     try {
       await Promise.all(addonCatalog.map((addon) => {
         const nextApplicableProducts = form.availableAddonIds.includes(addon.id)
@@ -611,9 +674,10 @@ export default function AdminProductEditor() {
                 { id: 'model', label: 'Modelo 3D', done: Boolean(form.model3dUrl.trim() && form.customizableParts.length > 0) },
                 { id: 'views', label: 'Vistas y zonas', done: form.views.length > 0 && form.views.every((view) => Boolean(view.mockupUrl.trim())) },
                 { id: 'variants', label: 'Variantes', done: form.options.length > 0 },
+                { id: 'template', label: 'Diseño base', done: Boolean(designTemplate?.viewIds.length) },
               ] as const).map((tab, index) => <button key={tab.id} type="button" onClick={() => setActiveProductFormTab(tab.id)} aria-current={activeProductFormTab === tab.id ? 'step' : undefined} className={`flex shrink-0 items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs font-semibold transition ${activeProductFormTab === tab.id ? 'bg-emerald-700 text-white shadow-sm' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-800'}`}><span className={`grid h-5 w-5 place-items-center rounded-full text-[9px] ${activeProductFormTab === tab.id ? 'bg-white/15 text-white' : tab.done ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{tab.done ? '✓' : index + 1}</span>{tab.label}</button>)}
             </div>
-            <div className="mt-2 h-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-500 transition-all duration-300" style={{ width: `${(({ basics: 1, pricing: 2, model: 3, views: 4, variants: 5 } as const)[activeProductFormTab] / 5) * 100}%` }} /></div>
+            <div className="mt-2 h-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-500 transition-all duration-300" style={{ width: `${(({ basics: 1, pricing: 2, model: 3, views: 4, variants: 5, template: 6 } as const)[activeProductFormTab] / 6) * 100}%` }} /></div>
           </nav>
           {activeProductFormTab === 'basics' && (
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Datos básicos</h2><p className="mt-1 text-sm text-slate-500">Información que verán tus clientes al elegir el producto.</p></div>
@@ -714,6 +778,14 @@ export default function AdminProductEditor() {
           </section>
           )}
           {activeProductFormTab === 'variants' && <AdminProductOptionsForm options={form.options} baseViews={baseViews} onChange={(options) => setForm((current) => ({ ...current, options }))} />}
+          {activeProductFormTab === 'template' && <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Diseño base del catálogo</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">Sube la escena y aquí verás el modelo 3D con el diseño aplicado. Guarda esa vista como portada optimizada para la página principal; el diseño seguirá editable por capas.</p></div>
+            <div className="mb-6 rounded-xl border border-violet-200 bg-violet-50/50 p-4"><h3 className="text-sm font-semibold text-slate-800">Fondo de escena</h3><p className="mt-1 text-xs leading-5 text-slate-500">Sube solo el ambiente/fondo, sin el producto. El modelo y el diseño se componen encima en la vista previa.</p><input ref={catalogSceneInputRef} type="file" accept="image/*" className="sr-only" onChange={(event) => { handleCatalogSceneFile(event.target.files?.[0]); event.currentTarget.value = ''; }} />{catalogSceneUrl ? <div className="mt-3 flex items-center gap-3"><img src={catalogSceneUrl} alt="Fondo de escena" className="h-20 w-32 rounded-lg border border-slate-200 bg-white object-cover" /><button type="button" onClick={() => catalogSceneInputRef.current?.click()} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700">Cambiar fondo</button><button type="button" onClick={() => setCatalogSceneUrl('')} className="rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-700">Quitar</button></div> : <button type="button" onClick={() => catalogSceneInputRef.current?.click()} className="mt-3 inline-flex items-center gap-2 rounded-lg border border-dashed border-violet-300 bg-white px-3 py-2.5 text-sm font-semibold text-violet-700"><Upload size={15} /> Subir fondo de escena</button>}<div className="mt-3 max-w-xl"><Field label="O pega la URL/ruta del fondo" value={catalogSceneUrl.startsWith('data:') ? '' : catalogSceneUrl} onChange={setCatalogSceneUrl} placeholder="/scenes/playa.webp" /></div></div>
+            {catalogSceneUrl && <div className="mb-6 grid max-w-xl grid-cols-3 gap-3"><Field label="Mover X (%)" type="number" min="-40" max="40" step="1" value={String(catalogModelPlacement.x)} onChange={(value) => setCatalogModelPlacement((current) => ({ ...current, x: Number(value) || 0 }))} /><Field label="Mover Y (%)" type="number" min="-40" max="40" step="1" value={String(catalogModelPlacement.y)} onChange={(value) => setCatalogModelPlacement((current) => ({ ...current, y: Number(value) || 0 }))} /><Field label="Escala del modelo" type="number" min="0.5" max="1.8" step="0.05" value={String(catalogModelPlacement.scale)} onChange={(value) => setCatalogModelPlacement((current) => ({ ...current, scale: Number(value) || 1 }))} />{adminArea && adminPreviewProduct.model3dUrl && <p className="col-span-3 text-xs text-slate-500">Ajusta el tamaño y la posición del modelo sobre la escena; la vista previa se actualiza al instante.</p>}</div>}
+            {adminArea && adminPreviewProduct.model3dUrl && catalogSceneUrl ? <div className="mb-6"><h3 className="mb-2 text-sm font-semibold text-slate-800">Vista previa final · {activeView?.name}</h3>{hasAssignedDesignForActiveView ? <CatalogScenePreview product={adminPreviewProduct} safeArea={adminArea} viewIndex={activeIndex} sceneUrl={catalogSceneUrl} placement={catalogModelPlacement} onCapture={setCatalogCoverUrl} /> : <CatalogSceneWaitingPreview sceneUrl={catalogSceneUrl} />}</div> : <p className="mb-6 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">Para previsualizar la composición, configura el modelo 3D, una zona imprimible y el fondo de escena. Importa el borrador del editor para mostrar el modelo sobre el fondo.</p>}
+            {catalogCoverUrl && <div className="mb-6 max-w-xl rounded-xl border border-emerald-200 bg-emerald-50 p-3"><p className="mb-2 text-sm font-semibold text-emerald-900">Portada que se publicará en el catálogo</p><img src={catalogCoverUrl} alt="Portada compuesta del producto" className="max-h-80 w-full rounded-lg object-cover" /></div>}
+            <div className="flex flex-wrap items-center gap-3">{selectedId && <Link href={`/editor/${selectedId}`} target="_blank" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800 hover:bg-emerald-100">Preparar diseño en el editor</Link>}<button type="button" onClick={importDesignTemplate} className="rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800">Importar borrador del editor</button>{designTemplate && <button type="button" onClick={() => { setDesignTemplate(undefined); setTemplateMessage('El diseño base se quitará al guardar el producto.'); }} className="rounded-lg border border-rose-200 px-4 py-2.5 text-sm font-semibold text-rose-700 hover:bg-rose-50">Quitar diseño base</button>}</div>{designTemplate && <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4"><p className="text-sm font-semibold text-emerald-900">Plantilla asignada · {designTemplate.viewIds.length} {designTemplate.viewIds.length === 1 ? 'vista' : 'vistas'}</p><div className="mt-2 flex flex-wrap gap-2">{form.views.filter((view) => designTemplate.viewIds.includes(view.id)).map((view) => <span key={view.id} className="rounded-full bg-white px-3 py-1 text-xs font-medium text-emerald-800">{view.name || view.id}</span>)}</div></div>}<p role="status" className="mt-4 text-sm text-slate-600">{templateMessage || (selectedId ? 'Abre el editor, prepara y deja que se guarde el borrador; vuelve aquí e impórtalo. Guarda este producto para asignar la plantilla.' : 'Primero guarda el producto; después podrás preparar su diseño inicial en el editor.')}</p>
+          </section>}
           <section className="overflow-hidden rounded-xl border border-slate-200 bg-white px-6 pt-1 shadow-sm"><div className="sticky bottom-0 z-10 -mx-6 -mb-6 mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white/80 p-4 backdrop-blur-md"><span className="text-xs text-slate-500">Última modificación realizada recientemente</span><div className="flex gap-3"><button type="button" onClick={resetForm} className="rounded-lg px-4 py-2 text-sm text-slate-600 hover:bg-slate-100">Cancelar</button><button type="submit" className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700">Guardar producto</button></div></div></section>
         </div>
 
@@ -725,4 +797,176 @@ export default function AdminProductEditor() {
 
 function Field({ label, className = '', onChange, ...props }: Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange'> & { label: string; onChange: (value: string) => void }) {
   return <label className={`grid gap-1.5 text-sm font-medium text-slate-700 ${className}`}><span>{label}</span><input {...props} onChange={(event) => onChange(event.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" /></label>;
+}
+
+function CatalogSceneWaitingPreview({ sceneUrl }: { sceneUrl: string }) {
+  return <div className="relative grid h-[420px] place-items-center overflow-hidden rounded-xl border border-slate-200 bg-slate-100 bg-cover bg-center" style={{ backgroundImage: `url("${sceneUrl.replace(/"/g, '%22')}")` }}>
+    <div className="absolute inset-0 bg-slate-950/25" />
+    <div className="relative mx-4 max-w-md rounded-xl bg-white/95 p-5 text-center shadow-lg backdrop-blur-sm">
+      <p className="text-sm font-semibold text-slate-900">Fondo de escena listo</p>
+      <p className="mt-1 text-sm leading-6 text-slate-600">Importa el borrador del editor para mostrar aquí el modelo con tu diseño.</p>
+    </div>
+  </div>;
+}
+
+function summarizeCatalogDesignObjects(objects: unknown[]) {
+  return objects.slice(0, 30).map((value) => {
+    const object = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+    const source = typeof object.src === 'string' ? object.src : '';
+    return {
+      type: object.type,
+      name: object.name ?? object.label ?? object.layerName,
+      text: typeof object.text === 'string' ? object.text.slice(0, 240) : undefined,
+      left: object.left,
+      top: object.top,
+      width: object.width,
+      height: object.height,
+      scaleX: object.scaleX,
+      scaleY: object.scaleY,
+      angle: object.angle,
+      visible: object.visible,
+      imageSource: source ? (source.startsWith('data:') ? `${source.slice(0, source.indexOf(';') + 1)} (${source.length} chars)` : source.slice(0, 160)) : undefined,
+    };
+  });
+}
+
+function CatalogScenePreview({ product, safeArea, viewIndex, sceneUrl, placement, onCapture }: { product: Product; safeArea: PrintAreaBounds; viewIndex: number; sceneUrl: string; placement: { x: number; y: number; scale: number }; onCapture: (image: string) => void }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [designCanvas, setDesignCanvas] = useState<FabricCanvasLike | undefined>();
+  const [designViewSnapshots, setDesignViewSnapshots] = useState<PrintViewSnapshot[]>([]);
+  const [designViewPose, setDesignViewPose] = useState<Draft3DViewPose | undefined>();
+  const [status, setStatus] = useState('Preparando diseño de la vista…');
+  const [capturing, setCapturing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let canvas: any;
+    setDesignCanvas(undefined);
+    setDesignViewSnapshots([]);
+    setDesignViewPose(undefined);
+    const load = async () => {
+      try {
+        const viewId = product.views[viewIndex]?.id;
+        if (!viewId) return;
+        // La vista pública/admin solo debe usar el diseño que se asignó
+        // explícitamente al producto; un borrador local por sí solo no es plantilla.
+        const templateAssigned = product.designTemplate?.viewIds.includes(viewId) ?? false;
+        const template = templateAssigned ? await getProductDesignTemplate(product.id) : null;
+        const serialized = template?.views[viewId];
+        setDesignViewPose(template?.modelPoses?.[viewId]);
+        const objectsByView = Object.fromEntries(product.views.map((view) => {
+          const serializedView = template?.views[view.id];
+          let viewObjects: any[] = [];
+          try {
+            const parsed = serializedView ? JSON.parse(serializedView) : [];
+            if (Array.isArray(parsed)) viewObjects = parsed;
+          } catch { /* Una vista dañada no debe impedir cargar las demás caras. */ }
+          return [view.id, viewObjects];
+        }));
+        const objects = objectsByView[viewId] ?? [];
+        const designSnapshots: PrintViewSnapshot[] = product.views.map((view, index) => {
+          const printArea = view.printArea;
+          const x = Number(printArea.x ?? printArea.left ?? 0);
+          const y = Number(printArea.y ?? printArea.top ?? 0);
+          const area3D = view.printArea3D;
+          return {
+            viewId: view.id,
+            viewName: view.name,
+            viewIndex: index,
+            viewCount: product.views.length,
+            area: {
+              left: x * 8,
+              top: y * 8,
+              width: Number(printArea.width) * 8,
+              height: Number(printArea.height) * 8,
+              canvasWidth: REFERENCE_WIDTH,
+              canvasHeight: REFERENCE_HEIGHT,
+              shape: printArea.shape,
+              radius: printArea.radius,
+              polygon: printArea.polygon?.map((point) => ({ x: point.x * 8, y: point.y * 8 })),
+              viewId: view.id,
+              viewName: view.name,
+              viewIndex: index,
+              viewCount: product.views.length,
+            },
+            projectionArea: area3D ? {
+              left: Number(area3D.x ?? area3D.left ?? 0),
+              top: Number(area3D.y ?? area3D.top ?? 0),
+              width: Number(area3D.width),
+              height: Number(area3D.height),
+              shape: area3D.shape,
+              radius: area3D.radius,
+              polygon: area3D.nodes ?? area3D.polygon,
+            } : undefined,
+            objects: objectsByView[view.id] ?? [],
+          };
+        });
+        console.info('[catalog-design-debug] Cargando plantilla para la vista.', JSON.stringify({
+          productId: product.id,
+          viewId,
+          templateAssigned,
+          templateFound: Boolean(template),
+          templateViewIds: template ? Object.keys(template.views) : [],
+          serializedLength: serialized?.length ?? 0,
+          serializedObjectCount: objects.length,
+          serializedObjects: JSON.stringify(summarizeCatalogDesignObjects(objects)),
+        }));
+        const fabricModule = await import('fabric');
+        if (cancelled) return;
+        const fabric: any = (fabricModule as any).fabric || fabricModule;
+        canvas = new fabric.StaticCanvas(document.createElement('canvas'), { width: REFERENCE_WIDTH, height: REFERENCE_HEIGHT, backgroundColor: 'transparent', renderOnAddRemove: false });
+        await new Promise<void>((resolve) => canvas.loadFromJSON({ version: '5.3.0', objects }, resolve));
+        if (cancelled) { canvas.dispose(); return; }
+        canvas.renderAll();
+        setDesignCanvas(canvas as FabricCanvasLike);
+        setDesignViewSnapshots(designSnapshots);
+        console.info('[catalog-design-debug] Lienzo Fabric listo para el visor.', JSON.stringify({ productId: product.id, viewId, loadedObjectCount: canvas.getObjects().length, loadedObjects: summarizeCatalogDesignObjects(canvas.getObjects()) }));
+        console.info('[catalog-design-debug] Vistas 360 listas para el visor.', JSON.stringify({ productId: product.id, activeViewId: viewId, views: designSnapshots.map((snapshot) => ({ viewId: snapshot.viewId, viewName: snapshot.viewName, viewIndex: snapshot.viewIndex, objectCount: snapshot.objects.length, area: snapshot.area, projectionArea: snapshot.projectionArea })) }));
+        setStatus(objects.length ? 'Vista previa con el diseño base asignado.' : 'Sin diseño base asignado; se muestra el producto y la escena.');
+      } catch (error) {
+        console.error('No se pudo preparar la vista previa del diseño base:', error);
+        setStatus('No se pudo cargar el diseño de esta vista.');
+      }
+    };
+    void load();
+    return () => { cancelled = true; canvas?.dispose?.(); };
+  }, [product.id, product.designTemplate?.updatedAt, product.views, viewIndex]);
+
+  const captureCover = async () => {
+    const frame = containerRef.current?.querySelector('section[aria-label^="Visor 3D de"]') as HTMLElement | null;
+    const modelCanvas = frame?.querySelector('canvas');
+    if (!frame || !modelCanvas) { setStatus('El visor 3D todavía se está preparando.'); return; }
+    setCapturing(true);
+    try {
+      const frameRect = frame.getBoundingClientRect();
+      const modelRect = modelCanvas.getBoundingClientRect();
+      const outputWidth = 1200;
+      const outputHeight = Math.max(1, Math.round(outputWidth * frameRect.height / Math.max(1, frameRect.width)));
+      const output = document.createElement('canvas');
+      output.width = outputWidth; output.height = outputHeight;
+      const context = output.getContext('2d');
+      if (!context) throw new Error('No se pudo crear la imagen de portada.');
+      const background = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = sceneUrl;
+      });
+      const scale = Math.min(outputWidth / background.width, outputHeight / background.height);
+      const bgWidth = background.width * scale, bgHeight = background.height * scale;
+      context.fillStyle = '#f8fafc'; context.fillRect(0, 0, outputWidth, outputHeight);
+      context.drawImage(background, (outputWidth - bgWidth) / 2, (outputHeight - bgHeight) / 2, bgWidth, bgHeight);
+      const renderedModel = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image(); image.onload = () => resolve(image); image.onerror = reject;
+        try { image.src = modelCanvas.toDataURL('image/png'); } catch (error) { reject(error); }
+      });
+      const outputScale = outputWidth / Math.max(1, frameRect.width);
+      context.drawImage(renderedModel, (modelRect.left - frameRect.left) * outputScale, (modelRect.top - frameRect.top) * outputScale, modelRect.width * outputScale, modelRect.height * outputScale);
+      const image = output.toDataURL('image/webp', 0.86);
+      onCapture(image.startsWith('data:image/webp') ? image : output.toDataURL('image/jpeg', 0.86));
+      setStatus('Portada compuesta lista. Guarda el producto para publicarla en el catálogo.');
+    } catch (error) {
+      console.error('No se pudo generar la portada del catálogo:', error);
+      setStatus('No se pudo capturar el modelo. Comprueba que el GLB y sus texturas cargaron correctamente.');
+    } finally { setCapturing(false); }
+  };
+
+  return <div ref={containerRef} className="space-y-2"><div className="h-[420px] overflow-hidden rounded-xl border border-slate-200 bg-slate-100"><Product3DViewer product={product} componentColors={{}} enabledMeshNames={[]} showSafeAreaGuide safeArea={safeArea} activeViewIndex={viewIndex} activeViewName={product.views[viewIndex]?.name} sceneBackgroundUrl={sceneUrl} scene3DPlacement={placement} designCanvas={designCanvas} designViewSnapshots={designViewSnapshots} viewPose={designViewPose} staticView /></div><div className="flex flex-wrap items-center justify-between gap-3"><p role="status" className="text-xs text-slate-600">{status}</p><button type="button" disabled={!designCanvas || capturing} onClick={() => void captureCover()} className="rounded-lg bg-violet-700 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-800 disabled:cursor-wait disabled:opacity-50">{capturing ? 'Generando portada…' : 'Guardar esta vista como portada'}</button></div></div>;
 }
