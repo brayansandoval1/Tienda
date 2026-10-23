@@ -24,8 +24,8 @@ export default function CartDrawer() {
 
   if (!isOpen) return null;
 
-  const total = items.reduce((sum, item) => sum + (item.totalPrice ?? item.price * item.design.quantity), 0);
-  const count = items.reduce((sum, item) => sum + item.design.quantity, 0);
+  const total = items.reduce((sum, item) => sum + (item.kind === 'catalog' ? item.totalPrice : item.totalPrice ?? item.price * item.design.quantity), 0);
+  const count = items.reduce((sum, item) => sum + (item.kind === 'catalog' ? item.quantity : item.design.quantity), 0);
 
   return (
     <div className="fixed inset-0 z-[70] flex justify-end bg-violet-950/15 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Carrito de compras">
@@ -37,13 +37,13 @@ export default function CartDrawer() {
               <span className="grid h-8 w-8 place-items-center rounded-xl bg-violet-100 text-violet-600"><ShoppingBag size={16} /></span>
               <h2 className="text-base font-semibold tracking-[-.03em]">Tu selección</h2>
             </div>
-            <p className="mt-1 text-xs text-slate-400">{count ? `${count} pieza${count === 1 ? '' : 's'} personalizada${count === 1 ? '' : 's'}` : 'Tu próxima pieza única empieza aquí.'}</p>
+            <p className="mt-1 text-xs text-slate-400">{count ? `${count} pieza${count === 1 ? '' : 's'} en tu selección` : 'Tu próxima pieza única empieza aquí.'}</p>
           </div>
           <button type="button" onClick={() => setIsOpen(false)} className="rounded-xl border border-violet-100 bg-white p-2 text-slate-400 transition hover:bg-violet-50 hover:text-violet-700" aria-label="Cerrar carrito"><X size={17} /></button>
         </header>
 
         <div className="flex-1 overflow-y-auto p-5">
-          {items.length > 0 && <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-xs font-medium text-emerald-700"><CheckCircle2 size={16} /> Tu render HD está listo para producción.</div>}
+          {items.length > 0 && <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-xs font-medium text-emerald-700"><CheckCircle2 size={16} /> Tu selección quedó guardada en el carrito.</div>}
           {items.length === 0 ? (
             <div className="py-20 text-center">
               <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-violet-100 text-violet-500"><Sparkles size={22} /></span>
@@ -54,26 +54,29 @@ export default function CartDrawer() {
           ) : (
             <div className="space-y-3">
               {items.map((item) => {
-                const preview = item.design.views[0]?.files.previewImage || item.design.views[0]?.preview;
+                const isCatalogItem = item.kind === 'catalog';
+                const preview = isCatalogItem ? item.imageUrl : item.design.views[0]?.files.previewImage || item.design.views[0]?.preview;
+                const productName = isCatalogItem ? item.productName : item.design.product.name;
+                const quantity = isCatalogItem ? item.quantity : item.design.quantity;
                 const minimumQuantity = item.minimumQuantity ?? 1;
-                const breakdown = item.pricingBreakdown;
+                const breakdown = isCatalogItem ? undefined : item.pricingBreakdown;
                 return (
                   <article key={item.id} className="rounded-2xl border border-white bg-white/80 p-3 shadow-sm">
                     <div className="flex gap-3">
-                      {preview ? <img src={preview} alt={`Diseño de ${item.design.product.name}`} className="h-20 w-20 rounded-xl border border-violet-100 bg-violet-50 object-cover" /> : <div className="grid h-20 w-20 place-items-center rounded-xl bg-violet-50 text-violet-400"><Sparkles size={18} /></div>}
+                      {preview ? <img src={preview} alt={`Diseño de ${productName}`} className="h-20 w-20 rounded-xl border border-violet-100 bg-violet-50 object-cover" /> : <div className="grid h-20 w-20 place-items-center rounded-xl bg-violet-50 text-violet-400"><Sparkles size={18} /></div>}
                       <div className="min-w-0 flex-1">
                         <div className="flex gap-2">
-                          <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-700">{item.design.product.name}</p>
+                          <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-700">{productName}</p>
                           <button type="button" onClick={() => removeItem(item.id)} className="text-slate-400 transition hover:text-rose-500" aria-label="Eliminar producto"><Trash2 size={15} /></button>
                         </div>
-                        <p className="mt-1 text-[11px] text-slate-400">Render personalizado · HD</p>
+                        <p className="mt-1 text-[11px] text-slate-400">{isCatalogItem ? 'Diseño base del catálogo' : 'Render personalizado · HD'}</p>
                         <div className="mt-3 flex items-center justify-between">
                           <div className="inline-flex items-center rounded-lg border border-violet-100 bg-violet-50">
-                            <button type="button" disabled={item.design.quantity <= minimumQuantity} onClick={() => updateQuantity(item.id, item.design.quantity - 1)} className="p-1.5 text-slate-500 hover:text-violet-700 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Reducir cantidad"><Minus size={13} /></button>
-                            <span className="w-8 text-center text-xs font-semibold">{item.design.quantity}</span>
-                            <button type="button" onClick={() => updateQuantity(item.id, item.design.quantity + 1)} className="p-1.5 text-slate-500 hover:text-violet-700" aria-label="Aumentar cantidad"><Plus size={13} /></button>
+                            <button type="button" disabled={quantity <= minimumQuantity} onClick={() => updateQuantity(item.id, quantity - 1)} className="p-1.5 text-slate-500 hover:text-violet-700 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Reducir cantidad"><Minus size={13} /></button>
+                            <span className="w-8 text-center text-xs font-semibold">{quantity}</span>
+                            <button type="button" onClick={() => updateQuantity(item.id, quantity + 1)} className="p-1.5 text-slate-500 hover:text-violet-700" aria-label="Aumentar cantidad"><Plus size={13} /></button>
                           </div>
-                          <p className="text-sm font-semibold text-violet-600">{money(item.totalPrice ?? item.price * item.design.quantity)}</p>
+                          <p className="text-sm font-semibold text-violet-600">{money(isCatalogItem ? item.totalPrice : item.totalPrice ?? item.price * quantity)}</p>
                         </div>
                         {minimumQuantity > 1 && <p className="mt-1 text-right text-[10px] text-slate-400">Mínimo {minimumQuantity} piezas</p>}
                       </div>

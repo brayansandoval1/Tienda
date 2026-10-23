@@ -200,6 +200,8 @@ export interface Product {
   isActive?: boolean;
   /** Portada lifestyle lista para el catálogo (producto + diseño + escena). */
   catalogCoverUrl?: string;
+  /** Texto corto que se muestra en la tarjeta del catálogo. */
+  description?: string;
   /** Fondo ambiental sin producto para componer la vista previa de portada. */
   catalogSceneUrl?: string;
   /** Posición y escala del modelo al componer la portada de catálogo. */

@@ -24,7 +24,7 @@ import type { FabricCanvasLike, PrintAreaBounds, PrintViewSnapshot } from '@/com
 const Product3DViewer = dynamic(() => import('@/components/editor/Product3DViewer'), { ssr: false, loading: () => <div className="grid h-full min-h-[280px] place-items-center text-xs text-slate-500">Cargando visor 3D…</div> });
 
 type ProductViewForm = { id: string; name: string; mockupUrl: string; x: string; y: string; width: string; height: string; shape: SafeAreaShape; radius: string; /** Nodos del contorno libre serializados ('' = forma paramétrica). */ polygon: string; area3D: PrintArea; surfaceX: string; surfaceY: string; surfaceWidth: string; surfaceHeight: string; surfaceCustomized: boolean };
-type ProductForm = { name: string; price: string; category: string; printWidthCm: string; printHeightCm: string; model3dUrl: string; textureWidth: string; textureHeight: string; hasMultipleSides: boolean; extraSidePrice: string; fullWrapPrice: string; sidesPricingMode: 'per_side' | 'wrap'; setupFee: string; minimumQuantity: string; volumeDiscounts: Array<{ minQty: string; discountPercentage: string }>; availableAddonIds: string[]; customizableParts: CustomizablePart[]; options: ProductOption[]; views: ProductViewForm[] };
+type ProductForm = { name: string; description: string; price: string; category: string; printWidthCm: string; printHeightCm: string; model3dUrl: string; textureWidth: string; textureHeight: string; hasMultipleSides: boolean; extraSidePrice: string; fullWrapPrice: string; sidesPricingMode: 'per_side' | 'wrap'; setupFee: string; minimumQuantity: string; volumeDiscounts: Array<{ minQty: string; discountPercentage: string }>; availableAddonIds: string[]; customizableParts: CustomizablePart[]; options: ProductOption[]; views: ProductViewForm[] };
 type ProductFormTab = 'basics' | 'pricing' | 'model' | 'views' | 'variants' | 'template';
 type MeshInspection = { name: string; vertexCount: number; triangleCount: number; dimensions: string; materialNames: string[]; uvCount: number; uvRange: string | null; uvOutsideCount: number; overlappingUvTriangles: number };
 type MeshInspectionState = { status: 'idle' | 'loading' | 'success' | 'error'; message: string; meshes: MeshInspection[] };
@@ -139,7 +139,7 @@ const serializePrintArea3D = (area: PrintArea) => {
     nodes,
   };
 };
-const emptyForm = (): ProductForm => ({ name: '', price: '', category: '', printWidthCm: '', printHeightCm: '', model3dUrl: '', textureWidth: String(DEFAULT_MESH_SETTINGS.textureWidth), textureHeight: String(DEFAULT_MESH_SETTINGS.textureHeight), hasMultipleSides: false, extraSidePrice: '0', fullWrapPrice: '0', sidesPricingMode: 'per_side', setupFee: '0', minimumQuantity: '1', volumeDiscounts: [], availableAddonIds: [], customizableParts: [], options: [], views: [createViewForm(0)] });
+const emptyForm = (): ProductForm => ({ name: '', description: '', price: '', category: '', printWidthCm: '', printHeightCm: '', model3dUrl: '', textureWidth: String(DEFAULT_MESH_SETTINGS.textureWidth), textureHeight: String(DEFAULT_MESH_SETTINGS.textureHeight), hasMultipleSides: false, extraSidePrice: '0', fullWrapPrice: '0', sidesPricingMode: 'per_side', setupFee: '0', minimumQuantity: '1', volumeDiscounts: [], availableAddonIds: [], customizableParts: [], options: [], views: [createViewForm(0)] });
 
 const normalizeViewIds = (views: ProductViewForm[]): ProductViewForm[] => {
   const usedIds = new Set<string>();
@@ -154,6 +154,7 @@ const normalizeViewIds = (views: ProductViewForm[]): ProductViewForm[] => {
 
 const toForm = (product: Product): ProductForm => ({
   name: product.name,
+  description: product.description ?? '',
   price: String(product.basePrice ?? product.price),
   category: product.category,
   printWidthCm: product.printWidthCm ? String(product.printWidthCm) : '',
@@ -580,6 +581,7 @@ export default function AdminProductEditor() {
       ...(catalogSceneUrl.trim() ? { catalogSceneUrl: catalogSceneUrl.trim() } : {}),
       ...(catalogSceneUrl.trim() ? { catalogModelPlacement: { x: Math.max(-40, Math.min(40, catalogModelPlacement.x)), y: Math.max(-40, Math.min(40, catalogModelPlacement.y)), scale: Math.max(0.5, Math.min(1.8, catalogModelPlacement.scale)) } } : {}),
       name: form.name.trim(),
+      description: form.description.trim().slice(0, 180),
       price: basePrice,
       basePrice,
       category: form.category.trim(),
@@ -681,7 +683,7 @@ export default function AdminProductEditor() {
           </nav>
           {activeProductFormTab === 'basics' && (
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Datos básicos</h2><p className="mt-1 text-sm text-slate-500">Información que verán tus clientes al elegir el producto.</p></div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><Field className="sm:col-span-2" label="Nombre del producto" value={form.name} onChange={(value) => setField('name', value)} required /><Field label="Precio" type="number" min="0" step="0.01" value={form.price} onChange={(value) => setField('price', value)} required /><Field label="Categoría" value={form.category} onChange={(value) => setField('category', value)} required /><Field label="Ancho físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printWidthCm} onChange={(value) => setField('printWidthCm', value)} placeholder="20" /><Field label="Alto físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printHeightCm} onChange={(value) => setField('printHeightCm', value)} placeholder="9" /><Field className="sm:col-span-2" label="Modelo 3D (ruta pública o URL .GLB)" value={form.model3dUrl} onChange={(value) => setField('model3dUrl', value)} placeholder="/models/termo.glb" /><div className="sm:col-span-2 grid grid-cols-2 gap-3"><Field label="Ancho de textura 3D" type="number" min="1" step="1" value={form.textureWidth} onChange={(value) => setField('textureWidth', value)} /><Field label="Alto de textura 3D" type="number" min="1" step="1" value={form.textureHeight} onChange={(value) => setField('textureHeight', value)} /><p className="col-span-2 text-xs text-slate-500">Predeterminado: 2048 × 512 px. El viewer ajusta la altura efectiva a la proporción real de la superficie UV del GLB.</p></div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><Field className="sm:col-span-2" label="Nombre del producto" value={form.name} onChange={(value) => setField('name', value)} required /><label className="sm:col-span-2 grid gap-1.5 text-sm font-medium text-slate-700"><span>Descripción corta para el catálogo</span><textarea value={form.description} maxLength={180} onChange={(event) => setField('description', event.target.value)} rows={3} placeholder="Describe brevemente el material, uso o característica principal…" className="w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" /><span className="text-right text-xs font-normal text-slate-400">{form.description.length}/180</span></label><Field label="Precio" type="number" min="0" step="0.01" value={form.price} onChange={(value) => setField('price', value)} required /><Field label="Categoría" value={form.category} onChange={(value) => setField('category', value)} required /><Field label="Ancho físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printWidthCm} onChange={(value) => setField('printWidthCm', value)} placeholder="20" /><Field label="Alto físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printHeightCm} onChange={(value) => setField('printHeightCm', value)} placeholder="9" /><Field className="sm:col-span-2" label="Modelo 3D (ruta pública o URL .GLB)" value={form.model3dUrl} onChange={(value) => setField('model3dUrl', value)} placeholder="/models/termo.glb" /><div className="sm:col-span-2 grid grid-cols-2 gap-3"><Field label="Ancho de textura 3D" type="number" min="1" step="1" value={form.textureWidth} onChange={(value) => setField('textureWidth', value)} /><Field label="Alto de textura 3D" type="number" min="1" step="1" value={form.textureHeight} onChange={(value) => setField('textureHeight', value)} /><p className="col-span-2 text-xs text-slate-500">Predeterminado: 2048 × 512 px. El viewer ajusta la altura efectiva a la proporción real de la superficie UV del GLB.</p></div>
             </div>
           </section>
           )}

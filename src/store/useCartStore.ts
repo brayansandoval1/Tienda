@@ -13,6 +13,7 @@ type CartPricingContext = {
 };
 
 export type CartDesignItem = {
+  kind?: 'design';
   id: string;
   productId: string;
   price: number;
@@ -27,14 +28,30 @@ export type CartDesignItem = {
   addedAt: number;
 };
 
+export type CartCatalogItem = {
+  kind: 'catalog';
+  id: string;
+  productId: string;
+  productName: string;
+  imageUrl?: string;
+  price: number;
+  totalPrice: number;
+  quantity: number;
+  minimumQuantity: number;
+  addedAt: number;
+};
+
+export type CartItem = CartDesignItem | CartCatalogItem;
+
 /**
  * Carrito en memoria. El checkout puede consumir `items` o enviarlos a su API;
  * no se persiste en localStorage porque PNG/SVG de alta resolución pueden ser
  * demasiado pesados para la cuota del navegador.
  */
 type CartState = {
-  items: CartDesignItem[];
+  items: CartItem[];
   addDesignItem: (item: CartDesignItem) => void;
+  addCatalogItem: (item: CartCatalogItem) => void;
   updateQuantity: (itemId: string, quantity: number) => void;
   removeItem: (itemId: string) => void;
   clear: () => void;
@@ -43,9 +60,14 @@ type CartState = {
 export const useCartStore = create<CartState>((set) => ({
   items: [],
   addDesignItem: (item) => set((state) => ({ items: [...state.items, item] })),
+  addCatalogItem: (item) => set((state) => ({ items: [...state.items, item] })),
   updateQuantity: (itemId, quantity) => set((state) => ({
     items: state.items.map((item) => {
       if (item.id !== itemId) return item;
+      if (item.kind === 'catalog') {
+        const nextQuantity = Math.max(item.minimumQuantity, Math.floor(Number(quantity) || item.minimumQuantity));
+        return { ...item, quantity: nextQuantity, totalPrice: item.price * nextQuantity };
+      }
       const nextQuantity = Math.max(item.minimumQuantity ?? 1, Math.floor(Number(quantity) || 1));
       if (!item.pricingContext) return { ...item, totalPrice: item.price * nextQuantity, design: { ...item.design, quantity: nextQuantity, totalPrice: item.price * nextQuantity } };
       const breakdown = calculateTotalPrice(

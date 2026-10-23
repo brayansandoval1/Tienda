@@ -1,17 +1,119 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowUpRight, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { ArrowUpRight, Image as ImageIcon, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { useProductStore, type Product } from '@/src/store/useProductStore';
 
-const filters = ['Todos', 'Termos', 'Tazas', 'Fundas'] as const;
-type Filter = typeof filters[number];
-function productType(product: Product): Exclude<Filter, 'Todos'> | 'Otros' { const text = `${product.name} ${product.category}`.toLowerCase(); if (text.includes('termo') || text.includes('botella')) return 'Termos'; if (text.includes('taza') || text.includes('mug')) return 'Tazas'; if (text.includes('funda') || text.includes('case')) return 'Fundas'; return 'Otros'; }
-export function getProductImage(product: Product) { if (product.catalogCoverUrl) return product.catalogCoverUrl; const text = `${product.id} ${product.name}`.toLowerCase(); if (text.includes('termo')) return '/mockups/Frente-termos.png'; if (text.includes('taza') || text.includes('mug')) return '/mockups/taza.jpeg'; if (text.includes('funda') || text.includes('case')) return '/mockups/Frente-funda-iphone14.png'; return product.views[0]?.mockupUrl || product.colors?.[0]?.mockupUrl || ''; }
+type CatalogProduct = Product & { catalogImages: string[] };
+
+/** Use the composed lifestyle cover first; never guess an asset from the product name. */
+export function getProductImage(product: Product) {
+  return getProductImages(product)[0] ?? '';
+}
+
+function getProductImages(product: Product) {
+  return [...new Set([
+    product.catalogCoverUrl,
+    ...product.views.map((view) => view.mockupUrl),
+    ...(product.colors ?? []).map((color) => color.mockupUrl),
+  ].filter((url): url is string => Boolean(url)))];
+}
+
+function CatalogCard({ product }: { product: CatalogProduct }) {
+  const [imageIndex, setImageIndex] = useState(0);
+  const imageSrc = product.catalogImages[imageIndex] ?? '';
+  const isShowingCatalogCover = imageIndex === 0 && Boolean(product.catalogCoverUrl);
+
+  useEffect(() => setImageIndex(0), [product.catalogImages]);
+
+  return (
+    <article className="group overflow-hidden rounded-[1.6rem] border border-white bg-white/85 p-2 shadow-[0_15px_40px_rgba(109,88,150,.08)] transition duration-300 hover:-translate-y-1.5 hover:border-violet-200 hover:shadow-[0_24px_55px_rgba(139,92,246,.16)]">
+      <Link href={`/producto/${product.id}`} aria-label={`Ver detalles de ${product.name}`} className="block">
+        <div className="relative aspect-[4/3] overflow-hidden rounded-[1.2rem] bg-[radial-gradient(circle_at_50%_18%,rgba(221,214,254,.9),transparent_34%),linear-gradient(145deg,#fff9fc,#f2eeff_62%,#e9f4ff)] sm:aspect-[1.08]">
+          {imageSrc ? (
+            <img
+              src={imageSrc}
+              alt={`${product.name}${isShowingCatalogCover ? ' con diseño y fondo de escena' : ''}`}
+              loading="lazy"
+              decoding="async"
+              onError={() => setImageIndex((index) => index + 1)}
+              className={`h-full w-full transition duration-700 group-hover:scale-[1.035] ${isShowingCatalogCover ? 'object-cover' : 'object-contain p-5 drop-shadow-[0_22px_18px_rgba(76,55,120,.23)]'}`}
+            />
+          ) : (
+            <div className="absolute inset-0 grid place-items-center text-violet-300">
+              <div className="text-center"><ImageIcon className="mx-auto" size={32} strokeWidth={1.4} /><span className="mt-2 block text-xs font-medium text-slate-400">Imagen próximamente</span></div>
+            </div>
+          )}
+          <span className="absolute left-3 top-3 z-[1] rounded-full border border-white/80 bg-white/85 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-violet-700 shadow-sm backdrop-blur">
+            {product.category || 'Personalizable'}
+          </span>
+          {isShowingCatalogCover && <span className="absolute bottom-3 left-3 z-[1] inline-flex items-center gap-1 rounded-full border border-white/70 bg-slate-900/45 px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur"><Sparkles size={12} /> Diseño destacado</span>}
+          <span className="absolute right-3 top-3 z-[1] grid h-8 w-8 place-items-center rounded-full border border-white/80 bg-white/85 text-violet-600 shadow-sm transition group-hover:bg-violet-600 group-hover:text-white"><ArrowUpRight size={16} /></span>
+        </div>
+      </Link>
+      <div className="px-3 pb-2 pt-4">
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="line-clamp-2 text-[15px] font-semibold tracking-[-.02em] text-slate-800">{product.name}</h3>
+          <p className="shrink-0 text-sm font-bold text-violet-700">${product.price.toFixed(2)}</p>
+        </div>
+        <p className="mt-1.5 line-clamp-2 min-h-9 text-xs leading-5 text-slate-500">{product.description || product.category}</p>
+      </div>
+    </article>
+  );
+}
 
 export default function ProductCatalog() {
-  const products = useProductStore((state) => state.products); const [filter, setFilter] = useState<Filter>('Todos'); const [query, setQuery] = useState('');
-  const visibleProducts = useMemo(() => products.filter((product) => { const needle = query.trim().toLowerCase(); return product.isActive !== false && (filter === 'Todos' || productType(product) === filter) && (!needle || `${product.name} ${product.category}`.toLowerCase().includes(needle)); }), [filter, products, query]);
-  return <section id="catalogo" className="premium-grid relative scroll-mt-24 overflow-hidden bg-[#fdfaff] px-5 py-24 sm:px-8 lg:px-12"><div className="pointer-events-none absolute left-1/2 top-0 h-96 w-96 -translate-x-1/2 rounded-full bg-violet-200/35 blur-[110px]" /><div className="relative mx-auto max-w-7xl"><div className="flex flex-col gap-7 md:flex-row md:items-end md:justify-between"><div><p className="text-xs font-bold uppercase tracking-[.24em] text-violet-500">Personalización sin límites</p><h2 className="mt-4 max-w-2xl text-4xl font-semibold tracking-[-.055em] text-slate-800 sm:text-5xl">Elige el objeto.<br /><span className="text-slate-400">Hazlo irrepetible.</span></h2><p className="mt-5 max-w-xl text-base leading-7 text-slate-500">Productos premium listos para convertir una buena idea en algo que se queda contigo.</p></div><label className="relative block w-full max-w-sm"><Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-violet-400" size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Busca tu próximo diseño" className="w-full rounded-xl border border-white bg-white/80 py-3 pl-11 pr-4 text-sm text-slate-700 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100" /></label></div><div className="mt-10 flex flex-wrap items-center gap-2" aria-label="Filtros de producto"><SlidersHorizontal size={15} className="mr-1 text-violet-400" />{filters.map((item) => <button key={item} type="button" onClick={() => setFilter(item)} className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${filter === item ? 'border-purple-500 bg-purple-600 text-white shadow-lg shadow-purple-500/30' : 'border-white bg-white/70 text-slate-500 shadow-sm hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700'}`}>{item}</button>)}</div>{visibleProducts.length ? <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{visibleProducts.map((product) => { const category = productType(product); const hasCover = Boolean(product.catalogCoverUrl); return <article key={product.id} className="group relative overflow-hidden rounded-[1.6rem] border border-white bg-white/70 p-2 shadow-[0_15px_40px_rgba(109,88,150,.08)] transition duration-500 hover:-translate-y-2 hover:border-violet-200 hover:shadow-[0_24px_55px_rgba(139,92,246,.16)]"><div className="relative aspect-[1.03] overflow-hidden rounded-[1.2rem] bg-[radial-gradient(circle_at_50%_20%,rgba(221,214,254,.8),transparent_31%),linear-gradient(145deg,#fff9fc,#f2eeff_62%,#e9f4ff)]"><span className="absolute left-3 top-3 z-10 rounded-full border border-white bg-white/75 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-violet-600 shadow-sm backdrop-blur">{category === 'Otros' ? product.category : category}</span><span className="absolute right-3 top-3 z-10 grid h-7 w-7 place-items-center rounded-full border border-white bg-white/60 text-violet-400 opacity-0 shadow-sm backdrop-blur transition group-hover:opacity-100"><Sparkles size={13} /></span><img src={getProductImage(product)} alt={product.name} className={`relative z-[1] h-full w-full transition duration-700 group-hover:scale-[1.04] ${hasCover ? 'object-cover' : 'object-contain p-6 drop-shadow-[0_22px_18px_rgba(76,55,120,.25)]'}`} /></div><div className="px-3 pb-3 pt-4"><div className="flex items-start justify-between gap-3"><h3 className="text-[15px] font-semibold tracking-[-.02em] text-slate-800">{product.name}</h3><p className="shrink-0 text-sm font-semibold text-violet-600">${product.price.toFixed(2)}</p></div><p className="mt-1 text-xs text-slate-400">Render 3D · Personalizable</p><Link href={`/editor/${product.id}`} className="liquid-button mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-500 px-3 py-2.5 text-sm font-bold text-white shadow-md shadow-purple-200 transition-all hover:brightness-110 hover:shadow-lg hover:shadow-purple-300/50">🎨 Personalizar en 3D <ArrowUpRight size={15} /></Link></div></article>; })}</div> : <div className="mt-10 rounded-3xl border border-dashed border-violet-200 bg-white/60 py-16 text-center"><p className="font-semibold text-slate-700">No encontramos productos</p><button type="button" onClick={() => { setQuery(''); setFilter('Todos'); }} className="mt-2 text-sm font-semibold text-violet-600">Limpiar filtros</button></div>}</div></section>;
+  const products = useProductStore((state) => state.products);
+  const [category, setCategory] = useState('Todos');
+  const [query, setQuery] = useState('');
+
+  const categories = useMemo(() => [...new Set(products
+    .filter((product) => product.isActive !== false)
+    .map((product) => product.category.trim())
+    .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es-MX')), [products]);
+
+  const visibleProducts = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase('es-MX');
+    return products
+      .filter((product) => product.isActive !== false)
+      .filter((product) => category === 'Todos' || product.category.trim() === category)
+      .filter((product) => !needle || `${product.name} ${product.category}`.toLocaleLowerCase('es-MX').includes(needle))
+      .map((product) => ({ ...product, catalogImages: getProductImages(product) }));
+  }, [category, products, query]);
+
+  useEffect(() => {
+    if (category !== 'Todos' && !categories.includes(category)) setCategory('Todos');
+  }, [categories, category]);
+
+  return (
+    <section id="catalogo" className="premium-grid relative scroll-mt-24 overflow-hidden bg-[#fdfaff] px-5 py-24 sm:px-8 lg:px-12">
+      <div className="pointer-events-none absolute left-1/2 top-0 h-96 w-96 -translate-x-1/2 rounded-full bg-violet-200/35 blur-[110px]" />
+      <div className="relative mx-auto max-w-7xl">
+        <div className="flex flex-col gap-7 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[.24em] text-violet-500">Catálogo de productos</p>
+            <h2 className="mt-4 max-w-2xl text-4xl font-semibold tracking-[-.055em] text-slate-800 sm:text-5xl">Elige el objeto.<br /><span className="text-slate-400">Hazlo irrepetible.</span></h2>
+            <p className="mt-5 max-w-xl text-base leading-7 text-slate-500">Explora nuestros productos y personaliza el diseño a tu gusto.</p>
+          </div>
+          <label className="relative block w-full max-w-sm">
+            <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-violet-400" size={17} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar productos" aria-label="Buscar productos" className="w-full rounded-xl border border-white bg-white/90 py-3 pl-11 pr-4 text-sm text-slate-700 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-100" />
+          </label>
+        </div>
+
+        {categories.length > 0 && <div className="mt-9 flex flex-wrap items-center gap-2" aria-label="Filtrar por categoría">
+          <SlidersHorizontal size={15} className="mr-1 text-violet-400" />
+          {['Todos', ...categories].map((item) => <button key={item} type="button" onClick={() => setCategory(item)} aria-pressed={category === item} className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${category === item ? 'border-purple-600 bg-purple-600 text-white shadow-lg shadow-purple-500/25' : 'border-white bg-white/80 text-slate-500 shadow-sm hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700'}`}>{item}</button>)}
+        </div>}
+
+        {visibleProducts.length ? <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{visibleProducts.map((product) => <CatalogCard key={product.id} product={product} />)}</div> : (
+          <div className="mt-10 rounded-3xl border border-dashed border-violet-200 bg-white/70 py-16 text-center">
+            <p className="font-semibold text-slate-700">{products.some((product) => product.isActive !== false) ? 'No encontramos productos con esa búsqueda' : 'Pronto habrá productos disponibles'}</p>
+            {products.some((product) => product.isActive !== false) && <button type="button" onClick={() => { setQuery(''); setCategory('Todos'); }} className="mt-2 text-sm font-semibold text-violet-600">Limpiar búsqueda</button>}
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
