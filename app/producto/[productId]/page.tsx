@@ -228,9 +228,17 @@ export default function ProductDetailPage() {
   const total = useMemo(() => price * quantity, [price, quantity]);
   const catalogPrintPart = colorableParts.find((part) => part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName));
   const selectedCatalogPrintColor = catalogPrintPart && componentColors[catalogPrintPart.meshName];
-  const customizeHref = selectedCatalogPrintColor
-    ? `/editor/${productId}?mesh=${encodeURIComponent(catalogPrintPart.meshName)}&color=${encodeURIComponent(selectedCatalogPrintColor)}`
-    : `/editor/${productId}`;
+  const customizeParams = new URLSearchParams();
+  if (selectedCatalogPrintColor && catalogPrintPart) {
+    customizeParams.set('mesh', catalogPrintPart.meshName);
+    customizeParams.set('color', selectedCatalogPrintColor);
+  }
+  selectedOptionValues.forEach((selection) => customizeParams.set(`option.${selection.optionId}`, selection.valueId));
+  customizeParams.set('quantity', String(quantity));
+  // El editor debe partir del diseño curado que ve el cliente en el catálogo,
+  // aunque exista un borrador vacío o antiguo guardado para este producto.
+  if (product.designTemplate?.viewIds?.length) customizeParams.set('catalogDesign', '1');
+  const customizeHref = `/editor/${productId}?${customizeParams.toString()}`;
 
   const addProductToCart = () => {
     if (!product) return;
@@ -281,7 +289,7 @@ export default function ProductDetailPage() {
             <p className="mt-4 text-base leading-7 text-slate-600">{description}</p>
 
             <div className="mt-7 rounded-2xl border border-violet-100 bg-violet-50/70 p-4">
-              <div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white text-violet-600 shadow-sm"><PencilRuler size={19} /></span><div><p className="text-sm font-semibold text-slate-800">Tu diseño, a tu manera</p><p className="mt-1 text-sm leading-5 text-slate-600">El modelo muestra el diseño base. Puedes editarlo antes de terminar tu pedido.</p></div></div>
+              <div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white text-violet-600 shadow-sm"><PencilRuler size={19} /></span><div><p className="text-sm font-semibold text-slate-800">Tu diseño, a tu manera</p><p className="mt-1 text-sm leading-5 text-slate-600">{product.designTemplate?.viewIds?.length ? 'Se abrirá el editor con este diseño como punto de partida.' : 'Se abrirá el editor para crear el diseño de este producto.'} El color y las opciones elegidas se conservarán.</p></div></div>
             </div>
 
             <div className="mt-6 flex items-center justify-between gap-4">

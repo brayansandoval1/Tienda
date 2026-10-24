@@ -11,7 +11,6 @@ import { usePriceCalculator } from '@/components/editor/usePriceCalculator';
 
 const optionGroupName = (option: { name: string }) => /(?:termo|taza|\d+\s*oz|estándar)/i.test(option.name) ? 'Modelo' : option.name || 'Opción';
 
-const getDefaultSelections = (): Record<string, ProductOptionValue> => ({});
 export default function ViewSelector({ product, panel, workflowStep = 'design', componentColors, enabledComponentMeshes, onComponentToggle, onComponentColorChange }: { product: Product; panel?: 'options' | 'preview'; workflowStep?: 'design' | 'options' | 'review'; componentColors: Record<string, string>; enabledComponentMeshes: string[]; onComponentToggle: (meshName: string, enabled: boolean) => void; onComponentColorChange: (meshName: string, color: string) => void }) {
   const [selectedOptions, setSelectedOptions] = useState<Record<string, ProductOptionValue>>({});
   const [activeViewIndex, setActiveViewIndex] = useState(0);
@@ -32,12 +31,21 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
   const valuesForOption = (option: { values: ProductOptionValue[] }) => option.values;
 
   useEffect(() => {
-    // Un producto nuevo no hereda selecciones ajenas: cada grupo inicia con
-    // su primera variante, sin añadir un botón genérico “Estándar”.
-    const initialSelections = getDefaultSelections();
+    // Al llegar desde el detalle, restaura las variantes elegidas; los enlaces
+    // directos al editor siguen iniciando con el producto estándar.
+    const params = new URLSearchParams(window.location.search);
+    const initialSelections = Object.fromEntries((product.options ?? []).flatMap((option) => {
+      const valueId = params.get(`option.${option.id}`);
+      const value = option.values.find((item) => item.id === valueId);
+      return value ? [[option.id, value]] : [];
+    })) as Record<string, ProductOptionValue>;
     setSelectedOptions(initialSelections);
     setActiveViewIndex(0);
-    setQuantity(Math.max(1, product.pricingSchema?.minimumQuantity ?? 1));
+    const minimumQuantity = Math.max(1, product.pricingSchema?.minimumQuantity ?? 1);
+    const requestedQuantity = Number(params.get('quantity'));
+    setQuantity(Number.isFinite(requestedQuantity) && requestedQuantity > 0
+      ? Math.max(minimumQuantity, Math.floor(requestedQuantity))
+      : minimumQuantity);
     setSelectedAddonIds([]);
     setAddonTexts({});
     setUsedViewIds([]);

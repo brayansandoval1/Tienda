@@ -50,6 +50,33 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   }, [currentProduct.id, minimumQuantity]);
 
   useEffect(() => {
+    const resetProductColors = (event: Event) => {
+      const productId = (event as CustomEvent<{ productId?: string }>).detail?.productId;
+      if (productId !== currentProduct.id) return;
+      const parts = currentProduct.customizableParts ?? [];
+      setComponentColors(Object.fromEntries(parts.map((part) => [part.meshName, part.defaultColor || '#cbd5e1'])));
+      setEnabledComponentMeshes([]);
+    };
+    window.addEventListener('editor:reset-component-colors', resetProductColors);
+    return () => window.removeEventListener('editor:reset-component-colors', resetProductColors);
+  }, [currentProduct.id, currentProduct.customizableParts]);
+
+  useEffect(() => {
+    const restoreProductColors = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        productId?: string;
+        colors?: Record<string, string>;
+        enabledMeshNames?: string[];
+      }>).detail;
+      if (detail?.productId !== currentProduct.id) return;
+      if (detail.colors) setComponentColors(detail.colors);
+      if (detail.enabledMeshNames) setEnabledComponentMeshes(detail.enabledMeshNames);
+    };
+    window.addEventListener('editor:restore-component-colors', restoreProductColors);
+    return () => window.removeEventListener('editor:restore-component-colors', restoreProductColors);
+  }, [currentProduct.id]);
+
+  useEffect(() => {
     const syncPanoramaMode = (event: Event) => {
       const enabled = (event as CustomEvent<{ enabled?: boolean }>).detail?.enabled;
       setIsPanoramaActive(Boolean(enabled));
@@ -78,9 +105,10 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   useEffect(() => {
     setIsPanoramaActive(false);
     setIsUnrestrictedDesign(false);
-    const colors = Object.fromEntries((currentProduct.customizableParts ?? []).map((part) => [part.meshName, part.defaultColor || '#cbd5e1']));
     let initialColoredMesh: string | null = null;
-    if (!initialMeshColorApplied.current && currentProduct.id === producto.id) {
+    let initialColor: string | null = null;
+    const shouldApplyUrlColor = !initialMeshColorApplied.current && currentProduct.id === producto.id;
+    if (shouldApplyUrlColor) {
       const params = new URLSearchParams(window.location.search);
       const requestedMesh = params.get('mesh');
       const requestedColor = params.get('color');
@@ -89,13 +117,18 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
         && (part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName)),
       );
       if (requestedPart && requestedColor && /^#[0-9a-f]{6}$/i.test(requestedColor)) {
-        colors[requestedPart.meshName] = requestedColor;
         initialColoredMesh = requestedPart.meshName;
+        initialColor = requestedColor;
       }
       initialMeshColorApplied.current = true;
     }
-    setComponentColors(colors);
-    setEnabledComponentMeshes(initialColoredMesh ? [initialColoredMesh] : []);
+    setComponentColors((current) => Object.fromEntries((currentProduct.customizableParts ?? []).map((part) => [
+      part.meshName,
+      shouldApplyUrlColor && initialColoredMesh === part.meshName
+        ? initialColor || part.defaultColor || '#cbd5e1'
+        : current[part.meshName] ?? part.defaultColor ?? '#cbd5e1',
+    ])));
+    if (shouldApplyUrlColor) setEnabledComponentMeshes(initialColoredMesh ? [initialColoredMesh] : []);
   }, [currentProduct.id, currentProduct.customizableParts]);
 
   useEffect(() => {
@@ -201,6 +234,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
             isPanoramaActive={isPanoramaActive}
             isUnrestrictedDesign={isUnrestrictedDesign}
             componentColors={componentColors}
+            enabledComponentMeshes={enabledComponentMeshes}
           />
           {activeStep === 'design' && <FloatingFooter onReset={() => {}} />}
           {/* Revisar: visor de renders sobre el lienzo. El canvas sigue montado
@@ -221,7 +255,12 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
             workflowStep={activeStep}
             componentColors={componentColors}
             enabledComponentMeshes={enabledComponentMeshes}
-            onComponentToggle={(meshName, enabled) => setEnabledComponentMeshes((current) => enabled ? [...new Set([...current, meshName])] : current.filter((name) => name !== meshName))}
+            onComponentToggle={(meshName, enabled) => {
+              setEnabledComponentMeshes((current) => enabled ? [...new Set([...current, meshName])] : current.filter((name) => name !== meshName));
+              window.dispatchEvent(new CustomEvent('editor:component-color-change', {
+                detail: { meshName, color: componentColors[meshName] ?? '#cbd5e1', enabled },
+              }));
+            }}
             onComponentColorChange={(meshName, color) => {
               setComponentColors((current) => ({ ...current, [meshName]: color }));
               window.dispatchEvent(new CustomEvent('editor:component-color-change', { detail: { meshName, color } }));

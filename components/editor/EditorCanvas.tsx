@@ -55,12 +55,13 @@ const getInitialSelectedOptions = (_product: Product): Record<string, ProductOpt
 interface EditorCanvasProps {
   product: Product;
   componentColors?: Record<string, string>;
+  enabledComponentMeshes?: string[];
   workflowStep?: 'design' | 'options' | 'review';
   isPanoramaActive?: boolean;
   isUnrestrictedDesign?: boolean;
 }
 
-export default function EditorCanvas({ product: initialProduct, componentColors = {}, workflowStep = 'design', isPanoramaActive = false, isUnrestrictedDesign = false }: EditorCanvasProps) {
+export default function EditorCanvas({ product: initialProduct, componentColors = {}, enabledComponentMeshes = [], workflowStep = 'design', isPanoramaActive = false, isUnrestrictedDesign = false }: EditorCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Contenedor del lienzo central: se usa para dimensionar el canvas y aplicar
   // "zoom to fit" de forma proporcional al área disponible del editor.
@@ -68,6 +69,8 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
   const fabricCanvasRef = useRef<any>(null);
   const componentColorsRef = useRef(componentColors);
   componentColorsRef.current = componentColors;
+  const enabledComponentMeshesRef = useRef(enabledComponentMeshes);
+  enabledComponentMeshesRef.current = enabledComponentMeshes;
   const previewRefreshFrameRef = useRef<number>(0);
   // Fabric deja de editar IText cuando el usuario enfoca un control del toolbar.
   // Conservamos el último rango seleccionado para que fuente/tamaño se apliquen
@@ -832,12 +835,12 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
 
       const saveState = () => {
         if (isRedoingUndoRef.current || isUpdatingHistory.current || !fabricCanvasRef.current) return;
-        // Filtrar objetos normales excluyendo la guía y el overlay de recorte temporal
-        const userObjects = canvas
-          .getObjects()
-          .filter((obj: any) => !obj.isGuide && !obj.isMockup && !obj.isCropOverlay && !obj.isDesignBackground);
-        const jsonState = userObjects.map((obj: any) => obj.toJSON());
-        historyRef.current.push(JSON.stringify(jsonState));
+        const serializedState = snapshotHistoryState();
+        // Fabric puede emitir varios eventos para una sola acción (por
+        // ejemplo, al agregar y luego centrar una imagen). No guardes estados
+        // idénticos: de lo contrario Undo consume un paso que no se ve.
+        if (historyRef.current[historyRef.current.length - 1] === serializedState) return;
+        historyRef.current.push(serializedState);
         redoStackRef.current = [];
         updateHistoryButtons();
       };
@@ -2053,9 +2056,12 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
         const printPart = (activeProduct.customizableParts ?? []).find((part) =>
           part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName),
         );
-        return printPart
+        const isEnabled = printPart && enabledComponentMeshesRef.current.some((meshName) =>
+          meshName.trim().toLocaleLowerCase() === printPart.meshName.trim().toLocaleLowerCase(),
+        );
+        return printPart && isEnabled
           ? componentColorsRef.current[printPart.meshName] ?? printPart.defaultColor ?? '#ffffff'
-          : 'transparent';
+          : '#ffffff';
       };
       const buildPrintAreaBackgroundFill = (background: DesignBackground, width: number, height: number) =>
         background.kind === 'transparent'
@@ -2282,6 +2288,18 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
           });
         return JSON.stringify(objects);
       };
+
+      // Undo/Redo debe conservar también los ajustes que se dibujan como
+      // capas de sistema (fondos por vista y color de las mallas), además del
+      // arte Fabric. Las capas de sistema no se serializan como objetos porque
+      // se reconstruyen desde estos metadatos.
+      const snapshotHistoryState = () => JSON.stringify({
+        version: 1,
+        objects: JSON.parse(snapshotCurrentObjects()),
+        designBackgrounds: { ...designBackgroundColorsRef.current },
+        componentColors: { ...componentColorsRef.current },
+        enabledComponentMeshes: [...enabledComponentMeshesRef.current],
+      });
 
       const summarizeDesignObjects = (objects: any[]) => objects
         .filter((object: any) => isDraftDesignObject(object))
@@ -2593,7 +2611,7 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
         isUpdatingHistory.current = false;
         ensureObjectsInteractable();
 
-        historyRef.current = [snapshotCurrentObjects()];
+        historyRef.current = [snapshotHistoryState()];
         redoStackRef.current = [];
         updateHistoryButtons();
         return mockupLoad;
@@ -2612,9 +2630,15 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
       };
       handleDesignBgColorChangeRef.current = handleDesignBgColorChange;
       handleComponentColorChange = (event: Event) => {
-        const detail = (event as CustomEvent<{ meshName?: string; color?: string }>).detail;
+        const detail = (event as CustomEvent<{ meshName?: string; color?: string; enabled?: boolean }>).detail;
         if (!detail?.meshName || !detail.color) return;
         componentColorsRef.current = { ...componentColorsRef.current, [detail.meshName]: detail.color };
+        if (typeof detail.enabled === 'boolean') {
+          const current = enabledComponentMeshesRef.current;
+          enabledComponentMeshesRef.current = detail.enabled
+            ? [...new Set([...current, detail.meshName])]
+            : current.filter((meshName) => meshName.trim().toLocaleLowerCase() !== detail.meshName!.trim().toLocaleLowerCase());
+        }
         const isPrintSurface = (activeProduct.customizableParts ?? []).some((part) =>
           part.meshName === detail.meshName && (part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName)),
         );
@@ -2660,7 +2684,7 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
         isUpdatingHistory.current = false;
 
         // Restablecer el historial de la nueva vista a una sola línea base
-        historyRef.current = [snapshotCurrentObjects()];
+        historyRef.current = [snapshotHistoryState()];
         redoStackRef.current = [];
         updateHistoryButtons();
         canvas.requestRenderAll();
@@ -2871,7 +2895,16 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
       const hydrateDraft = async () => {
         let draft = getDraft(activeProduct.id);
         await initialProductSetup;
-        if (!draft && activeProduct.designTemplate) {
+        const shouldStartFromCatalogDesign = new URLSearchParams(window.location.search).get('catalogDesign') === '1';
+        const draftHasArtwork = Object.values(draft?.views ?? {}).some((serialized) => {
+          try {
+            const objects = JSON.parse(serialized);
+            return Array.isArray(objects) && objects.length > 0;
+          } catch {
+            return false;
+          }
+        });
+        if ((!draft || (shouldStartFromCatalogDesign && !draftHasArtwork)) && activeProduct.designTemplate) {
           const template = await getProductDesignTemplate(activeProduct.id);
           if (template) {
             const validViews = Object.fromEntries(Object.entries(template.views).filter(([viewId, serialized]) => {
@@ -2934,7 +2967,7 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
         // Refresh the active preview after the restored artwork is visible.
         captureViewThumbnail(currentViewIdRef.current, true);
         publish3DViewSnapshots();
-        historyRef.current = [snapshotCurrentObjects()];
+        historyRef.current = [snapshotHistoryState()];
         redoStackRef.current = [];
         updateHistoryButtons();
         isHydratingDraftRef.current = false;
@@ -3314,7 +3347,7 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
         if (viewSwitchToken !== modeToken || fabricCanvasRef.current !== c) return;
         panoramaSegments = [];
         fitCanvasToContainer();
-        historyRef.current = [snapshotCurrentObjects()];
+        historyRef.current = [snapshotHistoryState()];
         redoStackRef.current = [];
         updateHistoryButtons();
         isUpdatingHistory.current = false;
@@ -3397,7 +3430,7 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
         await loadViewObjects(getView(originalViewId));
         currentViewIdRef.current = originalViewId;
         setCurrentViewId(originalViewId);
-        historyRef.current = [snapshotCurrentObjects()];
+        historyRef.current = [snapshotHistoryState()];
         redoStackRef.current = [];
         updateHistoryButtons();
 
@@ -3534,7 +3567,7 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
           }) => object.set({ visible, excludeFromExport }));
           if (mustRestore) {
             await loadViewObjects(getView(originalViewId));
-            historyRef.current = [snapshotCurrentObjects()];
+            historyRef.current = [snapshotHistoryState()];
             redoStackRef.current = [];
             updateHistoryButtons();
           }
@@ -3747,7 +3780,7 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
               await loadViewObjects(getView(originalViewId));
               currentViewIdRef.current = originalViewId;
               setCurrentViewId(originalViewId);
-              historyRef.current = [snapshotCurrentObjects()];
+              historyRef.current = [snapshotHistoryState()];
               redoStackRef.current = [];
               updateHistoryButtons();
             }
@@ -3883,7 +3916,7 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
           await loadViewObjects(getView(originalViewId));
           currentViewIdRef.current = originalViewId;
           setCurrentViewId(originalViewId);
-          historyRef.current = [snapshotCurrentObjects()];
+          historyRef.current = [snapshotHistoryState()];
           redoStackRef.current = [];
           updateHistoryButtons();
           setIsExporting(false);
@@ -4941,13 +4974,34 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
       // Listener para limpiar el canvas
       handleClear = () => {
         if (!fabricCanvasRef.current) return;
+        // Fija el diseño completo antes del reinicio. Esto hace que un solo
+        // Undo vuelva al estado exacto que veía el cliente, incluso si la
+        // última modificación todavía no había emitido object:modified.
+        saveState();
+        // Reiniciar también devuelve las mallas a los colores iniciales de
+        // Admin. Actualiza el ref antes de reconstruir los fondos impresos
+        // para que la zona segura y la textura 3D usen esos mismos colores.
+        const resetComponentColors = Object.fromEntries((activeProduct.customizableParts ?? []).map((part) => [
+          part.meshName,
+          part.defaultColor || '#cbd5e1',
+        ]));
+        componentColorsRef.current = resetComponentColors;
+        enabledComponentMeshesRef.current = [];
+        window.dispatchEvent(new CustomEvent('editor:reset-component-colors', {
+          detail: { productId: activeProduct.id },
+        }));
         const objects = fabricCanvasRef.current.getObjects();
         // Mantener zona segura y mockup base; eliminar sólo objetos del usuario
         // (el relleno de fondo es capa de sistema y se resetea aparté abajo).
         const userObjects = objects.filter(
           (obj: any) => obj !== safeZoneRef.current && !obj.isGuide && !obj.isMockup && !obj.isDesignBackground,
         );
-        userObjects.forEach((obj: any) => fabricCanvasRef.current.remove(obj));
+        isUpdatingHistory.current = true;
+        try {
+          userObjects.forEach((obj: any) => fabricCanvasRef.current.remove(obj));
+        } finally {
+          isUpdatingHistory.current = false;
+        }
         // "Reiniciar" también borra el color de fondo (mockup + 3D + barra
         // "Fondo"). En modo sin límites se limpió el arte de todas las caras,
         // así que el fondo se limpia en todas; en modo individual sólo en la
@@ -4964,22 +5018,70 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
       const restoreUserObjects = (jsonString: string) => {
         if (!fabricCanvasRef.current || !jsonString) return;
         const canvas = fabricCanvasRef.current;
-
-        // 1. Remove only user objects. Las capas de sistema (p. ej. el relleno
-        // de fondo) quedan fuera del JSON de historial, así que también deben
-        // conservarse aquí o undo/redo borrarían el color del lienzo.
-        const userObjects = canvas.getObjects().filter((obj: any) => !obj.isGuide && !obj.isMockup && !obj.isDesignBackground);
+        let objectsToLoad: unknown[];
+        let restoredMetadata: {
+          designBackgrounds?: Record<string, string>;
+          componentColors?: Record<string, string>;
+          enabledComponentMeshes?: string[];
+        } = {};
+        try {
+          const parsed = JSON.parse(jsonString);
+          if (Array.isArray(parsed)) {
+            // Compatibilidad con estados creados antes de guardar metadatos.
+            objectsToLoad = parsed;
+          } else if (parsed && Array.isArray(parsed.objects)) {
+            objectsToLoad = parsed.objects;
+            restoredMetadata = parsed;
+          } else {
+            throw new Error('El estado del historial no contiene una lista de objetos.');
+          }
+        } catch (error) {
+          console.error('[EditorCanvas] No se pudo restaurar el paso del historial.', error);
+          isRedoingUndoRef.current = false;
+          return;
+        }
+        // Las capas de sistema se reconstruyen desde los metadatos guardados.
+        const userObjects = canvas.getObjects().filter(isDraftDesignObject);
         userObjects.forEach((obj: any) => canvas.remove(obj));
 
-        // 2. Enliven and add new objects
-        const objectsToLoad = JSON.parse(jsonString);
         // @ts-ignore Fabric.js types mismatch
         fabric.util.enlivenObjects(objectsToLoad, (enlivenedObjects: fabric.Object[]) => {
           enlivenedObjects.forEach((obj) => {
             canvas.add(obj);
           });
+          if (restoredMetadata.componentColors) {
+            componentColorsRef.current = { ...restoredMetadata.componentColors };
+            enabledComponentMeshesRef.current = [...(restoredMetadata.enabledComponentMeshes ?? [])];
+            window.dispatchEvent(new CustomEvent('editor:restore-component-colors', {
+              detail: {
+                productId: activeProduct.id,
+                colors: restoredMetadata.componentColors,
+                enabledMeshNames: restoredMetadata.enabledComponentMeshes ?? [],
+              },
+            }));
+          }
+          if (restoredMetadata.designBackgrounds) {
+            designBackgroundColorsRef.current = { ...restoredMetadata.designBackgrounds };
+            if (panoramaModeRef.current) {
+              Object.entries(restoredMetadata.designBackgrounds).forEach(([viewId, background]) => {
+                setDesignBackground(background, getView(viewId));
+              });
+            } else {
+              setDesignBackground(
+                restoredMetadata.designBackgrounds[currentViewIdRef.current] ?? 'transparent',
+                getView(currentViewIdRef.current),
+              );
+            }
+          }
           ensureObjectsInteractable();
           canvas.renderAll();
+          const restoredState = snapshotCurrentObjects();
+          canvasDataRef.current[currentViewIdRef.current] = restoredState;
+          viewObjectsRef.current[currentViewIdRef.current] = canvas.getObjects().filter(isDraftDesignObject);
+          captureViewThumbnail(currentViewIdRef.current, true);
+          publish3DViewSnapshots();
+          scheduleDraftSaveRef.current?.();
+          emitSmartInputs();
           // Reset flag after render
           setTimeout(() => {
             isRedoingUndoRef.current = false;
@@ -4989,7 +5091,7 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
 
       handleUndo = () => {
         cancelCropMode();
-        if (historyRef.current.length <= 1) return;
+        if (isRedoingUndoRef.current || historyRef.current.length <= 1) return;
         isRedoingUndoRef.current = true;
 
         const current = historyRef.current.pop();
@@ -5004,7 +5106,7 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
 
       handleRedo = () => {
         cancelCropMode();
-        if (redoStackRef.current.length === 0) return;
+        if (isRedoingUndoRef.current || redoStackRef.current.length === 0) return;
         isRedoingUndoRef.current = true;
 
         const nextState = redoStackRef.current.pop();
@@ -5815,6 +5917,20 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
       window.addEventListener('editor:add-to-cart', handleAddToCart);
       window.addEventListener('editor:buy-now', handleAddToCart);
       window.addEventListener('editor:purchase-completed', handleClearDraft);
+      // El detalle del producto puede abrir el editor con variantes elegidas.
+      // Reproducimos la selección después de registrar los listeners y crear
+      // Fabric: el evento inicial de ViewSelector puede ocurrir antes de esto.
+      const initialParams = new URLSearchParams(window.location.search);
+      const initialSelections = Object.fromEntries((initialProduct.options ?? []).flatMap((option) => {
+        const valueId = initialParams.get(`option.${option.id}`);
+        const value = option.values.find((item) => item.id === valueId);
+        return value ? [[option.id, value]] : [];
+      })) as Record<string, ProductOptionValue>;
+      if (Object.keys(initialSelections).length) {
+        handleOptionsChanged(new CustomEvent('editor:options-changed', {
+          detail: { productId: initialProduct.id, selections: initialSelections },
+        }));
+      }
       // Lista inicial de textos para la sidebar.
       emitSmartInputs();
       window.addEventListener('editor:save-as-template', handleExportTemplate);
@@ -5853,6 +5969,9 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
       // Un texto que quede vacío al terminar de editarlo se restaura para que
       // el objeto no pierda su caja (y siga siendo seleccionable/editable).
       canvas.on('text:editing:exited', preserveEmptyText);
+      // Fabric no siempre emite object:modified al terminar de editar texto.
+      // Guarda el resultado al salir del modo de edición para que Undo lo tome.
+      canvas.on('text:editing:exited', saveState);
 
       // Mantiene la tarjeta de la vista activa al día sin renderizar una imagen
       // por cada píxel de un arrastre: `captureViewThumbnail` agrupa cambios

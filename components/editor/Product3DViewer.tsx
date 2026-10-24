@@ -1185,7 +1185,10 @@ function ProductModel({ product, fabricCanvas, meshSettings, partColors, compone
     : 0;
   const textureAspectRatio = printAspect > 0 ? printAspect : CYLINDER_TEXTURE_ASPECT;
   const printBasePart = product.customizableParts?.find((part) => part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName));
-  const printableSurfaceColor = printBasePart
+  const printBasePartEnabled = printBasePart && enabledMeshNames.some((meshName) =>
+    meshName.trim().toLocaleLowerCase() === printBasePart.meshName.trim().toLocaleLowerCase(),
+  );
+  const printableSurfaceColor = printBasePart && printBasePartEnabled
     ? componentColors[printBasePart.meshName] ?? printBasePart.defaultColor
     : undefined;
   const panoramic = !phoneCase && (
