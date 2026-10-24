@@ -39,6 +39,7 @@ export type CartCatalogItem = {
   quantity: number;
   minimumQuantity: number;
   selectedOptions?: Array<{ optionId: string; optionName: string; valueId: string; valueLabel: string; priceModifier: number }>;
+  selectedColors?: Array<{ meshName: string; label: string; color: string }>;
   addedAt: number;
 };
 

@@ -14,7 +14,7 @@ import AdminProductOptionsForm from '@/components/admin/AdminProductOptionsForm'
 import MockupAreaPicker, { normalizePrintArea, type PrintArea } from '@/components/admin/MockupAreaPicker';
 import PrintArea3DEditor from '@/components/admin/PrintArea3DEditor';
 import GLBModelPreview from '@/components/admin/GLBModelPreview';
-import { DEFAULT_MESH_SETTINGS, type MeshSettings, type SafeAreaPoint, type SafeAreaShape } from '@/src/config/products';
+import { DEFAULT_MESH_SETTINGS, isLikelyPrintSurfaceMesh, type MeshSettings, type SafeAreaPoint, type SafeAreaShape } from '@/src/config/products';
 import { seedSafeAreaPolygon } from '@/src/utils/safeAreaPolygon';
 import { validateGLBArrayBuffer } from '@/src/utils/glbValidation';
 import { getDraft, type Draft3DViewPose } from '@/src/utils/designDraftStorage';
@@ -170,7 +170,7 @@ const toForm = (product: Product): ProductForm => ({
   minimumQuantity: String(product.pricingSchema?.minimumQuantity ?? 1),
   volumeDiscounts: (product.pricingSchema?.volumeDiscounts ?? []).map((tier) => ({ minQty: String(tier.minQty), discountPercentage: String(tier.discountPercentage) })),
   availableAddonIds: product.availableAddonIds ?? [],
-  customizableParts: product.customizableParts?.map((part) => ({ ...part, defaultColor: part.defaultColor || '#cbd5e1', enabled: part.enabled !== false })) ?? [],
+  customizableParts: product.customizableParts?.map((part) => ({ ...part, defaultColor: part.defaultColor || '#cbd5e1', enabled: part.enabled !== false, includeInPrint: part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName) })) ?? [],
   options: product.options?.map((option) => ({
     ...option,
     displayType: option.displayType ?? option.type,
@@ -425,7 +425,7 @@ export default function AdminProductEditor() {
   const isAddonSelectedForForm = (addon: Addon) => form.availableAddonIds.includes(addon.id);
   const toggleAvailableAddon = (id: string) => setForm((current) => ({ ...current, availableAddonIds: current.availableAddonIds.includes(id) ? current.availableAddonIds.filter((item) => item !== id) : [...current.availableAddonIds, id] }));
   const updateCustomizablePart = (index: number, patch: Partial<CustomizablePart>) => setForm((current) => ({ ...current, customizableParts: current.customizableParts.map((part, partIndex) => partIndex === index ? { ...part, ...patch } : part) }));
-  const addCustomizablePart = () => setForm((current) => ({ ...current, customizableParts: [...current.customizableParts, { id: crypto.randomUUID(), label: '', meshName: '', defaultColor: '#cbd5e1', enabled: true }] }));
+  const addCustomizablePart = () => setForm((current) => ({ ...current, customizableParts: [...current.customizableParts, { id: crypto.randomUUID(), label: '', meshName: '', defaultColor: '#cbd5e1', enabled: true, includeInPrint: false }] }));
   const setViewField = (index: number, field: keyof ProductViewForm, value: string) => setForm((current) => ({ ...current, views: current.views.map((view, viewIndex) => viewIndex === index ? { ...view, [field]: value } : view) }));
   const setViewPrintArea = (index: number, area: PrintArea) => setForm((current) => ({ ...current, views: current.views.map((view, viewIndex) => viewIndex !== index ? view : {
     ...view,
@@ -558,6 +558,8 @@ export default function AdminProductEditor() {
     if (form.customizableParts.some((part) => !part.label.trim() || !part.meshName.trim())) { alert('Completa la etiqueta y el nombre exacto de malla en cada pieza 3D, o elimina las piezas incompletas.'); return; }
     const meshNames = form.customizableParts.map((part) => part.meshName.trim().toLocaleLowerCase());
     if (new Set(meshNames).size !== meshNames.length) { alert('Cada pieza personalizable debe apuntar a un nombre de malla distinto.'); return; }
+    const printSurfaceCount = form.customizableParts.filter((part) => part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName)).length;
+    if (printSurfaceCount > 1) { alert('Marca una sola malla como superficie imprimible para definir un único color base en el archivo de impresión.'); return; }
     const options = form.options.map((option) => ({ ...option, name: option.name.trim() || 'Opción', displayType: option.displayType ?? option.type, values: option.values.map((value) => ({ ...value, label: value.label.trim() || 'Variante', thumbnailUrl: value.thumbnailUrl?.trim() || undefined, mockupUrl: undefined, printArea: null, views: form.views.map((baseView) => { const configured = value.views?.find((view) => view.viewId === baseView.id); const baseArea = normalizePrintArea({ x: Number(baseView.x), y: Number(baseView.y), width: Number(baseView.width), height: Number(baseView.height), shape: baseView.shape, radius: Number(baseView.radius), polygon: parsePolygonForm(baseView.polygon) }); const printArea = configured?.printArea ? normalizePrintArea(configured.printArea) : baseArea; const printArea3D = serializePrintArea3D(configured?.printArea3D ?? baseView.area3D); const printSurface3D = configured?.printSurface3D ?? { x: Number(baseView.surfaceX), y: Number(baseView.surfaceY), width: Number(baseView.surfaceWidth), height: Number(baseView.surfaceHeight) }; return { viewId: baseView.id, name: baseView.name.trim() || 'Vista', mockupUrl: configured?.mockupUrl?.trim() || null, printArea, printArea3D, printSurface3D, printSurface3DMode: configured?.printSurface3DMode ?? (baseView.surfaceCustomized ? 'custom' as const : 'automatic' as const) }; }) })) }));
     const meshSettings: MeshSettings = { textureWidth, textureHeight };
     const optionsWithMeshSettings = options.map((option) => ({
@@ -567,7 +569,7 @@ export default function AdminProductEditor() {
         return hasPrintArea ? { ...value, meshSettings: value.meshSettings ?? meshSettings } : value;
       }),
     }));
-    const customizableParts = form.customizableParts.map((part) => ({ ...part, label: part.label.trim(), meshName: part.meshName.trim(), defaultColor: part.defaultColor || '#cbd5e1' }));
+    const customizableParts = form.customizableParts.map((part) => ({ ...part, label: part.label.trim(), meshName: part.meshName.trim(), defaultColor: part.defaultColor || '#cbd5e1', includeInPrint: part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName) }));
     const basePrice = Number(form.price);
     const productId = selectedId ?? crypto.randomUUID();
     const existingProduct = selectedId ? products.find((item) => item.id === selectedId) : undefined;
@@ -718,15 +720,16 @@ export default function AdminProductEditor() {
             {!form.model3dUrl.trim() && detectedMeshNames.length === 0 && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Agrega la ruta del GLB o selecciona un archivo local para detectar sus mallas. Para guardar, necesitarás una ruta persistente.</p>}
             {form.customizableParts.length === 0 ? <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">Sin piezas configuradas. El panel de colores se ocultará al cliente.</p> : <div className="space-y-3">{form.customizableParts.map((part, index) => {
               const meshIsDetected = detectedMeshNames.includes(part.meshName);
-              return <div key={part.id} className="grid grid-cols-1 items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:grid-cols-2 lg:grid-cols-[1fr_1.2fr_auto_auto_auto]">
+              return <div key={part.id} className="grid grid-cols-1 items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:grid-cols-2 lg:grid-cols-[1fr_1.2fr_auto_auto_auto_auto]">
                 <Field label="Etiqueta visible" value={part.label} onChange={(value) => updateCustomizablePart(index, { label: value })} placeholder="Color del asa" />
-                <label className="grid min-w-0 gap-1.5 text-sm font-medium text-slate-700"><span>Malla del GLB</span><select value={meshIsDetected ? part.meshName : '__manual__'} onChange={(event) => { if (event.target.value !== '__manual__') updateCustomizablePart(index, { meshName: event.target.value }); }} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"><option value="__manual__">{detectedMeshNames.length ? 'Escribir nombre manualmente…' : 'Sin mallas detectadas · escribir nombre'}</option>{detectedMeshNames.map((name) => <option key={name} value={name}>{name}</option>)}</select>{!meshIsDetected && <input value={part.meshName} onChange={(event) => updateCustomizablePart(index, { meshName: event.target.value })} placeholder="Nombre exacto, ej. mesh_handle" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-normal text-slate-900 outline-none focus:border-violet-500" />}</label>
+                <label className="grid min-w-0 gap-1.5 text-sm font-medium text-slate-700"><span>Malla del GLB</span><select value={meshIsDetected ? part.meshName : '__manual__'} onChange={(event) => { if (event.target.value !== '__manual__') updateCustomizablePart(index, { meshName: event.target.value, includeInPrint: isLikelyPrintSurfaceMesh(event.target.value) }); }} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"><option value="__manual__">{detectedMeshNames.length ? 'Escribir nombre manualmente…' : 'Sin mallas detectadas · escribir nombre'}</option>{detectedMeshNames.map((name) => <option key={name} value={name}>{name}</option>)}</select>{!meshIsDetected && <input value={part.meshName} onChange={(event) => updateCustomizablePart(index, { meshName: event.target.value, includeInPrint: isLikelyPrintSurfaceMesh(event.target.value) })} placeholder="Nombre exacto, ej. mesh_handle" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-normal text-slate-900 outline-none focus:border-violet-500" />}</label>
                 <label className="grid gap-1.5 text-sm font-medium text-slate-700"><span>Color inicial</span><input type="color" value={part.defaultColor} onChange={(event) => updateCustomizablePart(index, { defaultColor: event.target.value })} aria-label={`Color inicial para ${part.label || 'pieza'}`} className="h-10 w-full cursor-pointer rounded-lg border border-slate-300 bg-white p-1 sm:w-14" /></label>
+                <label className="flex h-10 items-center gap-2 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700"><input type="checkbox" checked={part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName)} onChange={(event) => updateCustomizablePart(index, { includeInPrint: event.target.checked })} className="h-4 w-4 accent-violet-600" />Incluir en impresión</label>
                 <label className="flex h-10 items-center gap-2 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700"><input type="checkbox" checked={part.enabled !== false} onChange={(event) => updateCustomizablePart(index, { enabled: event.target.checked })} className="h-4 w-4 accent-violet-600" />Permitir al cliente</label>
                 <button type="button" onClick={() => setForm((current) => ({ ...current, customizableParts: current.customizableParts.filter((_, partIndex) => partIndex !== index) }))} aria-label={`Eliminar ${part.label || 'pieza'}`} title="Eliminar pieza" className="inline-flex h-10 items-center justify-center rounded-lg border border-red-200 bg-white px-3 text-red-600 hover:bg-red-50"><Trash2 size={16} /></button>
               </div>;
             })}</div>}
-            <div className="mt-3 flex gap-2 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2.5 text-xs text-violet-800"><Info className="mt-0.5 shrink-0" size={15} /><span>Ejemplo: etiqueta “Color del asa” y nombre de malla “mesh_handle”. Si una malla no coincide, el control se mostrará pero no podrá modificarla.</span></div>
+            <div className="mt-3 flex gap-2 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2.5 text-xs text-violet-800"><Info className="mt-0.5 shrink-0" size={15} /><span>“Incluir en impresión” aplica este color como base del archivo impreso bajo el diseño. Actívalo solo en la superficie que se imprime, como el cuerpo de una taza o tela; déjalo apagado para asas y piezas separadas. Los nombres comunes de malla imprimible se marcan automáticamente, y puedes cambiarlos.</span></div>
           </section>
           )}
           {activeProductFormTab === 'views' && (

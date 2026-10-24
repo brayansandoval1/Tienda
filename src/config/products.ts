@@ -192,7 +192,12 @@ export interface CustomizablePart {
   defaultColor: string;
   /** Si es false, esta pieza no se ofrece en el editor del cliente. */
   enabled?: boolean;
+  /** Si es true, usa el color elegido como base del archivo de impresión de la zona segura. */
+  includeInPrint?: boolean;
 }
+
+/** Heurística inicial para nombres comunes; Admin permite ajustar este valor. */
+export const isLikelyPrintSurfaceMesh = (meshName: string) => /(?:^|[\s_.-])(printable|print_surface|printsurface|body|cuerpo|geometry_0)(?:$|[\s_.-])/i.test(meshName.trim());
 
 export interface Product {
   id: string;

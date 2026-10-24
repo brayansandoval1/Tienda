@@ -330,13 +330,13 @@ export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama
       </div>
 
       <div className="flex items-center gap-1.5 border-l border-slate-200 pl-3">
-        <span className="text-xs font-semibold text-slate-500">Fondo</span>
+        <span className="text-xs font-semibold text-slate-500" title="Color impreso debajo del diseño dentro de la zona segura">Fondo impreso</span>
         {['transparent', ...SOLID_BACKGROUND_SWATCHES.slice(0, 6)].map((color) => (
           <button
             key={color}
             type="button"
-            aria-label={color === 'transparent' ? 'Fondo transparente' : `Fondo ${color}`}
-            title={color === 'transparent' ? 'Fondo transparente' : `Fondo ${color}`}
+            aria-label={color === 'transparent' ? 'Fondo impreso transparente en zona segura' : `Color de fondo impreso ${color} en zona segura`}
+            title={color === 'transparent' ? 'Usa el color imprimible configurado por Admin o deja el diseño sin relleno' : `Fondo impreso ${color} en la zona segura`}
             onClick={() => changeBackground(color)}
             className={`h-6 w-6 rounded-md border ${backgroundColor === color ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}
             style={{ background: color === 'transparent' ? 'linear-gradient(135deg, #fff 45%, #ef4444 46%, #ef4444 54%, #fff 55%)' : color }}
@@ -351,8 +351,8 @@ export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama
             <button
               key={preset.id}
               type="button"
-              aria-label={`Fondo degradado ${preset.name}`}
-              title={`Degradado ${preset.name}`}
+              aria-label={`Fondo impreso degradado ${preset.name} en zona segura`}
+              title={`Degradado impreso ${preset.name} en zona segura`}
               onClick={() => changeBackground(encoded)}
               className={`h-6 w-6 rounded-md border border-transparent ${backgroundColor === encoded ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}
               style={{ background: designBackgroundToCss(spec) }}
@@ -365,19 +365,19 @@ export default function TextToolbar({ isPanoramaActive = false, onTogglePanorama
         </button>
         {showMoreBackgrounds && <>
             {SOLID_BACKGROUND_SWATCHES.slice(6).map((color) => (
-              <button key={color} type="button" aria-label={`Fondo ${color}`} title={`Fondo ${color}`} onClick={() => changeBackground(color)}
+              <button key={color} type="button" aria-label={`Color de fondo impreso ${color} en zona segura`} title={`Fondo impreso ${color} en zona segura`} onClick={() => changeBackground(color)}
                 className={`h-6 w-6 shrink-0 rounded-md border ${backgroundColor === color ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}
                 style={{ backgroundColor: color, borderColor: color === '#ffffff' ? '#cbd5e1' : 'transparent' }} />
             ))}
             {GRADIENT_BACKGROUND_PRESETS.slice(5).map((preset) => {
               const spec = gradientPresetToBackground(preset);
               const encoded = encodeDesignBackground(spec);
-              return <button key={preset.id} type="button" aria-label={`Fondo degradado ${preset.name}`} title={`Degradado ${preset.name}`}
+              return <button key={preset.id} type="button" aria-label={`Fondo impreso degradado ${preset.name} en zona segura`} title={`Degradado impreso ${preset.name} en zona segura`}
                 onClick={() => changeBackground(encoded)} className={`h-6 w-6 shrink-0 rounded-md border ${backgroundColor === encoded ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}
                 style={{ background: designBackgroundToCss(spec) }} />;
             })}
         </>}
-        <input type="color" aria-label="Elegir fondo personalizado" value={/^#[0-9a-f]{6}$/i.test(backgroundColor) ? backgroundColor : '#ffffff'} onChange={(event) => changeBackground(event.target.value)} className="h-6 w-6 cursor-pointer rounded-md border-0 p-0" />
+        <input type="color" aria-label="Elegir color personalizado para el fondo impreso de la zona segura" value={/^#[0-9a-f]{6}$/i.test(backgroundColor) ? backgroundColor : '#ffffff'} onChange={(event) => changeBackground(event.target.value)} className="h-6 w-6 cursor-pointer rounded-md border-0 p-0" />
       </div>
 
       {/* Botón "Diseñar lienzo 360°" oculto a petición del usuario:

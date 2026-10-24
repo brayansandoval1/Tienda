@@ -42,6 +42,8 @@ export interface SavedDesignPayload {
     printWidthCm?: number;
     printHeightCm?: number;
   };
+  /** Colores físicos elegidos en el editor; sirven como referencia de producción. */
+  productMaterialColors?: Record<string, string>;
   quantity: number;
   currency: 'USD';
   addons?: Array<{ id: string; name: string; price: number; perSide?: boolean; userText?: string }>;

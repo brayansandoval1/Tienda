@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, X, Trash2, Loader2 } from 'lucide-react';
 import type { TextOptions } from '../../types/product';
-import type { ColorVariant, Product, ProductOptionValue, ProductView } from '@/src/store/useProductStore';
+import type { ColorVariant, CustomizablePart, Product, ProductOptionValue, ProductView } from '@/src/store/useProductStore';
+import { isLikelyPrintSurfaceMesh } from '@/src/config/products';
 import type { ExportedDesignFiles, SaveDesignResult, SavedDesignPayload } from '@/src/types/editorDesign';
 import type { PriceCalculation } from '@/src/types/pricing';
 import { useCanvasUsage } from '@/components/editor/useCanvasUsage';
@@ -53,17 +54,20 @@ const getInitialSelectedOptions = (_product: Product): Record<string, ProductOpt
 
 interface EditorCanvasProps {
   product: Product;
+  componentColors?: Record<string, string>;
   workflowStep?: 'design' | 'options' | 'review';
   isPanoramaActive?: boolean;
   isUnrestrictedDesign?: boolean;
 }
 
-export default function EditorCanvas({ product: initialProduct, workflowStep = 'design', isPanoramaActive = false, isUnrestrictedDesign = false }: EditorCanvasProps) {
+export default function EditorCanvas({ product: initialProduct, componentColors = {}, workflowStep = 'design', isPanoramaActive = false, isUnrestrictedDesign = false }: EditorCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Contenedor del lienzo central: se usa para dimensionar el canvas y aplicar
   // "zoom to fit" de forma proporcional al área disponible del editor.
   const canvasAreaRef = useRef<HTMLDivElement>(null);
   const fabricCanvasRef = useRef<any>(null);
+  const componentColorsRef = useRef(componentColors);
+  componentColorsRef.current = componentColors;
   const previewRefreshFrameRef = useRef<number>(0);
   // Fabric deja de editar IText cuando el usuario enfoca un control del toolbar.
   // Conservamos el último rango seleccionado para que fuente/tamaño se apliquen
@@ -262,6 +266,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       handleApplyLibraryFont: (e: Event) => void,
       handleColorChange: (e: Event) => void,
       handleProductColor: (e: Event) => void,
+      handleComponentColorChange: (e: Event) => void,
       handleDesignBackground: (e: Event) => void,
       handleFontChange: (e: Event) => void,
       handleFontSizeChange: (e: Event) => void,
@@ -1929,7 +1934,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           .filter((obj: any) => obj?.isSafeAreaBackground)
           .forEach((obj: any) => c.remove(obj));
         const safeAreaBackground = buildSafeAreaShape(renderedArea as PrintArea, {
-          fill: 'transparent',
+          fill: getPrintableMeshColor(),
           // Oculto hasta que el usuario elija un color en la barra "Fondo".
           // El color del fondo del termo/gorra se aplica SOLO dentro de la
           // zona segura, nunca sobre el canvas completo.
@@ -2044,6 +2049,19 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         } as any);
       };
 
+      const getPrintableMeshColor = () => {
+        const printPart = (activeProduct.customizableParts ?? []).find((part) =>
+          part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName),
+        );
+        return printPart
+          ? componentColorsRef.current[printPart.meshName] ?? printPart.defaultColor ?? '#ffffff'
+          : 'transparent';
+      };
+      const buildPrintAreaBackgroundFill = (background: DesignBackground, width: number, height: number) =>
+        background.kind === 'transparent'
+          ? getPrintableMeshColor()
+          : buildFabricBackgroundFill(background, width, height);
+
       // Rectángulo de fondo de un segmento en el lienzo 360. Cada cara tiene
       // su propio relleno (equivalente al vector de la Zona Segura en modo
       // individual) para que el color elegido en la barra "Fondo" se pinte
@@ -2067,7 +2085,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           height: ADMIN_BASE_SIZE,
           originX: 'left',
           originY: 'top',
-          fill: buildFabricBackgroundFill(decodeDesignBackground(storedValue), segment.destWidth, ADMIN_BASE_SIZE),
+          fill: buildPrintAreaBackgroundFill(decodeDesignBackground(storedValue), segment.destWidth, ADMIN_BASE_SIZE),
           selectable: false,
           evented: false,
           hasControls: false,
@@ -2136,7 +2154,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
           // se crea con el color ya guardado en el ref (recién actualizado).
           const panoramaBackground = ensurePanoramaBackgroundRect(view.id);
           if (panoramaBackground) {
-            panoramaBackground.set('fill', buildFabricBackgroundFill(background, panoramaBackground.width ?? 0, panoramaBackground.height ?? 0));
+            panoramaBackground.set('fill', buildPrintAreaBackgroundFill(background, panoramaBackground.width ?? 0, panoramaBackground.height ?? 0));
             c.requestRenderAll();
           }
           return;
@@ -2157,7 +2175,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         }
         safeAreaBackground.set(
           'fill',
-          buildFabricBackgroundFill(
+          buildPrintAreaBackgroundFill(
             background,
             safeAreaBackground.width ?? 0,
             safeAreaBackground.height ?? 0,
@@ -2593,6 +2611,32 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         if (color) handleDesignBgColorChangeRef.current?.(color);
       };
       handleDesignBgColorChangeRef.current = handleDesignBgColorChange;
+      handleComponentColorChange = (event: Event) => {
+        const detail = (event as CustomEvent<{ meshName?: string; color?: string }>).detail;
+        if (!detail?.meshName || !detail.color) return;
+        componentColorsRef.current = { ...componentColorsRef.current, [detail.meshName]: detail.color };
+        const isPrintSurface = (activeProduct.customizableParts ?? []).some((part) =>
+          part.meshName === detail.meshName && (part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName)),
+        );
+        if (!isPrintSurface) return;
+
+        if (panoramaModeRef.current) {
+          const c = fabricCanvasRef.current;
+          c?.getObjects().filter((object: any) => object?.isPanoramaBackground).forEach((background: any) => {
+            const value = designBackgroundColorsRef.current[background.panoramaViewId] ?? 'transparent';
+            background.set('fill', buildPrintAreaBackgroundFill(
+              decodeDesignBackground(value), background.width ?? 0, background.height ?? 0,
+            ));
+          });
+          c?.requestRenderAll();
+          return;
+        }
+
+        const storedBackground = designBackgroundColorsRef.current[currentViewIdRef.current] ?? 'transparent';
+        if (decodeDesignBackground(storedBackground).kind === 'transparent') {
+          setDesignBackground('transparent', activeView);
+        }
+      };
 
       // --- Vistas de producto (frente, espalda, etc.) ---
       const finishViewSwitch = (viewId: string) => {
@@ -3517,6 +3561,22 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
         const printFiles: Array<{ name: string; data: Blob }> = [];
         const panoramaPngs: Blob[] = [];
         const productionNotes = ['Archivos PNG listos para impresión.', 'Cada vista se exporta recortada a su área imprimible.'];
+        const materialColors = Object.fromEntries((activeProduct.customizableParts ?? []).map((part) => [
+          part.meshName,
+          componentColorsRef.current[part.meshName] ?? part.defaultColor ?? '#cbd5e1',
+        ]));
+        const printBaseParts = (activeProduct.customizableParts ?? []).filter((part) =>
+          part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName),
+        );
+        if (printBaseParts.length) {
+          productionNotes.push(`Color base impreso: ${printBaseParts.map((part) => `${part.label || part.meshName} ${materialColors[part.meshName]}`).join(', ')}.`);
+        }
+        const nonPrintParts = (activeProduct.customizableParts ?? []).filter((part) =>
+          !(part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName)),
+        );
+        if (nonPrintParts.length) {
+          productionNotes.push(`Colores físicos de referencia (no incluidos en el PNG de impresión): ${nonPrintParts.map((part) => `${part.label || part.meshName} ${materialColors[part.meshName]}`).join(', ')}.`);
+        }
         setIsExporting(true);
         window.dispatchEvent(new CustomEvent('editor:export-started'));
         try {
@@ -3846,6 +3906,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
             canvasHeight: activeProduct.canvasHeight, printWidthCm: activeProduct.printWidthCm,
             printHeightCm: activeProduct.printHeightCm,
           },
+          productMaterialColors: Object.fromEntries((activeProduct.customizableParts ?? []).map((part) => [
+            part.meshName,
+            componentColorsRef.current[part.meshName] ?? part.defaultColor ?? '#cbd5e1',
+          ])),
           quantity: addonOrderRef.current.quantity,
           currency: 'USD',
           addons: addonOrderRef.current.addons,
@@ -5710,6 +5774,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
 
       window.addEventListener('editor:change-color', handleColorChange);
       window.addEventListener('editor:product-color', handleProductColor);
+      window.addEventListener('editor:component-color-change', handleComponentColorChange);
       window.addEventListener('editor:design-background', handleDesignBackground);
       window.addEventListener('editor:change-font', handleFontChange);
       window.addEventListener('editor:change-fontSize', handleFontSizeChange);
@@ -5831,6 +5896,9 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
       }
       if (handleProductColor) {
         window.removeEventListener('editor:product-color', handleProductColor);
+      }
+      if (handleComponentColorChange) {
+        window.removeEventListener('editor:component-color-change', handleComponentColorChange);
       }
       if (handleDesignBackground) {
         window.removeEventListener('editor:design-background', handleDesignBackground);
@@ -6097,11 +6165,10 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
               <hr className="border-gray-100" />
               <div>
                 <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-gray-500">
-                  2. Fondo impreso
+                  2. Fondo de impresión · zona segura
                 </label>
                 <p className="mb-1.5 text-[10px] leading-normal text-gray-400">
-                  El fondo cubre TODO el fondo del producto y se mantiene al exportar.
-                  Elige un color o un degradado, o pulsa “Transparente” para quitarlo.
+                  Un color o degradado reemplaza la base dentro de la zona y se imprime con el diseño. “Transparente” usa el color de la malla imprimible configurada por Admin; si no hay una, exporta el diseño sin relleno.
                 </p>
                 <div className="flex flex-col gap-2">
                   <button
@@ -6229,7 +6296,7 @@ export default function EditorCanvas({ product: initialProduct, workflowStep = '
                           makeLinearBackground(customGradient.angle, [customGradient.from, customGradient.to]),
                         ),
                       }}
-                      title="Aplicar degradado personalizado a todo el fondo del producto"
+                      title="Aplicar degradado personalizado al fondo de impresión de la zona segura"
                     >
                       <span className="rounded bg-white/70 px-1">Aplicar</span>
                     </button>

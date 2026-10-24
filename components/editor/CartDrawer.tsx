@@ -71,6 +71,7 @@ export default function CartDrawer() {
                         </div>
                         <p className="mt-1 text-[11px] text-slate-400">{isCatalogItem ? 'Diseño base del catálogo' : 'Render personalizado · HD'}</p>
                         {isCatalogItem && item.selectedOptions && item.selectedOptions.length > 0 && <div className="mt-1 space-y-0.5">{item.selectedOptions.map((option) => <p key={option.optionId} className="truncate text-[10px] text-slate-500">{option.optionName}: {option.valueLabel}</p>)}</div>}
+                        {isCatalogItem && item.selectedColors && item.selectedColors.length > 0 && <div className="mt-1 space-y-0.5">{item.selectedColors.map((part) => <p key={part.meshName} className="flex items-center gap-1.5 truncate text-[10px] text-slate-500"><span className="h-2.5 w-2.5 shrink-0 rounded-full border border-slate-200" style={{ backgroundColor: part.color }} />{part.label}</p>)}</div>}
                         <div className="mt-3 flex items-center justify-between">
                           <div className="inline-flex items-center rounded-lg border border-violet-100 bg-violet-50">
                             <button type="button" disabled={quantity <= minimumQuantity} onClick={() => updateQuantity(item.id, quantity - 1)} className="p-1.5 text-slate-500 hover:text-violet-700 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Reducir cantidad"><Minus size={13} /></button>

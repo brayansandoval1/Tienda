@@ -1,6 +1,7 @@
 'use client';
 
 import type { CustomizablePart } from '@/src/store/useProductStore';
+import { isLikelyPrintSurfaceMesh } from '@/src/config/products';
 
 interface ComponentColorsPanelProps {
   parts: CustomizablePart[];
@@ -16,11 +17,12 @@ export default function ComponentColorsPanel({ parts, colors, enabledMeshNames, 
   return (
     <section className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Colores de componentes 3D</p>
-        <p className="mt-1 text-[10px] text-slate-400">Activa una pieza para personalizar su material.</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Color físico del producto · mallas 3D</p>
+        <p className="mt-1 text-[10px] leading-4 text-slate-500">Elige el color físico de cada pieza. Las mallas marcadas para impresión también usan ese color como base debajo del diseño.</p>
       </div>
       {parts.map((part) => {
         const enabled = enabledMeshNames.includes(part.meshName);
+        const includedInPrint = part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName);
         return (
           <div key={part.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2">
             <input
@@ -30,7 +32,7 @@ export default function ComponentColorsPanel({ parts, colors, enabledMeshNames, 
               aria-label={`Activar ${part.label}`}
               className="h-4 w-4 accent-violet-600"
             />
-            <span className="min-w-0 flex-1 text-xs font-medium text-slate-700">{part.label}</span>
+            <span className="min-w-0 flex-1 text-xs font-medium text-slate-700">{part.label}<span className="block text-[10px] font-normal text-slate-400">{includedInPrint ? 'Base también impresa' : 'Solo cambia el modelo 3D'}</span></span>
             <input
               type="color"
               value={colors[part.meshName] ?? part.defaultColor ?? '#cbd5e1'}

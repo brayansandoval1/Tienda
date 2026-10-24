@@ -25,6 +25,15 @@ type PreviewDesign = {
 };
 
 const PREVIEW_CANVAS_SIZE = 800;
+const PRODUCT_COLOR_PALETTE = [
+  { name: 'Turquesa', color: '#128b91' }, { name: 'Azul marino', color: '#172b54' },
+  { name: 'Gris', color: '#a6a6a6' }, { name: 'Amarillo', color: '#ffdc55' },
+  { name: 'Negro', color: '#111111' }, { name: 'Azul cielo', color: '#78b3d0' },
+  { name: 'Aqua', color: '#4bb8b4' }, { name: 'Morado', color: '#9275ad' },
+  { name: 'Verde', color: '#4e9d59' }, { name: 'Coral', color: '#f58b82' },
+  { name: 'Azul', color: '#146da7' }, { name: 'Rosa', color: '#f35d91' },
+  { name: 'Verde lima', color: '#8cc63e' }, { name: 'Rojo', color: '#ed1c24' },
+];
 
 function makeDesignSnapshots(product: Product, objectsByView: Record<string, any[]>): PrintViewSnapshot[] {
   return product.views.map((view, index) => {
@@ -70,7 +79,7 @@ function makeDesignSnapshots(product: Product, objectsByView: Record<string, any
   });
 }
 
-function ProductModelPreview({ product }: { product: Product }) {
+function ProductModelPreview({ product, componentColors, enabledMeshNames }: { product: Product; componentColors: Record<string, string>; enabledMeshNames: string[] }) {
   const [preview, setPreview] = useState<PreviewDesign | null>(null);
   const [status, setStatus] = useState('Cargando diseño base…');
 
@@ -160,8 +169,8 @@ function ProductModelPreview({ product }: { product: Product }) {
   return <div className="relative h-[430px] overflow-hidden rounded-[1.75rem] border border-violet-100 bg-[#f3f1f8] shadow-inner sm:h-[560px] lg:h-[min(68vw,720px)] lg:min-h-[560px]">
     <Product3DViewer
       product={product}
-      componentColors={{}}
-      enabledMeshNames={[]}
+      componentColors={componentColors}
+      enabledMeshNames={enabledMeshNames}
       showSafeAreaGuide
       safeArea={safeArea}
       activeViewIndex={0}
@@ -180,12 +189,15 @@ export default function ProductDetailPage() {
   const productId = params.productId;
   const product = useProductStore((state) => state.products.find((item) => item.id === productId));
   const addCatalogItem = useCartStore((state) => state.addCatalogItem);
+  const colorableParts = (product?.customizableParts ?? []).filter((part) => part.enabled !== false);
+  const enabledMeshNames = colorableParts.map((part) => part.meshName);
   // El primer render debe coincidir en servidor y navegador. Zustand puede
   // terminar la hidratación de localStorage antes de que este efecto se monte.
   const [hydrated, setHydrated] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [addedToCart, setAddedToCart] = useState(false);
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
+  const [componentColors, setComponentColors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (useProductStore.persist.hasHydrated()) {
@@ -201,6 +213,11 @@ export default function ProductDetailPage() {
   useEffect(() => {
     setSelectedOptions({});
   }, [productId, product?.options]);
+  useEffect(() => {
+    setComponentColors(Object.fromEntries((product?.customizableParts ?? [])
+      .filter((part) => part.enabled !== false)
+      .map((part) => [part.meshName, part.defaultColor || '#cbd5e1'])));
+  }, [productId, product?.customizableParts]);
 
   const selectedOptionValues = useMemo(() => (product?.options ?? []).flatMap((option) => {
     const value = option.values.find((item) => item.id === selectedOptions[option.id]);
@@ -226,6 +243,7 @@ export default function ProductDetailPage() {
       minimumQuantity,
       totalPrice: total,
       selectedOptions: selectedOptionValues,
+      selectedColors: colorableParts.map((part) => ({ meshName: part.meshName, label: part.label, color: componentColors[part.meshName] ?? part.defaultColor ?? '#cbd5e1' })),
       addedAt: Date.now(),
     });
     setAddedToCart(true);
@@ -249,7 +267,7 @@ export default function ProductDetailPage() {
         </nav>
 
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1.25fr)_minmax(360px,.85fr)] lg:gap-12">
-          <section aria-label="Modelo 3D del producto" className="min-w-0"><ProductModelPreview product={product} /></section>
+          <section aria-label="Modelo 3D del producto" className="min-w-0"><ProductModelPreview product={product} componentColors={componentColors} enabledMeshNames={enabledMeshNames} /></section>
 
           <aside className="lg:sticky lg:top-28 lg:self-start">
             <p className="text-xs font-bold uppercase tracking-[.2em] text-violet-600">{product.category || 'Producto personalizable'}</p>
@@ -278,6 +296,28 @@ export default function ProductDetailPage() {
             <Link href={`/editor/${product.id}`} className="mt-3 inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-indigo-800 px-6 py-4 text-base font-semibold text-white shadow-lg shadow-indigo-900/15 transition hover:-translate-y-0.5 hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200">
               Personalizar este diseño <ArrowUpRight size={18} />
             </Link>
+
+            {colorableParts.length > 0 && <section className="mt-7 border-t border-slate-200 pt-6" aria-label="Colores del producto">
+              <h2 className="text-lg font-semibold text-slate-900">Color del producto</h2>
+              <p className="mt-1 text-sm text-slate-500">El color se aplica directamente al modelo 3D.</p>
+              <div className="mt-4 space-y-5">
+                {colorableParts.map((part) => {
+                  const baseColor = part.defaultColor || '#cbd5e1';
+                  const palette = PRODUCT_COLOR_PALETTE.some((item) => item.color.toLowerCase() === baseColor.toLowerCase())
+                    ? PRODUCT_COLOR_PALETTE
+                    : [{ name: 'Original', color: baseColor }, ...PRODUCT_COLOR_PALETTE];
+                  return <div key={part.id}>
+                    {colorableParts.length > 1 && <h3 className="mb-2 text-sm font-medium text-slate-700">{part.label}</h3>}
+                    <div className="flex flex-wrap gap-2.5">
+                      {palette.map((item) => {
+                        const selected = (componentColors[part.meshName] ?? baseColor).toLowerCase() === item.color.toLowerCase();
+                        return <button key={`${part.id}-${item.color}`} type="button" onClick={() => { setComponentColors((current) => ({ ...current, [part.meshName]: item.color })); setAddedToCart(false); }} aria-label={`${part.label}: ${item.name}`} title={item.name} aria-pressed={selected} className={`h-9 w-9 rounded-full border border-white transition hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2 ${selected ? 'ring-2 ring-indigo-800 ring-offset-1' : 'shadow-sm'}`} style={{ backgroundColor: item.color }} />;
+                      })}
+                    </div>
+                  </div>;
+                })}
+              </div>
+            </section>}
 
             <section className="mt-6" aria-labelledby="product-model-style">
               <h2 id="product-model-style" className="text-xs font-bold uppercase tracking-[.18em] text-slate-400">Modelo / estilo</h2>

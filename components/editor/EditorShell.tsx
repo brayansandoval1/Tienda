@@ -182,6 +182,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
             workflowStep={activeStep}
             isPanoramaActive={isPanoramaActive}
             isUnrestrictedDesign={isUnrestrictedDesign}
+            componentColors={componentColors}
           />
           {activeStep === 'design' && <FloatingFooter onReset={() => {}} />}
           {/* Revisar: visor de renders sobre el lienzo. El canvas sigue montado
@@ -203,7 +204,10 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
             componentColors={componentColors}
             enabledComponentMeshes={enabledComponentMeshes}
             onComponentToggle={(meshName, enabled) => setEnabledComponentMeshes((current) => enabled ? [...new Set([...current, meshName])] : current.filter((name) => name !== meshName))}
-            onComponentColorChange={(meshName, color) => setComponentColors((current) => ({ ...current, [meshName]: color }))}
+            onComponentColorChange={(meshName, color) => {
+              setComponentColors((current) => ({ ...current, [meshName]: color }));
+              window.dispatchEvent(new CustomEvent('editor:component-color-change', { detail: { meshName, color } }));
+            }}
           />
         </div>
       </div>
