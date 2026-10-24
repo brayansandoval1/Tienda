@@ -117,23 +117,13 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
       : { ...value, mockupUrl: undefined };
 
 
-    // Sustituye exclusivamente el valor de su categoría; nunca bloquea ni
-    // alterna implícitamente el valor que ya estaba activo.
-    // Reinsertar la clave al final conserva un único valor por categoría y
-    // deja el orden de Object.values() como el orden real de interacción.
-    // El mapa usa el ID estable del grupo. Reemplazar esta clave elimina
-    // cualquier valor anterior del mismo grupo y conserva los demás grupos.
+    // Mantiene una selección por grupo, igual que en la ficha del producto.
+    // Cualquier grupo activo desmarca Estándar; ese botón limpia todos.
     const newSelections: Record<string, ProductOptionValue> = {
+      ...selectedOptions,
       [optionId]: selectedValue,
     };
-
-    setSelectedOptions((currentSelections) => {
-      const updated: Record<string, ProductOptionValue> = {
-        [optionId]: selectedValue,
-      };
-
-      return updated;
-    });
+    setSelectedOptions(newSelections);
     const currentViewId = product.views[activeViewIndex]?.id ?? product.views[0]?.id ?? 'front';
     const resolvedMockup = getEffectiveMockup(
       product,
@@ -415,14 +405,14 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
           {showStyleSection && <section className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Modelo / Estilo</p>
             <div className="space-y-2">
-              <button type="button" onClick={handleStandardSelect} className={`w-full rounded-xl border px-3 py-2.5 text-left text-sm transition ${Object.keys(selectedOptions).length === 0 ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+              <button type="button" onClick={handleStandardSelect} aria-pressed={selectedValues.length === 0} className={`w-full rounded-xl border px-3 py-2.5 text-left text-sm transition ${selectedValues.length === 0 ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                 <span className="font-medium">Estándar</span><span className="ml-2 text-xs text-slate-500">Producto base</span>
               </button>
           {visibleOptions.map((option) => <div key={option.id} className="space-y-2">
             <p className="text-sm font-semibold text-slate-800">{optionGroupName(option)}</p>
             <div className={`grid auto-rows-fr gap-2 ${isOptionsStage ? 'grid-cols-3' : 'grid-cols-2'}`}>{valuesForOption(option).map((value, index) => {
               const selected = selectedOptions[option.id]?.id === value.id;
-              return <button key={value.id || `opt-${option.id}-${index}`} type="button" onClick={() => handleOptionSelect(option.id, value)} className={`overflow-hidden rounded-xl border p-2 text-left text-sm transition ${selected ? 'border-blue-600 bg-blue-50 text-blue-700 ring-2 ring-black/10' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+              return <button key={value.id || `opt-${option.id}-${index}`} type="button" onClick={() => handleOptionSelect(option.id, value)} aria-pressed={selected} className={`overflow-hidden rounded-xl border p-2 text-left text-sm transition ${selected ? 'border-blue-600 bg-blue-50 text-blue-700 ring-2 ring-black/10' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                 <div className="mb-1 flex h-14 items-center justify-center overflow-hidden rounded-lg bg-slate-50">
                   <img src={value.thumbnailUrl || value.mockupUrl || product.views[0]?.mockupUrl} alt={value.label || value.id || `Opción ${index + 1}`} crossOrigin="anonymous" className="h-full w-full object-contain p-1" />
                 </div>
