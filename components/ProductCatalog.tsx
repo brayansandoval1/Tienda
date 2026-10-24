@@ -202,7 +202,7 @@ export default function ProductCatalog() {
           {['Todos', ...categories].map((item) => <button key={item} type="button" onClick={() => setCategory(item)} aria-pressed={category === item} className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${category === item ? 'border-purple-600 bg-purple-600 text-white shadow-lg shadow-purple-500/25' : 'border-white bg-white/80 text-slate-500 shadow-sm hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700'}`}>{item}</button>)}
         </div>}
 
-        {visibleProducts.length ? <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{visibleProducts.map((product) => renderCard(product, true))}</div> : (
+        {visibleProducts.length ? <div className="mt-8 grid justify-center gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 300px))' }}>{visibleProducts.map((product) => renderCard(product, true))}</div> : (
           <div className="mt-10 rounded-3xl border border-dashed border-violet-200 bg-white/70 py-16 text-center">
             <p className="font-semibold text-slate-700">{products.some((product) => product.isActive !== false) ? 'No encontramos productos con esa búsqueda' : 'Pronto habrá productos disponibles'}</p>
             {products.some((product) => product.isActive !== false) && <button type="button" onClick={() => { setQuery(''); setCategory('Todos'); }} className="mt-2 text-sm font-semibold text-violet-600">Limpiar búsqueda</button>}
@@ -213,7 +213,7 @@ export default function ProductCatalog() {
     {favoritesLoaded && <section id="favoritos" className="scroll-mt-24 border-t border-violet-100 bg-white px-5 py-16 sm:px-8 lg:px-12">
       <div className="mx-auto max-w-7xl">
         <div className="flex items-end justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[.22em] text-rose-500">Tu colección</p><h2 className="mt-2 text-3xl font-semibold tracking-[-.045em] text-slate-800">Mis favoritos <span className="ml-1 text-xl font-medium text-slate-400">{favoriteProducts.length}</span></h2><p className="mt-2 text-sm text-slate-500">Guarda aquí los productos que quieras volver a ver.</p></div><Heart className="mb-1 text-rose-400" size={25} /></div>
-        {favoriteProducts.length ? <div className="mt-7 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{favoriteProducts.map((product) => renderCard(product, false))}</div> : <div className="mt-6 rounded-2xl border border-dashed border-rose-200 bg-rose-50/45 px-5 py-8 text-center"><p className="text-sm font-semibold text-slate-700">Todavía no guardas favoritos</p><p className="mt-1 text-xs text-slate-500">Pulsa el corazón de cualquier producto para añadirlo aquí.</p></div>}
+        {favoriteProducts.length ? <div className="mt-7 grid justify-center gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 300px))' }}>{favoriteProducts.map((product) => renderCard(product, false))}</div> : <div className="mt-6 rounded-2xl border border-dashed border-rose-200 bg-rose-50/45 px-5 py-8 text-center"><p className="text-sm font-semibold text-slate-700">Todavía no guardas favoritos</p><p className="mt-1 text-xs text-slate-500">Pulsa el corazón de cualquier producto para añadirlo aquí.</p></div>}
       </div>
     </section>}
   </>;
