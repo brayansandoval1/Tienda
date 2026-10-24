@@ -12,6 +12,8 @@ import { useCartStore } from '@/src/store/useCartStore';
 import { useProductStore, type Product } from '@/src/store/useProductStore';
 import type { Draft3DViewPose } from '@/src/utils/designDraftStorage';
 import { getProductDesignTemplate } from '@/src/utils/templateStorage';
+import { PRODUCT_COLOR_PALETTE } from '@/src/config/productColorPalette';
+import { isLikelyPrintSurfaceMesh } from '@/src/config/products';
 
 const Product3DViewer = dynamic(() => import('@/components/editor/Product3DViewer'), {
   ssr: false,
@@ -25,16 +27,6 @@ type PreviewDesign = {
 };
 
 const PREVIEW_CANVAS_SIZE = 800;
-const PRODUCT_COLOR_PALETTE = [
-  { name: 'Turquesa', color: '#128b91' }, { name: 'Azul marino', color: '#172b54' },
-  { name: 'Gris', color: '#a6a6a6' }, { name: 'Amarillo', color: '#ffdc55' },
-  { name: 'Negro', color: '#111111' }, { name: 'Azul cielo', color: '#78b3d0' },
-  { name: 'Aqua', color: '#4bb8b4' }, { name: 'Morado', color: '#9275ad' },
-  { name: 'Verde', color: '#4e9d59' }, { name: 'Coral', color: '#f58b82' },
-  { name: 'Azul', color: '#146da7' }, { name: 'Rosa', color: '#f35d91' },
-  { name: 'Verde lima', color: '#8cc63e' }, { name: 'Rojo', color: '#ed1c24' },
-];
-
 function makeDesignSnapshots(product: Product, objectsByView: Record<string, any[]>): PrintViewSnapshot[] {
   return product.views.map((view, index) => {
     const printArea = view.printArea;
@@ -189,7 +181,9 @@ export default function ProductDetailPage() {
   const productId = params.productId;
   const product = useProductStore((state) => state.products.find((item) => item.id === productId));
   const addCatalogItem = useCartStore((state) => state.addCatalogItem);
-  const colorableParts = (product?.customizableParts ?? []).filter((part) => part.enabled !== false);
+  const colorableParts = (product?.customizableParts ?? []).filter((part) =>
+    part.enabled !== false && (part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName)),
+  );
   const enabledMeshNames = colorableParts.map((part) => part.meshName);
   // El primer render debe coincidir en servidor y navegador. Zustand puede
   // terminar la hidratación de localStorage antes de que este efecto se monte.
@@ -214,9 +208,15 @@ export default function ProductDetailPage() {
     setSelectedOptions({});
   }, [productId, product?.options]);
   useEffect(() => {
-    setComponentColors(Object.fromEntries((product?.customizableParts ?? [])
-      .filter((part) => part.enabled !== false)
-      .map((part) => [part.meshName, part.defaultColor || '#cbd5e1'])));
+    const defaults = Object.fromEntries(colorableParts.map((part) => [part.meshName, part.defaultColor || '#cbd5e1']));
+    const params = new URLSearchParams(window.location.search);
+    const requestedMesh = params.get('mesh');
+    const requestedColor = params.get('color');
+    if (requestedMesh && requestedColor && /^#[0-9a-f]{6}$/i.test(requestedColor)) {
+      const partIsSelectable = colorableParts.some((part) => part.meshName === requestedMesh);
+      if (partIsSelectable) defaults[requestedMesh] = requestedColor;
+    }
+    setComponentColors(defaults);
   }, [productId, product?.customizableParts]);
 
   const selectedOptionValues = useMemo(() => (product?.options ?? []).flatMap((option) => {
@@ -226,6 +226,11 @@ export default function ProductDetailPage() {
   const isStandardSelected = selectedOptionValues.length === 0;
   const price = Math.max(0, (product?.basePrice ?? product?.price ?? 0) + selectedOptionValues.reduce((sum, value) => sum + value.priceModifier, 0));
   const total = useMemo(() => price * quantity, [price, quantity]);
+  const catalogPrintPart = colorableParts.find((part) => part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName));
+  const selectedCatalogPrintColor = catalogPrintPart && componentColors[catalogPrintPart.meshName];
+  const customizeHref = selectedCatalogPrintColor
+    ? `/editor/${productId}?mesh=${encodeURIComponent(catalogPrintPart.meshName)}&color=${encodeURIComponent(selectedCatalogPrintColor)}`
+    : `/editor/${productId}`;
 
   const addProductToCart = () => {
     if (!product) return;
@@ -293,7 +298,7 @@ export default function ProductDetailPage() {
             <button type="button" onClick={addProductToCart} className="mt-4 inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-amber-300 px-6 py-4 text-base font-semibold text-slate-900 shadow-lg shadow-amber-200/50 transition hover:-translate-y-0.5 hover:bg-amber-400 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-200">
               {addedToCart ? <><Check size={19} /> Agregado al carrito</> : <><PackageCheck size={19} /> Comprar producto</>}
             </button>
-            <Link href={`/editor/${product.id}`} className="mt-3 inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-indigo-800 px-6 py-4 text-base font-semibold text-white shadow-lg shadow-indigo-900/15 transition hover:-translate-y-0.5 hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200">
+            <Link href={customizeHref} className="mt-3 inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-indigo-800 px-6 py-4 text-base font-semibold text-white shadow-lg shadow-indigo-900/15 transition hover:-translate-y-0.5 hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200">
               Personalizar este diseño <ArrowUpRight size={18} />
             </Link>
 

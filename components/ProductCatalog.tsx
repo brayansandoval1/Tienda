@@ -4,6 +4,9 @@ import Link from 'next/link';
 import { Heart, Image as ImageIcon, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useProductStore, type Product } from '@/src/store/useProductStore';
+import ProductCatalog3DPreview from '@/components/ProductCatalog3DPreview';
+import { isLikelyPrintSurfaceMesh } from '@/src/config/products';
+import { PRODUCT_COLOR_PALETTE } from '@/src/config/productColorPalette';
 
 type CatalogProduct = Product & { catalogImages: string[] };
 
@@ -20,18 +23,46 @@ function getProductImages(product: Product) {
   ].filter((url): url is string => Boolean(url)))];
 }
 
-function CatalogCard({ product, favorite, onToggleFavorite }: { product: CatalogProduct; favorite: boolean; onToggleFavorite: (id: string) => void }) {
+function getCatalogPrintPart(product: Product) {
+  return product.customizableParts?.find((part) => part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName));
+}
+
+function CatalogCard({ product, favorite, onToggleFavorite, printColor, previewColor, colorPreviewActive, showColorPalette = true, onSelectPrintColor }: {
+  product: CatalogProduct;
+  favorite: boolean;
+  onToggleFavorite: (id: string) => void;
+  printColor?: string;
+  previewColor?: string;
+  colorPreviewActive: boolean;
+  showColorPalette?: boolean;
+  onSelectPrintColor: (color: string) => void;
+}) {
   const [imageIndex, setImageIndex] = useState(0);
   const imageSrc = product.catalogImages[imageIndex] ?? '';
   const isShowingCatalogCover = imageIndex === 0 && Boolean(product.catalogCoverUrl);
+  const printPart = getCatalogPrintPart(product);
+  const hasAdminScene = Boolean(product.catalogSceneUrl || product.views[0]?.sceneBackgroundUrl);
+  const canColorModel = Boolean(printPart && printPart.enabled !== false && hasAdminScene && (product.model3dUrl?.trim() || product.id === 'termo-acero-inoxidable'));
+  const detailHref = canColorModel && printPart && printColor
+    ? `/producto/${product.id}?mesh=${encodeURIComponent(printPart.meshName)}&color=${encodeURIComponent(printColor)}`
+    : `/producto/${product.id}`;
 
   useEffect(() => setImageIndex(0), [product.catalogImages]);
 
   return (
     <article className="group relative overflow-hidden rounded-[1.6rem] border border-white bg-white/85 p-2 shadow-[0_15px_40px_rgba(109,88,150,.08)] transition duration-300 hover:-translate-y-1.5 hover:border-violet-200 hover:shadow-[0_24px_55px_rgba(139,92,246,.16)]">
-      <Link href={`/producto/${product.id}`} aria-label={`Ver detalles de ${product.name}`} className="block">
+      <Link href={detailHref} aria-label={`Ver detalles de ${product.name}`} className="block">
         <div className="relative aspect-[4/3] overflow-hidden rounded-[1.2rem] bg-[radial-gradient(circle_at_50%_18%,rgba(221,214,254,.9),transparent_34%),linear-gradient(145deg,#fff9fc,#f2eeff_62%,#e9f4ff)] sm:aspect-[1.08]">
-          {imageSrc ? (
+          {colorPreviewActive && printPart ? (
+            <ProductCatalog3DPreview
+              product={product}
+              componentColors={{
+                ...Object.fromEntries((product.customizableParts ?? []).map((part) => [part.meshName, part.defaultColor || '#cbd5e1'])),
+                [printPart.meshName]: previewColor || printColor || printPart.defaultColor || '#cbd5e1',
+              }}
+              enabledMeshNames={[printPart.meshName]}
+            />
+          ) : imageSrc ? (
             <img
               src={imageSrc}
               alt={`${product.name}${isShowingCatalogCover ? ' con diseño y fondo de escena' : ''}`}
@@ -58,6 +89,27 @@ function CatalogCard({ product, favorite, onToggleFavorite }: { product: Catalog
           <p className="shrink-0 text-sm font-bold text-violet-700">${product.price.toFixed(2)}</p>
         </div>
         <p className="mt-1.5 line-clamp-2 min-h-9 text-xs leading-5 text-slate-500">{product.description || product.category}</p>
+        {showColorPalette && canColorModel && printPart && <div className="mt-3" onClick={(event) => event.stopPropagation()}>
+          <p className="mb-2 text-[10px] font-medium text-slate-500">Color del producto</p>
+          <div className="flex flex-wrap gap-2">
+            {(PRODUCT_COLOR_PALETTE.some((item) => item.color.toLowerCase() === (printPart.defaultColor || '#cbd5e1').toLowerCase())
+              ? PRODUCT_COLOR_PALETTE
+              : [{ name: 'Original', color: printPart.defaultColor || '#cbd5e1' }, ...PRODUCT_COLOR_PALETTE]
+            ).map((item) => {
+              const selected = previewColor?.toLowerCase() === item.color.toLowerCase();
+              return <button
+                key={`${product.id}-${item.color}`}
+                type="button"
+                onClick={() => onSelectPrintColor(item.color)}
+                aria-label={`Color ${item.name} para ${product.name}`}
+                aria-pressed={selected}
+                title={item.name}
+                className={`h-6 w-6 rounded-full border border-white transition hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-700 focus-visible:ring-offset-1 ${selected ? 'ring-2 ring-indigo-800 ring-offset-1' : 'shadow-sm'}`}
+                style={{ backgroundColor: item.color }}
+              />;
+            })}
+          </div>
+        </div>}
       </div>
     </article>
   );
@@ -69,6 +121,8 @@ export default function ProductCatalog() {
   const [query, setQuery] = useState('');
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [favoritesLoaded, setFavoritesLoaded] = useState(false);
+  const [printColors, setPrintColors] = useState<Record<string, string>>({});
+  const [activeColorPreviewId, setActiveColorPreviewId] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -104,6 +158,25 @@ export default function ProductCatalog() {
     try { window.localStorage.setItem('stylecute:favorites', JSON.stringify(nextFavorites)); } catch { /* La lista se mantiene activa durante esta visita. */ }
   };
 
+  const selectPrintColor = (product: Product, color: string) => {
+    const printPart = getCatalogPrintPart(product);
+    if (!printPart) return;
+    setPrintColors((current) => ({ ...current, [product.id]: color }));
+    setActiveColorPreviewId(product.id);
+  };
+
+  const renderCard = (product: CatalogProduct, allowLiveColorPreview = true) => <CatalogCard
+    key={product.id}
+    product={product}
+    favorite={favoriteIds.includes(product.id)}
+    onToggleFavorite={toggleFavorite}
+    printColor={printColors[product.id] ?? getCatalogPrintPart(product)?.defaultColor}
+    previewColor={printColors[product.id]}
+    colorPreviewActive={allowLiveColorPreview && activeColorPreviewId === product.id}
+    showColorPalette={allowLiveColorPreview}
+    onSelectPrintColor={(color) => selectPrintColor(product, color)}
+  />;
+
   useEffect(() => {
     if (category !== 'Todos' && !categories.includes(category)) setCategory('Todos');
   }, [categories, category]);
@@ -129,7 +202,7 @@ export default function ProductCatalog() {
           {['Todos', ...categories].map((item) => <button key={item} type="button" onClick={() => setCategory(item)} aria-pressed={category === item} className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${category === item ? 'border-purple-600 bg-purple-600 text-white shadow-lg shadow-purple-500/25' : 'border-white bg-white/80 text-slate-500 shadow-sm hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700'}`}>{item}</button>)}
         </div>}
 
-        {visibleProducts.length ? <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{visibleProducts.map((product) => <CatalogCard key={product.id} product={product} favorite={favoriteIds.includes(product.id)} onToggleFavorite={toggleFavorite} />)}</div> : (
+        {visibleProducts.length ? <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{visibleProducts.map((product) => renderCard(product, true))}</div> : (
           <div className="mt-10 rounded-3xl border border-dashed border-violet-200 bg-white/70 py-16 text-center">
             <p className="font-semibold text-slate-700">{products.some((product) => product.isActive !== false) ? 'No encontramos productos con esa búsqueda' : 'Pronto habrá productos disponibles'}</p>
             {products.some((product) => product.isActive !== false) && <button type="button" onClick={() => { setQuery(''); setCategory('Todos'); }} className="mt-2 text-sm font-semibold text-violet-600">Limpiar búsqueda</button>}
@@ -140,7 +213,7 @@ export default function ProductCatalog() {
     {favoritesLoaded && <section id="favoritos" className="scroll-mt-24 border-t border-violet-100 bg-white px-5 py-16 sm:px-8 lg:px-12">
       <div className="mx-auto max-w-7xl">
         <div className="flex items-end justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[.22em] text-rose-500">Tu colección</p><h2 className="mt-2 text-3xl font-semibold tracking-[-.045em] text-slate-800">Mis favoritos <span className="ml-1 text-xl font-medium text-slate-400">{favoriteProducts.length}</span></h2><p className="mt-2 text-sm text-slate-500">Guarda aquí los productos que quieras volver a ver.</p></div><Heart className="mb-1 text-rose-400" size={25} /></div>
-        {favoriteProducts.length ? <div className="mt-7 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{favoriteProducts.map((product) => <CatalogCard key={product.id} product={product} favorite onToggleFavorite={toggleFavorite} />)}</div> : <div className="mt-6 rounded-2xl border border-dashed border-rose-200 bg-rose-50/45 px-5 py-8 text-center"><p className="text-sm font-semibold text-slate-700">Todavía no guardas favoritos</p><p className="mt-1 text-xs text-slate-500">Pulsa el corazón de cualquier producto para añadirlo aquí.</p></div>}
+        {favoriteProducts.length ? <div className="mt-7 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{favoriteProducts.map((product) => renderCard(product, false))}</div> : <div className="mt-6 rounded-2xl border border-dashed border-rose-200 bg-rose-50/45 px-5 py-8 text-center"><p className="text-sm font-semibold text-slate-700">Todavía no guardas favoritos</p><p className="mt-1 text-xs text-slate-500">Pulsa el corazón de cualquier producto para añadirlo aquí.</p></div>}
       </div>
     </section>}
   </>;

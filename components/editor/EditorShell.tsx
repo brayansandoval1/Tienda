@@ -1,7 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import type { Producto, TextOptions } from '@/types/product';
 import FloatingFooter from '@/components/editor/FloatingFooter';
@@ -13,6 +13,7 @@ import ViewSelector from '@/components/editor/ViewSelector';
 import ReviewStage from '@/components/editor/ReviewStage';
 import CartDrawer from '@/components/editor/CartDrawer';
 import { getDraft, saveDraft } from '@/src/utils/designDraftStorage';
+import { isLikelyPrintSurfaceMesh } from '@/src/config/products';
 
 
 const EditorCanvas = dynamic(() => import('@/components/editor/EditorCanvas'), { ssr: false });
@@ -29,6 +30,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
     initialProduct || products.find((p) => p.id === producto.id) || products[0],
   );
   const [componentColors, setComponentColors] = useState<Record<string, string>>({});
+  const initialMeshColorApplied = useRef(false);
   const [enabledComponentMeshes, setEnabledComponentMeshes] = useState<string[]>([]);
   const [activeStep, setActiveStep] = useState<EditorStep>('design');
   const [isPanoramaActive, setIsPanoramaActive] = useState(false);
@@ -76,8 +78,24 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   useEffect(() => {
     setIsPanoramaActive(false);
     setIsUnrestrictedDesign(false);
-    setComponentColors(Object.fromEntries((currentProduct.customizableParts ?? []).map((part) => [part.meshName, part.defaultColor || '#cbd5e1'])));
-    setEnabledComponentMeshes([]);
+    const colors = Object.fromEntries((currentProduct.customizableParts ?? []).map((part) => [part.meshName, part.defaultColor || '#cbd5e1']));
+    let initialColoredMesh: string | null = null;
+    if (!initialMeshColorApplied.current && currentProduct.id === producto.id) {
+      const params = new URLSearchParams(window.location.search);
+      const requestedMesh = params.get('mesh');
+      const requestedColor = params.get('color');
+      const requestedPart = (currentProduct.customizableParts ?? []).find((part) =>
+        part.meshName === requestedMesh && part.enabled !== false
+        && (part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName)),
+      );
+      if (requestedPart && requestedColor && /^#[0-9a-f]{6}$/i.test(requestedColor)) {
+        colors[requestedPart.meshName] = requestedColor;
+        initialColoredMesh = requestedPart.meshName;
+      }
+      initialMeshColorApplied.current = true;
+    }
+    setComponentColors(colors);
+    setEnabledComponentMeshes(initialColoredMesh ? [initialColoredMesh] : []);
   }, [currentProduct.id, currentProduct.customizableParts]);
 
   useEffect(() => {
