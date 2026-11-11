@@ -479,8 +479,31 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     const now = Date.now();
     if (now - (projectionDiagnosticTimes.get(diagnosticKey) ?? 0) > 1000) {
       projectionDiagnosticTimes.set(diagnosticKey, now);
-
-
+      if (process.env.NODE_ENV !== 'production') {
+        console.info('[Product3DViewer] Escala de proyección por vista.', {
+          viewId: area?.viewId,
+          viewName: area?.viewName,
+          viewIndex: area?.viewIndex,
+          sourceArea: {
+            left: bounds.left,
+            top: bounds.top,
+            width: bounds.width,
+            height: bounds.height,
+            canvasWidth,
+            canvasHeight,
+          },
+          targetUv: { left: targetLeft, top: targetTop, width: targetWidth, height: targetHeight },
+          segment: { index: segmentIndex, left: sideLeft, width: sideWidth },
+          designBounds: {
+            left: objectBounds.left,
+            top: objectBounds.top,
+            width: objectWidth,
+            height: objectHeight,
+          },
+          objectCount: visibleObjects.length,
+          scale: { x: scaleX, y: scaleY },
+        });
+      }
     }
 
     context.save();
@@ -714,7 +737,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
               const snapshotsToRender = activeOnly && activeSnapshot ? [activeSnapshot] : snapshots;
               for (const snapshot of snapshotsToRender) {
                 let objects: any[];
-                if (snapshot.viewId === printArea?.viewId && !(window as any).__editorPanoramaMode) {
+                if (snapshot === activeSnapshot && !(window as any).__editorPanoramaMode) {
                   objects = fabricCanvas.getObjects();
                 } else {
                   let cached = snapshotObjectsCache.current.get(snapshot.viewId);
@@ -737,7 +760,11 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                   }
                   objects = await cached.objects;
                 }
-                const isActiveSnapshot = snapshot.viewId === printArea?.viewId;
+                // activeSnapshot may be matched by viewIndex when older or
+                // migrated view data has a missing/different viewId. Reuse
+                // that same match here so the active face gets the live
+                // print area and projection instead of the stale snapshot.
+                const isActiveSnapshot = snapshot === activeSnapshot;
                 const livePrintArea3D = isActiveSnapshot ? printArea?.printArea3D : undefined;
                 const activeProjection = livePrintArea3D ? {
                   left: Number(livePrintArea3D.x ?? livePrintArea3D.left ?? 0),
@@ -895,7 +922,17 @@ function panoramicUvRange(mesh: THREE.Mesh) {
     maxU = Math.max(maxU, uv.getX(index));
   }
   const span = maxU - minU;
-  return { uv, minU, maxU, span, hasOpenSeam: minU > 0.001 && maxU >= 0.999 && span > 0.9 };
+  // UVs above 1 are intentional for a continuous cylindrical seam when the
+  // texture uses RepeatWrapping. Do not normalize that unwrapped map to 0..1;
+  // doing so changes its angular scale and shrinks the first panorama panel.
+  const hasUnwrappedRepeatSeam = minU >= -0.001 && maxU > 1.001;
+  return {
+    uv,
+    minU,
+    maxU,
+    span,
+    hasOpenSeam: !hasUnwrappedRepeatSeam && minU > 0.001 && maxU >= 0.999 && span > 0.9,
+  };
 }
 
 function normalizePanoramicUvSeam(mesh: THREE.Mesh) {
