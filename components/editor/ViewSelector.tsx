@@ -11,7 +11,7 @@ import { usePriceCalculator } from '@/components/editor/usePriceCalculator';
 
 const optionGroupName = (option: { name: string }) => /(?:termo|taza|\d+\s*oz|estándar)/i.test(option.name) ? 'Modelo' : option.name || 'Opción';
 
-export default function ViewSelector({ product, panel, workflowStep = 'design', componentColors, enabledComponentMeshes, onComponentToggle, onComponentColorChange }: { product: Product; panel?: 'options' | 'preview'; workflowStep?: 'design' | 'options' | 'review'; componentColors: Record<string, string>; enabledComponentMeshes: string[]; onComponentToggle: (meshName: string, enabled: boolean) => void; onComponentColorChange: (meshName: string, color: string) => void }) {
+export default function ViewSelector({ product, panel, workflowStep = 'design', reviewTab = 'review', onReviewTabChange, componentColors, enabledComponentMeshes, onComponentToggle, onComponentColorChange }: { product: Product; panel?: 'options' | 'preview'; workflowStep?: 'design' | 'options' | 'review'; reviewTab?: 'selection' | 'review'; onReviewTabChange?: (tab: 'selection' | 'review') => void; componentColors: Record<string, string>; enabledComponentMeshes: string[]; onComponentToggle: (meshName: string, enabled: boolean) => void; onComponentColorChange: (meshName: string, color: string) => void }) {
   const [selectedOptions, setSelectedOptions] = useState<Record<string, ProductOptionValue>>({});
   const [activeViewIndex, setActiveViewIndex] = useState(0);
   const [activePanel, setActivePanel] = useState<'options' | 'preview'>('options');
@@ -24,6 +24,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
   const [coveragePercentage, setCoveragePercentage] = useState(0);
   const [backgroundCoversArea, setBackgroundCoversArea] = useState(false);
   const isOptionsStage = workflowStep === 'options';
+  const isProductSelectionStage = isOptionsStage || (workflowStep === 'review' && reviewTab === 'selection');
   const baseView = product.views[0];
 
   // Las opciones sólo muestran la configuración persistida por Admin. El
@@ -298,8 +299,13 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
         <button type="button" onClick={() => setActivePanel('preview')} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${activePanel === 'preview' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>Personalizar</button>
       </div>}
 
-      <div className={`min-h-0 flex-1 overflow-y-auto ${isOptionsStage ? 'p-8 lg:p-10' : 'p-4'}`}>
-      {workflowStep === 'review' ? (
+      {workflowStep === 'review' && <nav aria-label="Sección de revisión" className="grid shrink-0 grid-cols-2 gap-1 border-b border-slate-200 p-2">
+        <button type="button" onClick={() => onReviewTabChange?.('selection')} aria-current={reviewTab === 'selection' ? 'page' : undefined} className={`rounded-xl px-3 py-2.5 text-sm font-semibold transition ${reviewTab === 'selection' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>Selección</button>
+        <button type="button" onClick={() => onReviewTabChange?.('review')} aria-current={reviewTab === 'review' ? 'page' : undefined} className={`rounded-xl px-3 py-2.5 text-sm font-semibold transition ${reviewTab === 'review' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>Revisar</button>
+      </nav>}
+
+      <div className={`min-h-0 flex-1 overflow-y-auto ${isProductSelectionStage ? 'p-8 lg:p-10' : 'p-4'}`}>
+      {workflowStep === 'review' && reviewTab === 'review' ? (
         <section className="mx-auto max-w-[540px] space-y-6 pb-6">
           <div>
             <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">
@@ -376,9 +382,9 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
             <ShieldCheck className="shrink-0 text-emerald-600" size={18} /> Tu archivo final se genera al continuar y queda listo para producción.
           </div>
         </section>
-      ) : activePanel === 'options' ? (
-        <div className={isOptionsStage ? 'mx-auto max-w-[540px] space-y-7' : 'space-y-5'}>
-          {isOptionsStage && <div>
+      ) : (isProductSelectionStage || activePanel === 'options') ? (
+        <div className={isProductSelectionStage ? 'mx-auto max-w-[540px] space-y-7' : 'space-y-5'}>
+          {isProductSelectionStage && <div>
             <p className="text-xs font-bold uppercase tracking-[0.22em] text-blue-600">Configuración del producto</p>
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">Selecciona las opciones</h1>
             <p className="mt-2 text-sm text-slate-500">Elige las variantes de tu producto antes de continuar.</p>
@@ -418,7 +424,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
               </button>
           {visibleOptions.map((option) => <div key={option.id} className="space-y-2">
             <p className="text-sm font-semibold text-slate-800">{optionGroupName(option)}</p>
-            <div className={`grid auto-rows-fr gap-2 ${isOptionsStage ? 'grid-cols-3' : 'grid-cols-2'}`}>{valuesForOption(option).map((value, index) => {
+            <div className={`grid auto-rows-fr gap-2 ${isProductSelectionStage ? 'grid-cols-3' : 'grid-cols-2'}`}>{valuesForOption(option).map((value, index) => {
               const selected = selectedOptions[option.id]?.id === value.id;
               return <button key={value.id || `opt-${option.id}-${index}`} type="button" onClick={() => handleOptionSelect(option.id, value)} aria-pressed={selected} className={`overflow-hidden rounded-xl border p-2 text-left text-sm transition ${selected ? 'border-blue-600 bg-blue-50 text-blue-700 ring-2 ring-black/10' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                 <div className="mb-1 flex h-14 items-center justify-center overflow-hidden rounded-lg bg-slate-50">
@@ -432,12 +438,12 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
         </div>
           </section>}
 
-          {isOptionsStage && customizationControls}
+          {isProductSelectionStage && customizationControls}
 
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-xs text-slate-500">Precio total</p>
             <p className="text-2xl font-bold text-slate-900">${grandTotal.toFixed(2)}</p>
-            {workflowStep === 'options' && <div className="mt-3"><label htmlFor="options-quantity" className="block text-xs font-medium text-slate-600">Cantidad</label><input id="options-quantity" type="number" min={minimumQuantity} step="1" value={quantity} onChange={(event) => setQuantity(Math.max(0, Math.floor(Number(event.target.value) || 0)))} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800" />{!meetsMinimumQuantity && <p role="alert" className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">Este producto requiere un pedido mínimo de {minimumQuantity} unidades.</p>}</div>}
+            {isOptionsStage && <div className="mt-3"><label htmlFor="options-quantity" className="block text-xs font-medium text-slate-600">Cantidad</label><input id="options-quantity" type="number" min={minimumQuantity} step="1" value={quantity} onChange={(event) => setQuantity(Math.max(0, Math.floor(Number(event.target.value) || 0)))} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800" />{!meetsMinimumQuantity && <p role="alert" className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">Este producto requiere un pedido mínimo de {minimumQuantity} unidades.</p>}</div>}
             <details className="group mt-2 border-t border-slate-200 pt-2 text-xs">
               <summary className="cursor-pointer list-none font-medium text-slate-600">Ver desglose <span className="float-right text-slate-400 transition group-open:rotate-180">⌄</span></summary>
               <div className="mt-3 space-y-2">

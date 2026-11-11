@@ -33,6 +33,7 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   const initialMeshColorApplied = useRef(false);
   const [enabledComponentMeshes, setEnabledComponentMeshes] = useState<string[]>([]);
   const [activeStep, setActiveStep] = useState<EditorStep>('design');
+  const [activeReviewTab, setActiveReviewTab] = useState<'selection' | 'review'>('review');
   const [isPanoramaActive, setIsPanoramaActive] = useState(false);
   const [isUnrestrictedDesign, setIsUnrestrictedDesign] = useState(false);
   const allowPanorama = currentProduct.allowPanorama360 ?? currentProduct.views.length > 1;
@@ -237,10 +238,10 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
             enabledComponentMeshes={enabledComponentMeshes}
           />
           {activeStep === 'design' && <FloatingFooter onReset={() => {}} />}
-          {/* Revisar: visor de renders sobre el lienzo. El canvas sigue montado
-              debajo porque ReviewStage le pide los diseños por eventos. */}
+          {/* El centro conserva las escenas y la vista base en ambas pestañas
+              de Revisar; Selección solo cambia el panel de la derecha. */}
           {activeStep === 'review' && (
-              <div className="absolute inset-0 z-20 bg-[#f8f5fb]">
+            <div className="absolute inset-0 z-20 bg-[#f8f5fb]">
               <ReviewStage product={currentProduct} componentColors={componentColors} enabledMeshNames={enabledComponentMeshes} />
             </div>
           )}
@@ -253,6 +254,8 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
             product={currentProduct}
             panel={activeStep === 'review' ? 'preview' : 'options'}
             workflowStep={activeStep}
+            reviewTab={activeReviewTab}
+            onReviewTabChange={setActiveReviewTab}
             componentColors={componentColors}
             enabledComponentMeshes={enabledComponentMeshes}
             onComponentToggle={(meshName, enabled) => {

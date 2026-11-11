@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { ArrowLeft, ChevronRight, Download, Save, X } from 'lucide-react';
 import type { SaveDesignResult } from '@/src/types/editorDesign';
 
-export type EditorStep = 'design' | 'options' | 'review';
+export type EditorStep = 'design' | 'review';
 
 export default function Header({ activeStep, onStepChange, canContinue = true, productId }: { activeStep: EditorStep; onStepChange: (step: EditorStep) => void; canContinue?: boolean; productId?: string }) {
   const [exitMenuOpen, setExitMenuOpen] = useState(false);
@@ -58,8 +58,8 @@ export default function Header({ activeStep, onStepChange, canContinue = true, p
     window.dispatchEvent(new CustomEvent('editor:save-design'));
   };
 
-  const nextStep: EditorStep = activeStep === 'design' ? 'options' : 'review';
-  const stepLabel = activeStep === 'design' ? 'Opciones' : 'Revisar';
+  const nextStep: EditorStep = 'review';
+  const stepLabel = 'Revisar';
 
   return (
     <div className="h-14 border-b border-slate-200 bg-white px-1 shadow-sm">
@@ -98,7 +98,6 @@ export default function Header({ activeStep, onStepChange, canContinue = true, p
         <div className="flex flex-wrap items-center gap-2">
           {([
             ['design', 'Diseño'],
-            ['options', 'Opciones'],
             ['review', 'Revisar'],
           ] as Array<[EditorStep, string]>).map(([step, label]) => (
             <button key={step} type="button" disabled={step === 'review' && !canContinue} onClick={() => onStepChange(step)} aria-current={activeStep === step ? 'step' : undefined} title={step === 'review' && !canContinue ? 'Completa la cantidad mínima para continuar' : undefined} className={`rounded-xl px-4 py-2 text-sm transition ${activeStep === step ? 'bg-slate-900 font-semibold text-white shadow-sm' : 'bg-slate-100 font-medium text-slate-600 hover:bg-slate-200'} disabled:cursor-not-allowed disabled:opacity-40`}>
@@ -121,10 +120,9 @@ export default function Header({ activeStep, onStepChange, canContinue = true, p
             <Download size={16} />
             {downloadState === 'downloading' ? 'Preparando archivos…' : '📥 Descargar para Imprenta (HD)'}
           </button>
-          <button type="button" disabled={nextStep === 'review' && !canContinue} onClick={() => onStepChange(nextStep)} title={nextStep === 'review' && !canContinue ? 'Completa la cantidad mínima para continuar' : undefined} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40">
-            Siguiente: {stepLabel}
-            <ChevronRight size={16} />
-          </button>
+          {activeStep === 'design' && <button type="button" disabled={!canContinue} onClick={() => onStepChange(nextStep)} title={!canContinue ? 'Completa la cantidad mínima para continuar' : undefined} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40">
+            Siguiente: {stepLabel}<ChevronRight size={16} />
+          </button>}
         </div>
       </div>
       {downloadMessage && <p role={downloadState === 'error' ? 'alert' : 'status'} className={`mt-2 text-xs ${downloadState === 'error' ? 'text-red-600' : 'text-slate-500'}`}>{downloadMessage}</p>}
