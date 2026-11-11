@@ -376,15 +376,34 @@ export default function ReviewStage({ product, componentColors = {}, enabledMesh
                 isActive ? 'border-slate-900 ring-2 ring-slate-900/20' : 'border-transparent hover:border-slate-300'
               }`}
             >
-              {/* Fondo: siempre la foto base; encima el render cuando existe */}
-              <img src={target.photoUrl} alt="" aria-hidden crossOrigin="anonymous" className="absolute inset-0 h-full w-full object-cover opacity-40" />
-              {slot?.url && <img src={slot.url} alt={target.label} className="absolute inset-0 h-full w-full object-cover" />}
-              {slot?.status === 'loading' && (
+              {previewMode === '3d' && product.model3dUrl?.trim() ? (() => {
+                const view = product.views.find((item) => item.id === target.viewId);
+                const viewIndex = Math.max(0, product.views.findIndex((item) => item.id === target.viewId));
+                return <div className="pointer-events-none absolute inset-0 overflow-hidden bg-[#eef2f7]">
+                  <Product3DViewer
+                    key={`${product.id}-${target.id}`}
+                    product={product}
+                    componentColors={componentColors}
+                    enabledMeshNames={enabledMeshNames}
+                    activeViewIndex={viewIndex}
+                    activeViewName={view?.name || view?.label || target.label}
+                    sceneBackgroundUrl={view?.sceneBackgroundUrl}
+                    scene3DPlacement={view?.scene3DPlacement ?? { x: 0, y: 0, scale: 1 }}
+                    staticView
+                    compact
+                  />
+                </div>;
+              })() : <>
+                {/* En 2D se muestran las escenas renderizadas para cada vista. */}
+                <img src={target.photoUrl} alt="" aria-hidden crossOrigin="anonymous" className="absolute inset-0 h-full w-full object-cover opacity-40" />
+                {slot?.url && <img src={slot.url} alt={target.label} className="absolute inset-0 h-full w-full object-cover" />}
+              </>}
+              {previewMode === '2d' && slot?.status === 'loading' && (
                 <span className="absolute inset-0 grid place-items-center bg-white/60">
                   <RefreshCw size={16} className="animate-spin text-slate-600" />
                 </span>
               )}
-              {slot?.status === 'error' && (
+              {previewMode === '2d' && slot?.status === 'error' && (
                 <span className="absolute inset-0 grid place-items-center bg-rose-50/70 text-rose-500">
                   <ImageOff size={16} />
                 </span>
