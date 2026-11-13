@@ -412,8 +412,8 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
   // En el editor final, la zona 2D es el origen lógico del diseño y la zona
   // calibrada 3D es su destino. Se transforma el lienzo completo como una
   // unidad para conservar la colocación relativa y la forma de cada objeto.
-  // Sólo se recorta por el segmento UV de la vista; el contorno seguro no
-  // recorta las figuras que crucen su borde.
+  // El clip UV mantiene todo el arte dentro del contorno seguro, aunque un
+  // objeto cruce ese límite mientras el usuario lo escala o lo mueve.
   if (projectionArea) {
     const targetLeft = Math.min(100, Math.max(0, Number(projectionArea.left) || 0));
     const targetTop = Math.min(100, Math.max(0, Number(projectionArea.top) || 0));
@@ -423,7 +423,6 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     const destY = (target.height * targetTop) / 100;
     const destW = (sideWidth * targetWidth) / 100;
     const destH = (target.height * targetHeight) / 100;
-    paintDesignBackground(context, area?.designBackground, destX, destY, destW, destH);
     const visibleObjects = (objectsOverride ?? fabricCanvas.getObjects()).filter((object) =>
       object && object.visible !== false && !object.isMockup && !object.isGuide && !object.isGuideLine && !object.isCropOverlay && !object.isDesignBackground,
     );
@@ -514,13 +513,50 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
       context.rect(sideLeft, 0, sideWidth, target.height);
       context.clip();
     }
+    // Clip the complete 3D print texture to the calibrated safe area. Fabric's
+    // per-object clipPaths are removed below because they use 2D canvas
+    // coordinates; this texture-space clip preserves the boundary after the
+    // full-canvas-to-UV transform, even when an image is dragged outside.
+    const safePolygon = projectionArea.polygon;
+    if (safePolygon && safePolygon.length >= 3) {
+      context.beginPath();
+      safePolygon.forEach((point, index) => {
+        const x = sideLeft + (Number(point.x) / 100) * sideWidth;
+        const y = (Number(point.y) / 100) * target.height;
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.closePath();
+    } else if (projectionArea.shape === 'ellipse') {
+      context.beginPath();
+      context.ellipse(destX + destW / 2, destY + destH / 2, destW / 2, destH / 2, 0, 0, Math.PI * 2);
+    } else if (projectionArea.shape === 'rounded') {
+      const radius = Math.min(50, Math.max(0, Number(projectionArea.radius) || 0)) / 100;
+      const radiusX = Math.min(destW / 2, destW * radius);
+      const radiusY = Math.min(destH / 2, destH * radius);
+      context.beginPath();
+      context.moveTo(destX + radiusX, destY);
+      context.lineTo(destX + destW - radiusX, destY);
+      context.quadraticCurveTo(destX + destW, destY, destX + destW, destY + radiusY);
+      context.lineTo(destX + destW, destY + destH - radiusY);
+      context.quadraticCurveTo(destX + destW, destY + destH, destX + destW - radiusX, destY + destH);
+      context.lineTo(destX + radiusX, destY + destH);
+      context.quadraticCurveTo(destX, destY + destH, destX, destY + destH - radiusY);
+      context.lineTo(destX, destY + radiusY);
+      context.quadraticCurveTo(destX, destY, destX + radiusX, destY);
+      context.closePath();
+    } else {
+      context.beginPath();
+      context.rect(destX, destY, destW, destH);
+    }
+    context.clip();
+    paintDesignBackground(context, area?.designBackground, destX, destY, destW, destH);
     context.setTransform(scaleX, 0, 0, scaleY, offsetX, offsetY);
     visibleObjects.forEach((object) => {
       const clipPath = object.clipPath;
       try {
-        // El editor añade clipPaths para la exportación 2D. La proyección 3D
-        // usa su propio contenedor calibrado y no debe cortar objetos en el
-        // límite 2D; restauramos la referencia inmediatamente después.
+        // The outer clip uses the calibrated 3D safe area, so the original
+        // Fabric clipPath in 2D canvas coordinates is not needed here.
         if (clipPath) object.clipPath = undefined;
         object.render(context);
       } finally {
@@ -532,13 +568,19 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     return;
   }
 
-  paintDesignBackground(context, area?.designBackground, panelLeft, panelTop, panelWidth, panelHeight);
   context.save();
   if (panoramic) {
     context.beginPath();
     context.rect(sideLeft, 0, sideWidth, target.height);
     context.clip();
   }
+  // The fallback projection uses the print area's automatic surface as its
+  // destination. Clip at that destination so oversized artwork cannot bleed
+  // outside the safe region in the 3D texture.
+  context.beginPath();
+  context.rect(panelLeft, panelTop, panelWidth, panelHeight);
+  context.clip();
+  paintDesignBackground(context, area?.designBackground, panelLeft, panelTop, panelWidth, panelHeight);
   context.setTransform(scaleX, 0, 0, scaleY, offsetX, offsetY);
   try {
     (objectsOverride ?? fabricCanvas.getObjects()).forEach((object) => {
