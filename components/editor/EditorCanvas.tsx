@@ -1937,10 +1937,9 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
           .filter((obj: any) => obj?.isSafeAreaBackground)
           .forEach((obj: any) => c.remove(obj));
         const safeAreaBackground = buildSafeAreaShape(renderedArea as PrintArea, {
-          fill: getPrintableMeshColor(),
-          // Oculto hasta que el usuario elija un color en la barra "Fondo".
-          // El color del fondo del termo/gorra se aplica SOLO dentro de la
-          // zona segura, nunca sobre el canvas completo.
+          // Transparente por defecto para que el mockup siga visible debajo.
+          // Sólo se rellena cuando el cliente elige un fondo impreso.
+          fill: 'transparent',
           selectable: false,
           evented: false,
           lockMovementX: true,
@@ -2052,20 +2051,9 @@ export default function EditorCanvas({ product: initialProduct, componentColors 
         } as any);
       };
 
-      const getPrintableMeshColor = () => {
-        const printPart = (activeProduct.customizableParts ?? []).find((part) =>
-          part.includeInPrint ?? isLikelyPrintSurfaceMesh(part.meshName),
-        );
-        const isEnabled = printPart && enabledComponentMeshesRef.current.some((meshName) =>
-          meshName.trim().toLocaleLowerCase() === printPart.meshName.trim().toLocaleLowerCase(),
-        );
-        return printPart && isEnabled
-          ? componentColorsRef.current[printPart.meshName] ?? printPart.defaultColor ?? '#ffffff'
-          : '#ffffff';
-      };
       const buildPrintAreaBackgroundFill = (background: DesignBackground, width: number, height: number) =>
         background.kind === 'transparent'
-          ? getPrintableMeshColor()
+          ? 'transparent'
           : buildFabricBackgroundFill(background, width, height);
 
       // Rectángulo de fondo de un segmento en el lienzo 360. Cada cara tiene
