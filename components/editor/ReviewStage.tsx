@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { Box, Image as ImageIcon, ImageOff, RefreshCw, Settings2 } from 'lucide-react';
+import { Box, ImageOff, RefreshCw, Settings2 } from 'lucide-react';
 import { type Product } from '@/src/store/useProductStore';
 import type { PrintAreaPercent } from '@/src/config/products';
 import { resolveMasterPrintArea, resolveReviewImagePrintArea, viewPrintAreaToPercent } from '@/src/utils/reviewGallery';
@@ -114,9 +114,7 @@ export default function ReviewStage({ product, componentColors = {}, enabledMesh
   /** Resultado de composición por vista, indexado por RenderTarget.id. */
   const [renders, setRenders] = useState<Record<string, RenderSlot>>({});
   const [activeId, setActiveId] = useState<string>('');
-  const [previewMode, setPreviewMode] = useState<'2d' | '3d'>('2d');
-  /** Forzar recomposición completa (botón "Actualizar renders"). */
-  const [reloadNonce, setReloadNonce] = useState(0);
+  const [previewMode, setPreviewMode] = useState<'2d' | '3d'>('3d');
 
   // La miniatura seleccionada se pierde si la galería cambió desde Admin.
   useEffect(() => {
@@ -328,7 +326,7 @@ export default function ReviewStage({ product, componentColors = {}, enabledMesh
     void run();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targets, reloadNonce, product.updatedAt]);
+  }, [targets, product.updatedAt]);
 
   const activeTarget = targets.find((target) => target.id === activeId) ?? targets[0];
   const activeSlot = activeTarget ? renders[activeTarget.id] : undefined;
@@ -361,7 +359,7 @@ export default function ReviewStage({ product, componentColors = {}, enabledMesh
   return (
     <div className="flex h-full min-h-0 w-full bg-slate-50">
       {/* Tira vertical de miniaturas (scroll suave, estilo galería de reseñas) */}
-      <div className="flex w-24 shrink-0 flex-col gap-3 overflow-y-auto scroll-smooth border-r border-slate-200 bg-white/70 p-3 sm:w-28">
+      <div className="flex w-28 shrink-0 flex-col gap-3 overflow-y-auto scroll-smooth border-r border-slate-200 bg-white/70 p-3 sm:w-32">
         {targets.map((target) => {
           const slot = renders[target.id];
           const isActive = target.id === activeTarget?.id;
@@ -428,14 +426,6 @@ export default function ReviewStage({ product, componentColors = {}, enabledMesh
             <div role="group" aria-label="Modo de vista previa" className="flex rounded-lg border border-slate-200 bg-white p-0.5">
               <button
                 type="button"
-                onClick={() => setPreviewMode('2d')}
-                aria-pressed={previewMode === '2d'}
-                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${previewMode === '2d' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
-              >
-                <ImageIcon size={13} /> 2D
-              </button>
-              <button
-                type="button"
                 onClick={() => setPreviewMode('3d')}
                 disabled={!product.model3dUrl?.trim()}
                 aria-pressed={previewMode === '3d'}
@@ -445,16 +435,6 @@ export default function ReviewStage({ product, componentColors = {}, enabledMesh
                 <Box size={13} /> 3D
               </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setReloadNonce((current) => current + 1)}
-              disabled={previewMode === '3d' || activeSlot?.status === 'loading'}
-              title={previewMode === '3d' ? 'El modelo 3D se actualiza automáticamente' : 'Actualizar vistas 2D'}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <RefreshCw size={12} className={activeSlot?.status === 'loading' ? 'animate-spin' : undefined} />
-              Actualizar
-            </button>
           </div>
         </div>
 
