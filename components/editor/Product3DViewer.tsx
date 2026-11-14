@@ -61,6 +61,7 @@ const CYLINDER_RADIUS = 0.86;
 const CYLINDER_HEIGHT = 2.55;
 const CYLINDER_TEXTURE_HEIGHT = 1200;
 const CYLINDER_TEXTURE_ASPECT = (2 * Math.PI * CYLINDER_RADIUS) / CYLINDER_HEIGHT;
+const VIEWER_BACKGROUND = '#cbd0d6';
 const DEFAULT_PRINT_TEXTURE_SIZE = {
   width: Math.round(CYLINDER_TEXTURE_HEIGHT * CYLINDER_TEXTURE_ASPECT),
   height: CYLINDER_TEXTURE_HEIGHT,
@@ -1489,13 +1490,13 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
   if (!model3dUrl) return <section className={`flex h-full w-full items-center justify-center rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-8 text-center shadow-inner ${compact ? 'min-h-0 border-0 rounded-none p-1 shadow-none' : 'min-h-[250px]'}`} aria-label={`Vista 3D no disponible para ${product.name}`}>
     <div className="max-w-xs"><span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-white text-2xl shadow-sm">◈</span><h2 className="mt-4 text-sm font-semibold text-slate-800">Vista 3D no disponible para este producto</h2><p className="mt-1 text-xs leading-5 text-slate-500">Este producto aún no tiene un modelo 3D asignado.</p></div>
   </section>;
-  return <section ref={sceneFrameRef} key={product.id} className={`relative flex h-full w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-[#eef2f7] shadow-inner ${compact ? 'min-h-0 border-0 rounded-none shadow-none' : 'min-h-[250px]'}`} aria-label={`Visor 3D de ${product.name}`}>
-    {sceneBackgroundUrl && <img src={sceneBackgroundUrl} alt="" aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 h-full w-full bg-[#eef2f7] object-contain" />}
+  return <section ref={sceneFrameRef} key={product.id} className={`relative flex h-full w-full flex-col overflow-hidden rounded-2xl border border-slate-200 shadow-inner ${compact ? 'min-h-0 border-0 rounded-none shadow-none' : 'min-h-[250px]'}`} style={{ backgroundColor: VIEWER_BACKGROUND }} aria-label={`Visor 3D de ${product.name}`}>
+    {sceneBackgroundUrl && <img src={sceneBackgroundUrl} alt="" aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 h-full w-full object-contain" style={{ backgroundColor: VIEWER_BACKGROUND }} />}
     {!compact && <div className="pointer-events-none absolute left-4 top-4 z-10 rounded-xl border border-white/80 bg-white/75 px-3 py-2 shadow-sm backdrop-blur"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{staticView ? 'Vista 3D fija' : 'Vista 3D · 360°'}</p><p className="mt-0.5 text-sm font-semibold text-slate-800">{product.name}</p><p className="mt-0.5 text-[10px] font-medium text-emerald-700">{staticView ? `${activeViewName || product.views[controlledViewIndex]?.name || 'Vista'} · ${controlledViewIndex + 1}/${viewCount}` : printArea ? `${printArea.viewName || 'Vista'} · ${viewNumber}/${viewCount} · zona segura activa` : 'Esperando zona segura…'}</p></div>}
     {!resolvedFabricCanvas && !previewMode && <p className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/80 px-3 py-1.5 text-xs text-slate-500 shadow-sm">Conectando con el lienzo…</p>}
     <Canvas className={modelCanvasStyle ? 'z-0' : 'relative z-0'} style={{ ...modelCanvasStyle, visibility: isStaticViewReady ? 'visible' : 'hidden' }} shadows={{ type: THREE.PCFShadowMap }} dpr={[1, 1.5]} camera={{ position: previewMode ? adminCameraPosition : [0, 0, 5], fov: 35 }} gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}>
       <WebGLDiagnostics />
-      {!sceneBackgroundUrl && <color attach="background" args={['#eef2f7']} />}
+      {!sceneBackgroundUrl && <color attach="background" args={[VIEWER_BACKGROUND]} />}
       <ambientLight intensity={1.05} />
       <directionalLight castShadow position={[3, 5, 4]} intensity={2} />
       <directionalLight position={[-4, 1, 2]} intensity={0.7} color="#c4b5fd" />
