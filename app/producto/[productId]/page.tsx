@@ -158,7 +158,7 @@ function ProductModelPreview({ product, componentColors, enabledMeshNames }: { p
   const hasModel = Boolean(product.model3dUrl?.trim() || product.id === 'termo-acero-inoxidable');
   if (!hasModel) return <div className="grid h-[430px] place-items-center rounded-[1.75rem] border border-dashed border-violet-200 bg-violet-50/60 p-8 text-center sm:h-[560px]"><div><Box className="mx-auto text-violet-400" size={34} /><p className="mt-4 font-semibold text-slate-800">Modelo 3D no configurado</p><p className="mt-1 max-w-sm text-sm leading-6 text-slate-500">Agrega el archivo GLB de este producto desde administración para mostrarlo aquí.</p></div></div>;
 
-  return <div className="relative h-[430px] overflow-hidden rounded-[1.75rem] border border-violet-100 bg-[#f3f1f8] shadow-inner sm:h-[560px] lg:h-[min(68vw,720px)] lg:min-h-[560px]">
+  return <div className="relative h-[360px] overflow-hidden rounded-[1.75rem] border border-violet-100 bg-[#f3f1f8] shadow-inner sm:h-[460px] lg:h-[min(56vw,560px)] lg:min-h-[440px]">
     <Product3DViewer
       product={product}
       componentColors={componentColors}
@@ -237,7 +237,7 @@ export default function ProductDetailPage() {
   customizeParams.set('quantity', String(quantity));
   // El editor debe partir del diseño curado que ve el cliente en el catálogo,
   // aunque exista un borrador vacío o antiguo guardado para este producto.
-  if (product.designTemplate?.viewIds?.length) customizeParams.set('catalogDesign', '1');
+  if (product?.designTemplate?.viewIds?.length) customizeParams.set('catalogDesign', '1');
   const customizeHref = `/editor/${productId}?${customizeParams.toString()}`;
 
   const addProductToCart = () => {

@@ -171,10 +171,9 @@ function WebGLDiagnostics() {
 function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, angleDirection = 1, lockRotation = false, modelScale = 1, viewPose, debugProductId, debugViewName }: { viewIndex?: number; viewCount?: number; angleOffset?: number; angleDirection?: 1 | -1; lockRotation?: boolean; modelScale?: number; viewPose?: Draft3DViewPose; debugProductId?: string; debugViewName?: string }) {
   const { camera } = useThree();
   const controlsRef = useRef<any>(null);
-  const zoomRef = useRef(1);
   const baseDistance = 5;
   const minZoom = 0.5;
-  const maxZoom = 2;
+  const maxDistance = baseDistance / minZoom;
 
   useEffect(() => {
     const handleViewChanged = (event: Event) => {
@@ -187,14 +186,14 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, 
       const count = Math.max(1, Math.floor(viewCount));
       const normalizedIndex = Math.max(0, Math.min(count - 1, Math.floor(index)));
       spherical.theta = angleDirection * ((normalizedIndex + 0.5) * 2 * Math.PI / count) + angleOffset;
-      if (lockRotation) spherical.radius = baseDistance / Math.max(0.5, modelScale);
+      spherical.radius = maxDistance / Math.max(0.5, modelScale);
       camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical));
       camera.lookAt(controls.target);
       controls.update();
     };
     window.addEventListener('editor:view-changed', handleViewChanged);
     return () => window.removeEventListener('editor:view-changed', handleViewChanged);
-  }, [angleDirection, angleOffset, camera, lockRotation, modelScale, viewCount]);
+  }, [angleDirection, angleOffset, camera, maxDistance, modelScale, viewCount]);
 
   useEffect(() => {
     const controls = controlsRef.current;
@@ -205,8 +204,7 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, 
     const normalizedIndex = Math.max(0, Math.min(count - 1, Math.floor(viewIndex)));
       spherical.theta = viewPose?.theta ?? (angleDirection * ((normalizedIndex + 0.5) * 2 * Math.PI / count) + angleOffset);
       spherical.phi = viewPose?.phi ?? spherical.phi;
-      if (viewPose?.zoom) spherical.radius = baseDistance / Math.max(0.25, modelScale * viewPose.zoom);
-      else if (lockRotation) spherical.radius = baseDistance / Math.max(0.5, modelScale);
+      spherical.radius = maxDistance / Math.max(0.5, modelScale);
     camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical));
     camera.lookAt(controls.target);
     controls.update();
@@ -222,35 +220,13 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, 
         cameraPosition: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
       });
     }
-  }, [angleDirection, angleOffset, camera, debugProductId, debugViewName, lockRotation, modelScale, viewCount, viewIndex, viewPose]);
-
-  useEffect(() => {
-    const handleZoom = (event: Event) => {
-      const detail = (event as CustomEvent<{ delta?: number; zoom?: number }>).detail;
-      const requestedZoom = typeof detail?.zoom === 'number'
-        ? detail.zoom
-        : zoomRef.current + (detail?.delta ?? 0);
-      const nextZoom = Math.min(maxZoom, Math.max(minZoom, requestedZoom));
-      const controls = controlsRef.current;
-      if (!controls) return;
-      const direction = camera.position.clone().sub(controls.target);
-      if (direction.lengthSq() === 0) direction.set(0, 0, 1);
-      direction.setLength(baseDistance / nextZoom);
-      camera.position.copy(controls.target).add(direction);
-      camera.updateProjectionMatrix();
-      controls.update();
-      zoomRef.current = nextZoom;
-    };
-    window.addEventListener('editor:zoom', handleZoom);
-    return () => window.removeEventListener('editor:zoom', handleZoom);
-  }, [camera]);
+  }, [angleDirection, angleOffset, camera, debugProductId, debugViewName, maxDistance, modelScale, viewCount, viewIndex, viewPose]);
 
   const syncZoomFromOrbit = () => {
     const controls = controlsRef.current;
     if (!controls) return;
     const direction = camera.position.clone().sub(controls.target);
     const distance = direction.length();
-    if (distance > 0) zoomRef.current = Math.min(maxZoom, Math.max(minZoom, baseDistance / distance));
     if (!lockRotation && distance > 0) {
       const spherical = new THREE.Spherical().setFromVector3(direction);
       window.dispatchEvent(new CustomEvent('editor:3d-pose-changed', {
@@ -259,7 +235,7 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, 
           pose: {
             theta: spherical.theta,
             phi: spherical.phi,
-            zoom: Math.min(maxZoom, Math.max(minZoom, baseDistance / distance)),
+            zoom: minZoom,
           } satisfies Draft3DViewPose,
         },
       }));
@@ -271,12 +247,12 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, 
     target={[0, 0, 0]}
     enablePan={false}
     enableRotate={!lockRotation}
-    enableZoom={!lockRotation}
+    enableZoom={false}
     enableDamping={!lockRotation}
     dampingFactor={0.08}
     onEnd={() => { if (!lockRotation) window.dispatchEvent(new Event('editor:flush-draft')); }}
-    minDistance={baseDistance / maxZoom}
-    maxDistance={baseDistance / minZoom}
+    minDistance={maxDistance / Math.max(0.5, modelScale)}
+    maxDistance={maxDistance / Math.max(0.5, modelScale)}
     minPolarAngle={Math.PI / 3.2}
     maxPolarAngle={Math.PI / 1.7}
     onChange={syncZoomFromOrbit}
@@ -1400,7 +1376,7 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
   const placementY = Math.min(40, Math.max(-40, Number(scene3DPlacement?.y) || 0));
   const placementScale = Math.min(1.8, Math.max(0.5, Number(scene3DPlacement?.scale) || 1));
   const adminViewAngle = uvAlignment.direction * ((activeAdminViewIndex + 0.5) * 2 * Math.PI / previewViewCount) + uvAlignment.angle;
-  const adminCameraDistance = 5 / placementScale;
+  const adminCameraDistance = 10 / placementScale;
   const adminCameraPosition: [number, number, number] = [adminCameraDistance * Math.sin(adminViewAngle), 0, adminCameraDistance * Math.cos(adminViewAngle)];
   const controlledViewIndex = Math.max(0, Math.min(viewCount - 1, activeViewIndex ?? editorViewIndex));
   useEffect(() => {
@@ -1494,7 +1470,7 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
     {sceneBackgroundUrl && <img src={sceneBackgroundUrl} alt="" aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 h-full w-full object-contain" style={{ backgroundColor: VIEWER_BACKGROUND }} />}
     {!compact && <div className="pointer-events-none absolute left-4 top-4 z-10 rounded-xl border border-white/80 bg-white/75 px-3 py-2 shadow-sm backdrop-blur"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{staticView ? 'Vista 3D fija' : 'Vista 3D · 360°'}</p><p className="mt-0.5 text-sm font-semibold text-slate-800">{product.name}</p><p className="mt-0.5 text-[10px] font-medium text-emerald-700">{staticView ? `${activeViewName || product.views[controlledViewIndex]?.name || 'Vista'} · ${controlledViewIndex + 1}/${viewCount}` : printArea ? `${printArea.viewName || 'Vista'} · ${viewNumber}/${viewCount} · zona segura activa` : 'Esperando zona segura…'}</p></div>}
     {!resolvedFabricCanvas && !previewMode && <p className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/80 px-3 py-1.5 text-xs text-slate-500 shadow-sm">Conectando con el lienzo…</p>}
-    <Canvas className={modelCanvasStyle ? 'z-0' : 'relative z-0'} style={{ ...modelCanvasStyle, visibility: isStaticViewReady ? 'visible' : 'hidden' }} shadows={{ type: THREE.PCFShadowMap }} dpr={[1, 1.5]} camera={{ position: previewMode ? adminCameraPosition : [0, 0, 5], fov: 35 }} gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}>
+    <Canvas className={modelCanvasStyle ? 'z-0' : 'relative z-0'} style={{ ...modelCanvasStyle, visibility: isStaticViewReady ? 'visible' : 'hidden' }} shadows={{ type: THREE.PCFShadowMap }} dpr={[1, 1.5]} camera={{ position: previewMode ? adminCameraPosition : [0, 0, 10], fov: 35 }} gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}>
       <WebGLDiagnostics />
       {!sceneBackgroundUrl && <color attach="background" args={[VIEWER_BACKGROUND]} />}
       <ambientLight intensity={1.05} />
@@ -1509,6 +1485,6 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
       <ZoomableOrbitControls viewIndex={previewMode ? activeAdminViewIndex : controlledViewIndex} viewCount={previewMode ? previewViewCount : viewCount} angleOffset={uvAlignment.angle} angleDirection={uvAlignment.direction} lockRotation={staticView} modelScale={placementScale} viewPose={staticView ? viewPose : undefined} debugProductId={staticView ? product.id : undefined} debugViewName={staticView ? debugViewName : undefined} />
     </Canvas>
     {!isStaticViewReady && <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center bg-white/20 text-xs font-semibold text-slate-600 backdrop-blur-[1px]">Preparando encuadre de la vista…</div>}
-    {!staticView && !compact && <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/80 bg-white/75 px-3 py-1.5 text-[10px] font-medium text-slate-500 shadow-sm backdrop-blur">Arrastra para girar · rueda para acercar</div>}
+    {!staticView && !compact && <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/80 bg-white/75 px-3 py-1.5 text-[10px] font-medium text-slate-500 shadow-sm backdrop-blur">Arrastra para girar</div>}
   </section>;
 }
