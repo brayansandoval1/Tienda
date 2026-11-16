@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Producto, TextOptions } from '@/types/product';
 import FloatingFooter from '@/components/editor/FloatingFooter';
 import Header, { type EditorStep } from '@/components/editor/Header';
@@ -36,6 +37,8 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
   const [activeReviewTab, setActiveReviewTab] = useState<'selection' | 'review'>('review');
   const [isPanoramaActive, setIsPanoramaActive] = useState(false);
   const [isUnrestrictedDesign, setIsUnrestrictedDesign] = useState(false);
+  const [isDesignToolsPanelOpen, setIsDesignToolsPanelOpen] = useState(true);
+  const [isDesignSidePanelOpen, setIsDesignSidePanelOpen] = useState(true);
   const allowPanorama = currentProduct.allowPanorama360 ?? currentProduct.views.length > 1;
   const minimumQuantity = Math.max(1, currentProduct.pricingSchema?.minimumQuantity ?? 1);
   const [quantityValid, setQuantityValid] = useState(minimumQuantity <= 1);
@@ -218,10 +221,22 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
           nunca tapa ni empuja el producto. */}
       {activeStep === 'design' && <TextToolbar isPanoramaActive={isPanoramaActive} onTogglePanorama={handlePanoramaToggle} allowPanorama={allowPanorama} isUnrestrictedDesign={isUnrestrictedDesign} onToggleUnrestrictedDesign={(enabled) => { setIsUnrestrictedDesign(enabled); setIsPanoramaActive(enabled); }} />}
 
-      <div className="flex-1 flex flex-row overflow-hidden relative">
+      <div className="relative flex min-h-0 flex-1 flex-row overflow-hidden">
         {/* Panel Izquierdo: herramientas de diseño */}
-        <div className={`${activeStep === 'design' ? 'w-[clamp(270px,17vw,340px)]' : 'w-0 border-r-0'} h-full min-w-0 shrink-0 bg-[#fcfaff] border-r border-slate-200 flex flex-col z-10 overflow-hidden transition-[width] duration-200`} aria-hidden={activeStep !== 'design'}>
-          <SidebarPanel product={currentProduct} canManageTemplates={canManageTemplates} />
+        <div className={`${activeStep === 'design'
+          ? isDesignToolsPanelOpen ? 'w-[clamp(270px,17vw,340px)] border-r' : 'w-0 border-r-0'
+          : 'w-0 border-r-0'} relative z-10 h-full min-w-0 shrink-0 border-slate-200 bg-[#fcfaff] transition-[width] duration-200`}>
+          <div className={`h-full min-h-0 w-full min-w-0 overflow-hidden ${activeStep === 'design' && !isDesignToolsPanelOpen ? 'pointer-events-none opacity-0' : 'opacity-100'}`} aria-hidden={activeStep !== 'design' || !isDesignToolsPanelOpen}>
+            <SidebarPanel product={currentProduct} canManageTemplates={canManageTemplates} />
+          </div>
+          {activeStep === 'design' && <button
+            type="button"
+            onClick={() => setIsDesignToolsPanelOpen((open) => !open)}
+            title={isDesignToolsPanelOpen ? 'Ocultar Recursos y Plantillas' : 'Mostrar Recursos y Plantillas'}
+            aria-label={isDesignToolsPanelOpen ? 'Ocultar panel de recursos y plantillas' : 'Mostrar panel de recursos y plantillas'}
+            aria-expanded={isDesignToolsPanelOpen}
+            className="absolute right-0 top-1/2 z-30 grid h-12 w-7 translate-x-1/2 -translate-y-1/2 place-items-center rounded-r-lg border border-slate-200 bg-white text-slate-600 shadow-md transition hover:bg-violet-50 hover:text-violet-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+          >{isDesignToolsPanelOpen ? <ChevronLeft size={17} /> : <ChevronRight size={17} />}</button>}
         </div>
 
         {/* Canvas Central (Lienzo) */}
@@ -249,8 +264,11 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
         </main>
 
         {/* Panel Derecho: producto / compra */}
-        <div className={`${activeStep === 'design' ? 'w-[clamp(250px,16vw,320px)]' : 'w-[42%] min-w-[400px] max-w-[600px]'} h-full min-w-0 shrink-0 bg-[#fcfaff] border-l border-slate-200 flex flex-col z-10 overflow-hidden transition-[width] duration-200`}>
-          <ViewSelector
+        <div className={`${activeStep === 'design'
+          ? isDesignSidePanelOpen ? 'w-[clamp(250px,16vw,320px)] border-l' : 'w-0 border-l-0'
+          : 'w-[42%] min-w-[400px] max-w-[600px] border-l'} relative z-10 h-full min-w-0 shrink-0 border-slate-200 bg-[#fcfaff] transition-[width] duration-200`}>
+          <div className={`h-full min-h-0 w-full min-w-0 overflow-hidden ${activeStep === 'design' && !isDesignSidePanelOpen ? 'pointer-events-none opacity-0' : 'opacity-100'}`} aria-hidden={activeStep === 'design' && !isDesignSidePanelOpen}>
+            <ViewSelector
             product={currentProduct}
             panel={activeStep === 'review' ? 'preview' : 'options'}
             workflowStep={activeStep}
@@ -268,7 +286,16 @@ export default function EditorShell({ producto, initialProduct }: { producto: Pr
               setComponentColors((current) => ({ ...current, [meshName]: color }));
               window.dispatchEvent(new CustomEvent('editor:component-color-change', { detail: { meshName, color } }));
             }}
-          />
+            />
+          </div>
+          {activeStep === 'design' && <button
+            type="button"
+            onClick={() => setIsDesignSidePanelOpen((open) => !open)}
+            title={isDesignSidePanelOpen ? 'Ocultar Opciones y Personalizar' : 'Mostrar Opciones y Personalizar'}
+            aria-label={isDesignSidePanelOpen ? 'Ocultar panel de opciones y personalización' : 'Mostrar panel de opciones y personalización'}
+            aria-expanded={isDesignSidePanelOpen}
+            className="absolute left-0 top-1/2 z-30 grid h-12 w-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-l-lg border border-slate-200 bg-white text-slate-600 shadow-md transition hover:bg-violet-50 hover:text-violet-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+          >{isDesignSidePanelOpen ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}</button>}
         </div>
       </div>
     </div>

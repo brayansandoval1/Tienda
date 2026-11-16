@@ -304,7 +304,7 @@ export default function ViewSelector({ product, panel, workflowStep = 'design', 
         <button type="button" onClick={() => onReviewTabChange?.('review')} aria-current={reviewTab === 'review' ? 'page' : undefined} className={`rounded-xl px-3 py-2.5 text-sm font-semibold transition ${reviewTab === 'review' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>Revisar</button>
       </nav>}
 
-      <div className={`min-h-0 flex-1 overflow-y-auto ${isProductSelectionStage ? 'p-8 lg:p-10' : 'p-4'}`}>
+      <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain ${isProductSelectionStage ? 'p-8 lg:p-10' : 'p-4'}`}>
       {workflowStep === 'review' && reviewTab === 'review' ? (
         <section className="mx-auto max-w-[540px] space-y-6 pb-6">
           <div>

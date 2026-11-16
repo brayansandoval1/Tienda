@@ -445,7 +445,7 @@ export default function SidebarPanel({ product, canManageTemplates = false }: { 
   // El evento 'editor:add-image' solo se usa para AGREGAR AL CANVAS, NO para actualizar la lista
 
   return (
-    <aside className="min-h-0 w-full max-w-[292px] space-y-5 overflow-y-auto rounded-[22px] border border-slate-200/80 bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
+    <aside className="h-full min-h-0 w-full max-w-[292px] space-y-5 overflow-y-auto overscroll-contain rounded-[22px] border border-slate-200/80 bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
       {/* Capas comparte el panel existente: no cambia el ancho ni desplaza Recursos. */}
       <div className="flex items-center gap-1.5">
         <div className="grid flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
