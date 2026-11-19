@@ -168,7 +168,7 @@ function WebGLDiagnostics() {
   return null;
 }
 
-function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, angleDirection = 1, lockRotation = false, modelScale = 1, viewPose, debugProductId, debugViewName }: { viewIndex?: number; viewCount?: number; angleOffset?: number; angleDirection?: 1 | -1; lockRotation?: boolean; modelScale?: number; viewPose?: Draft3DViewPose; debugProductId?: string; debugViewName?: string }) {
+function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, angleDirection = 1, lockRotation = false, allowZoom = false, modelScale = 1, viewPose, debugProductId, debugViewName }: { viewIndex?: number; viewCount?: number; angleOffset?: number; angleDirection?: 1 | -1; lockRotation?: boolean; allowZoom?: boolean; modelScale?: number; viewPose?: Draft3DViewPose; debugProductId?: string; debugViewName?: string }) {
   const { camera } = useThree();
   const controlsRef = useRef<any>(null);
   const baseDistance = 5;
@@ -247,12 +247,12 @@ function ZoomableOrbitControls({ viewIndex = 0, viewCount = 1, angleOffset = 0, 
     target={[0, 0, 0]}
     enablePan={false}
     enableRotate={!lockRotation}
-    enableZoom={false}
+    enableZoom={allowZoom}
     enableDamping={!lockRotation}
     dampingFactor={0.08}
     onEnd={() => { if (!lockRotation) window.dispatchEvent(new Event('editor:flush-draft')); }}
-    minDistance={maxDistance / Math.max(0.5, modelScale)}
-    maxDistance={maxDistance / Math.max(0.5, modelScale)}
+    minDistance={allowZoom ? 2.5 / Math.max(0.5, modelScale) : maxDistance / Math.max(0.5, modelScale)}
+    maxDistance={allowZoom ? 18 / Math.max(0.5, modelScale) : maxDistance / Math.max(0.5, modelScale)}
     minPolarAngle={Math.PI / 3.2}
     maxPolarAngle={Math.PI / 1.7}
     onChange={syncZoomFromOrbit}
@@ -403,7 +403,7 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     const visibleObjects = (objectsOverride ?? fabricCanvas.getObjects()).filter((object) =>
       object && object.visible !== false && !object.isMockup && !object.isGuide && !object.isGuideLine && !object.isCropOverlay && !object.isDesignBackground,
     );
-    if (safeAreaOutlineColor === '#0284c7') {
+    if (safeAreaOutlineColor === '#ffffff') {
       const logKey = `${area?.viewId ?? area?.viewIndex ?? 'view'}:${visibleObjects.length}:${target.width}x${target.height}`;
       const now = Date.now();
       if (now - (catalogProjectionLogTimes.get(logKey) ?? 0) > 3000) {
@@ -542,6 +542,49 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
     });
     context.restore();
 
+    // The calibrated projection branch returns before the generic safe-area
+    // guide below. Draw the outline here as well so the Admin calibration
+    // preview shows the exact UV boundary being edited, even with no artwork.
+    if (safeAreaOutlineColor !== 'transparent') {
+      context.save();
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.strokeStyle = safeAreaOutlineColor;
+      context.lineWidth = Math.max(2, target.height / 300);
+      context.setLineDash([6, 6]);
+      context.shadowColor = 'rgba(15, 23, 42, 0.95)';
+      context.shadowBlur = 8;
+      context.beginPath();
+      if (safePolygon && safePolygon.length >= 3) {
+        safePolygon.forEach((point, index) => {
+          const x = sideLeft + (Number(point.x) / 100) * sideWidth;
+          const y = (Number(point.y) / 100) * target.height;
+          if (index === 0) context.moveTo(x, y);
+          else context.lineTo(x, y);
+        });
+        context.closePath();
+      } else if (projectionArea.shape === 'ellipse') {
+        context.ellipse(destX + destW / 2, destY + destH / 2, destW / 2, destH / 2, 0, 0, Math.PI * 2);
+      } else if (projectionArea.shape === 'rounded') {
+        const radius = Math.min(50, Math.max(0, Number(projectionArea.radius) || 0)) / 100;
+        const radiusX = Math.min(destW / 2, destW * radius);
+        const radiusY = Math.min(destH / 2, destH * radius);
+        context.moveTo(destX + radiusX, destY);
+        context.lineTo(destX + destW - radiusX, destY);
+        context.quadraticCurveTo(destX + destW, destY, destX + destW, destY + radiusY);
+        context.lineTo(destX + destW, destY + destH - radiusY);
+        context.quadraticCurveTo(destX + destW, destY + destH, destX + destW - radiusX, destY + destH);
+        context.lineTo(destX + radiusX, destY + destH);
+        context.quadraticCurveTo(destX, destY + destH, destX, destY + destH - radiusY);
+        context.lineTo(destX, destY + radiusY);
+        context.quadraticCurveTo(destX, destY, destX + radiusX, destY);
+        context.closePath();
+      } else {
+        context.rect(destX, destY, destW, destH);
+      }
+      context.stroke();
+      context.restore();
+    }
+
     return;
   }
 
@@ -618,6 +661,10 @@ function renderFullTexture360(fabricCanvas: FabricCanvasLike, area: PrintAreaBou
   context.strokeStyle = safeAreaOutlineColor;
   context.lineWidth = Math.max(2, target.height / 300);
   context.setLineDash([6, 6]);
+  if (safeAreaOutlineColor === '#ffffff') {
+    context.shadowColor = 'rgba(15, 23, 42, 0.95)';
+    context.shadowBlur = 8;
+  }
   traceSafeAreaPath();
   context.stroke();
   context.restore();
@@ -739,7 +786,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                 radius: liveArea3D.radius,
                 polygon: liveArea3D.nodes ?? liveArea3D.polygon,
               } : undefined;
-              renderFullTexture360(fabricCanvas, printArea, printCanvas, panoramic, undefined, liveProjection, totalViews, printableSurfaceColor, hideSafeAreaOverlay ? 'transparent' : adminArea ? '#0284c7' : '#22c55e', transparentPrintSurface);
+              renderFullTexture360(fabricCanvas, printArea, printCanvas, panoramic, undefined, liveProjection, totalViews, printableSurfaceColor, hideSafeAreaOverlay ? 'transparent' : adminArea ? '#ffffff' : '#22c55e', transparentPrintSurface);
             } else {
               const context = printCanvas.getContext('2d');
               if (!context) return;
@@ -798,7 +845,7 @@ function FabricTextureSurface({ fabricCanvas, phoneCase, panoramic, printAspectR
                   radius: livePrintArea3D.radius,
                   polygon: livePrintArea3D.nodes ?? livePrintArea3D.polygon,
                 } : snapshot.projectionArea;
-                renderFullTexture360(fabricCanvas, isActiveSnapshot ? printArea : snapshot.area, printCanvas, panoramic, objects, activeProjection, totalViews, printableSurfaceColor, hideSafeAreaOverlay ? 'transparent' : adminArea ? '#0284c7' : '#22c55e', transparentPrintSurface);
+                renderFullTexture360(fabricCanvas, isActiveSnapshot ? printArea : snapshot.area, printCanvas, panoramic, objects, activeProjection, totalViews, printableSurfaceColor, hideSafeAreaOverlay ? 'transparent' : adminArea ? '#ffffff' : '#22c55e', transparentPrintSurface);
               }
             }
             if (textureRef.current) textureRef.current.needsUpdate = true;
@@ -1482,7 +1529,7 @@ export default function Product3DViewer({ product, componentColors, enabledMeshN
         <shadowMaterial opacity={0.12} />
       </mesh>
       {!sceneBackgroundUrl && <Grid position={[0, -1.54, 0]} rotation={[0, 0, 0]} infiniteGrid cellSize={0.35} sectionSize={1.4} fadeDistance={12} fadeStrength={1.2} cellColor="#cbd5e1" sectionColor="#94a3b8" />}
-      <ZoomableOrbitControls viewIndex={previewMode ? activeAdminViewIndex : controlledViewIndex} viewCount={previewMode ? previewViewCount : viewCount} angleOffset={uvAlignment.angle} angleDirection={uvAlignment.direction} lockRotation={staticView} modelScale={placementScale} viewPose={staticView ? viewPose : undefined} debugProductId={staticView ? product.id : undefined} debugViewName={staticView ? debugViewName : undefined} />
+      <ZoomableOrbitControls viewIndex={previewMode ? activeAdminViewIndex : controlledViewIndex} viewCount={previewMode ? previewViewCount : viewCount} angleOffset={uvAlignment.angle} angleDirection={uvAlignment.direction} lockRotation={staticView} allowZoom={previewMode} modelScale={placementScale} viewPose={staticView ? viewPose : undefined} debugProductId={staticView ? product.id : undefined} debugViewName={staticView ? debugViewName : undefined} />
     </Canvas>
     {!isStaticViewReady && <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center bg-white/20 text-xs font-semibold text-slate-600 backdrop-blur-[1px]">Preparando encuadre de la vista…</div>}
     {!staticView && !compact && <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/80 bg-white/75 px-3 py-1.5 text-[10px] font-medium text-slate-500 shadow-sm backdrop-blur">Arrastra para girar</div>}
