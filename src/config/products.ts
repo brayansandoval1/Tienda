@@ -250,6 +250,8 @@ export interface Product {
   meshSettings?: MeshSettings;
   /** Mallas del modelo 3D expuestas como controles de color al cliente. */
   customizableParts?: CustomizablePart[];
+  /** Colores que aparecen como muestras en la tarjeta pública del catálogo. */
+  catalogColors?: Array<{ name: string; color: string }>;
   /** Variantes globales reutilizables por todas las vistas del producto. */
   colors?: ColorVariant[];
   /** Configuraciones vendibles que pueden modificar el precio final. */

@@ -310,15 +310,15 @@ export default function ProductDetailPage() {
               Personalizar este diseño <ArrowUpRight size={18} />
             </Link>
 
-            {colorableParts.length > 0 && <section className="mt-7 border-t border-slate-200 pt-6" aria-label="Colores del producto">
+            {colorableParts.length > 0 && (product.catalogColors?.length ?? 1) > 0 && <section className="mt-7 border-t border-slate-200 pt-6" aria-label="Colores del producto">
               <h2 className="text-lg font-semibold text-slate-900">Color del producto</h2>
               <p className="mt-1 text-sm text-slate-500">El color se aplica directamente al modelo 3D.</p>
               <div className="mt-4 space-y-5">
                 {colorableParts.map((part) => {
                   const baseColor = part.defaultColor || '#cbd5e1';
-                  const palette = PRODUCT_COLOR_PALETTE.some((item) => item.color.toLowerCase() === baseColor.toLowerCase())
+                  const palette = product.catalogColors ?? (PRODUCT_COLOR_PALETTE.some((item) => item.color.toLowerCase() === baseColor.toLowerCase())
                     ? PRODUCT_COLOR_PALETTE
-                    : [{ name: 'Original', color: baseColor }, ...PRODUCT_COLOR_PALETTE];
+                    : [{ name: 'Original', color: baseColor }, ...PRODUCT_COLOR_PALETTE]);
                   return <div key={part.id}>
                     {colorableParts.length > 1 && <h3 className="mb-2 text-sm font-medium text-slate-700">{part.label}</h3>}
                     <div className="flex flex-wrap gap-2.5">

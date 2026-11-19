@@ -20,17 +20,26 @@ import { validateGLBArrayBuffer } from '@/src/utils/glbValidation';
 import { getDraft, type Draft3DViewPose } from '@/src/utils/designDraftStorage';
 import { deleteProductDesignTemplate, getProductDesignTemplate, saveProductDesignTemplate } from '@/src/utils/templateStorage';
 import type { FabricCanvasLike, PrintAreaBounds, PrintViewSnapshot } from '@/components/editor/Product3DViewer';
+import { PRODUCT_COLOR_PALETTE } from '@/src/config/productColorPalette';
 
 const Product3DViewer = dynamic(() => import('@/components/editor/Product3DViewer'), { ssr: false, loading: () => <div className="grid h-full min-h-[280px] place-items-center text-xs text-slate-500">Cargando visor 3D…</div> });
 
 type ProductViewForm = { id: string; name: string; mockupUrl: string; x: string; y: string; width: string; height: string; shape: SafeAreaShape; radius: string; /** Nodos del contorno libre serializados ('' = forma paramétrica). */ polygon: string; area3D: PrintArea; surfaceX: string; surfaceY: string; surfaceWidth: string; surfaceHeight: string; surfaceCustomized: boolean };
-type ProductForm = { name: string; description: string; price: string; category: string; printWidthCm: string; printHeightCm: string; model3dUrl: string; textureWidth: string; textureHeight: string; hasMultipleSides: boolean; extraSidePrice: string; fullWrapPrice: string; sidesPricingMode: 'per_side' | 'wrap'; setupFee: string; minimumQuantity: string; volumeDiscounts: Array<{ minQty: string; discountPercentage: string }>; availableAddonIds: string[]; customizableParts: CustomizablePart[]; options: ProductOption[]; views: ProductViewForm[] };
+type CatalogDisplayColor = { name: string; color: string };
+type ProductForm = { name: string; description: string; price: string; category: string; printWidthCm: string; printHeightCm: string; model3dUrl: string; textureWidth: string; textureHeight: string; catalogColors: CatalogDisplayColor[]; hasMultipleSides: boolean; extraSidePrice: string; fullWrapPrice: string; sidesPricingMode: 'per_side' | 'wrap'; setupFee: string; minimumQuantity: string; volumeDiscounts: Array<{ minQty: string; discountPercentage: string }>; availableAddonIds: string[]; customizableParts: CustomizablePart[]; options: ProductOption[]; views: ProductViewForm[] };
 type ProductFormTab = 'basics' | 'pricing' | 'model' | 'views' | 'variants' | 'template';
 type MeshInspection = { name: string; vertexCount: number; triangleCount: number; dimensions: string; materialNames: string[]; uvCount: number; uvRange: string | null; uvOutsideCount: number; overlappingUvTriangles: number };
 type MeshInspectionState = { status: 'idle' | 'loading' | 'success' | 'error'; message: string; meshes: MeshInspection[] };
 
 const REFERENCE_WIDTH = 800;
 const REFERENCE_HEIGHT = 800;
+const DEFAULT_CATALOG_COLORS = PRODUCT_COLOR_PALETTE.map(({ name, color }) => ({ name, color }));
+const PASTEL_COLOR_PRESETS: CatalogDisplayColor[] = [
+  { name: 'Rosa pastel', color: '#F6C6D8' }, { name: 'Durazno', color: '#FFD1B8' },
+  { name: 'Lavanda', color: '#D9CCF2' }, { name: 'Menta', color: '#C5E8D2' },
+  { name: 'Azul cielo', color: '#C8E5F5' }, { name: 'Amarillo suave', color: '#FFF0B8' },
+  { name: 'Lila claro', color: '#EADCF7' }, { name: 'Crema', color: '#F2E8D5' },
+];
 const normalizePercentage = (value: number | undefined | null, fallback = 0) => !Number.isFinite(value) ? fallback : value && value > 0 && value <= 1 ? value * 100 : value ?? fallback;
 const cleanPercentage = (value: number) => Number(Math.min(100, Math.max(0, value)).toFixed(2));
 /** Radio 0-50 % con dos decimales; 25 % por defecto si el campo viene vacío. */
@@ -139,7 +148,7 @@ const serializePrintArea3D = (area: PrintArea) => {
     nodes,
   };
 };
-const emptyForm = (): ProductForm => ({ name: '', description: '', price: '', category: '', printWidthCm: '', printHeightCm: '', model3dUrl: '', textureWidth: String(DEFAULT_MESH_SETTINGS.textureWidth), textureHeight: String(DEFAULT_MESH_SETTINGS.textureHeight), hasMultipleSides: false, extraSidePrice: '0', fullWrapPrice: '0', sidesPricingMode: 'per_side', setupFee: '0', minimumQuantity: '1', volumeDiscounts: [], availableAddonIds: [], customizableParts: [], options: [], views: [createViewForm(0)] });
+const emptyForm = (): ProductForm => ({ name: '', description: '', price: '', category: '', printWidthCm: '', printHeightCm: '', model3dUrl: '', textureWidth: String(DEFAULT_MESH_SETTINGS.textureWidth), textureHeight: String(DEFAULT_MESH_SETTINGS.textureHeight), catalogColors: DEFAULT_CATALOG_COLORS.map((color) => ({ ...color })), hasMultipleSides: false, extraSidePrice: '0', fullWrapPrice: '0', sidesPricingMode: 'per_side', setupFee: '0', minimumQuantity: '1', volumeDiscounts: [], availableAddonIds: [], customizableParts: [], options: [], views: [createViewForm(0)] });
 
 const normalizeViewIds = (views: ProductViewForm[]): ProductViewForm[] => {
   const usedIds = new Set<string>();
@@ -162,6 +171,7 @@ const toForm = (product: Product): ProductForm => ({
   model3dUrl: product.model3dUrl ?? '',
   textureWidth: String(product.meshSettings?.textureWidth ?? DEFAULT_MESH_SETTINGS.textureWidth),
   textureHeight: String(product.meshSettings?.textureHeight ?? DEFAULT_MESH_SETTINGS.textureHeight),
+  catalogColors: (product.catalogColors ?? DEFAULT_CATALOG_COLORS).map((color) => ({ ...color })),
   hasMultipleSides: product.pricingRules?.hasMultipleSides ?? (product.views.length > 1),
   extraSidePrice: String(product.pricingSchema?.sidesPricing?.pricePerAdditionalSide ?? product.pricingRules?.extraSidePrice ?? 0),
   fullWrapPrice: String(product.pricingSchema?.sidesPricing?.wrapPrice ?? product.pricingRules?.fullWrapPrice ?? 0),
@@ -415,10 +425,12 @@ export default function AdminProductEditor() {
       if (inspectedScene) disposeInspectedGLB(inspectedScene);
     }
   };
-  const setField = (field: Exclude<keyof ProductForm, 'views' | 'options' | 'customizableParts' | 'availableAddonIds' | 'hasMultipleSides' | 'volumeDiscounts' | 'sidesPricingMode'>, value: string) => {
+  const setField = (field: Exclude<keyof ProductForm, 'views' | 'options' | 'customizableParts' | 'catalogColors' | 'availableAddonIds' | 'hasMultipleSides' | 'volumeDiscounts' | 'sidesPricingMode'>, value: string) => {
     if (field === 'model3dUrl') setLocalGLBFile(null);
     setForm((current) => ({ ...current, [field]: value }));
   };
+  const updateCatalogColor = (index: number, patch: Partial<CatalogDisplayColor>) => setForm((current) => ({ ...current, catalogColors: current.catalogColors.map((color, colorIndex) => colorIndex === index ? { ...color, ...patch } : color) }));
+  const addCatalogColor = (color: CatalogDisplayColor) => setForm((current) => current.catalogColors.some((item) => item.color.toLowerCase() === color.color.toLowerCase()) ? current : { ...current, catalogColors: [...current.catalogColors, { ...color }] });
   const updateVolumeDiscount = (index: number, key: 'minQty' | 'discountPercentage', value: string) => setForm((current) => ({ ...current, volumeDiscounts: current.volumeDiscounts.map((tier, tierIndex) => tierIndex === index ? { ...tier, [key]: value } : tier) }));
   const addVolumeDiscount = () => setForm((current) => ({ ...current, volumeDiscounts: [...current.volumeDiscounts, { minQty: '', discountPercentage: '' }] }));
   const removeVolumeDiscount = (index: number) => setForm((current) => ({ ...current, volumeDiscounts: current.volumeDiscounts.filter((_, tierIndex) => tierIndex !== index) }));
@@ -593,6 +605,7 @@ export default function AdminProductEditor() {
       printHeightCm: printHeight || undefined,
       model3dUrl: form.model3dUrl.trim() || undefined,
       meshSettings,
+      catalogColors: form.catalogColors.map((color) => ({ name: color.name.trim() || 'Color personalizado', color: color.color })),
       pricingRules: { hasMultipleSides: form.hasMultipleSides, extraSidePrice, fullWrapPrice },
       pricingSchema: { variantModifiers, setupFee, minimumQuantity, volumeDiscounts, sidesPricing: { mode: form.sidesPricingMode, pricePerAdditionalSide: extraSidePrice, wrapPrice: fullWrapPrice } },
       availableAddonIds: form.availableAddonIds,
@@ -686,6 +699,10 @@ export default function AdminProductEditor() {
           {activeProductFormTab === 'basics' && (
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Datos básicos</h2><p className="mt-1 text-sm text-slate-500">Información que verán tus clientes al elegir el producto.</p></div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><Field className="sm:col-span-2" label="Nombre del producto" value={form.name} onChange={(value) => setField('name', value)} required /><label className="sm:col-span-2 grid gap-1.5 text-sm font-medium text-slate-700"><span>Descripción corta para el catálogo</span><textarea value={form.description} maxLength={180} onChange={(event) => setField('description', event.target.value)} rows={3} placeholder="Describe brevemente el material, uso o característica principal…" className="w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" /><span className="text-right text-xs font-normal text-slate-400">{form.description.length}/180</span></label><Field label="Precio" type="number" min="0" step="0.01" value={form.price} onChange={(value) => setField('price', value)} required /><Field label="Categoría" value={form.category} onChange={(value) => setField('category', value)} required /><Field label="Ancho físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printWidthCm} onChange={(value) => setField('printWidthCm', value)} placeholder="20" /><Field label="Alto físico de impresión (cm)" type="number" min="0.1" step="0.1" value={form.printHeightCm} onChange={(value) => setField('printHeightCm', value)} placeholder="9" /><Field className="sm:col-span-2" label="Modelo 3D (ruta pública o URL .GLB)" value={form.model3dUrl} onChange={(value) => setField('model3dUrl', value)} placeholder="/models/termo.glb" /><div className="sm:col-span-2 grid grid-cols-2 gap-3"><Field label="Ancho de textura 3D" type="number" min="1" step="1" value={form.textureWidth} onChange={(value) => setField('textureWidth', value)} /><Field label="Alto de textura 3D" type="number" min="1" step="1" value={form.textureHeight} onChange={(value) => setField('textureHeight', value)} /><p className="col-span-2 text-xs text-slate-500">Predeterminado: 2048 × 512 px. El viewer ajusta la altura efectiva a la proporción real de la superficie UV del GLB.</p></div>
+              <div className="sm:col-span-2 rounded-xl border border-emerald-100 bg-emerald-50/40 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">Colores visibles en el catálogo</h3><p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">Elige los colores que aparecerán debajo de este producto. Puedes reducir la cantidad, cambiar cada tono o añadir pasteles y colores personalizados.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-emerald-800">{form.catalogColors.length} {form.catalogColors.length === 1 ? 'color' : 'colores'}</span></div>
+                {form.catalogColors.length > 0 ? <div className="mt-4 space-y-2">{form.catalogColors.map((color, index) => <div key={index} className="grid grid-cols-[48px_minmax(0,1fr)_minmax(105px,150px)_38px] items-center gap-2 rounded-lg border border-emerald-100 bg-white p-2"><input type="color" value={color.color} onChange={(event) => updateCatalogColor(index, { color: event.target.value })} aria-label={`Tono de ${color.name}`} className="h-9 w-11 cursor-pointer rounded-md border border-slate-200 bg-white p-1" /><input value={color.name} onChange={(event) => updateCatalogColor(index, { name: event.target.value })} aria-label={`Nombre del color ${index + 1}`} placeholder="Nombre del color" className="min-w-0 rounded-md border border-slate-200 px-2.5 py-2 text-xs text-slate-800 outline-none focus:border-emerald-500" /><span className="truncate text-center font-mono text-[10px] text-slate-400">{color.color.toUpperCase()}</span><button type="button" onClick={() => setForm((current) => ({ ...current, catalogColors: current.catalogColors.filter((_, colorIndex) => colorIndex !== index) }))} aria-label={`Quitar color ${color.name}`} title="Quitar color" className="grid h-9 w-9 place-items-center rounded-md text-slate-400 transition hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></button></div>)}</div> : <p className="mt-4 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-4 text-center text-xs text-slate-500">No aparecerán muestras de color en este producto.</p>}
+                <div className="mt-4 flex flex-wrap items-center gap-2"><button type="button" onClick={() => addCatalogColor({ name: 'Color personalizado', color: '#C8B6E2' })} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800"><Plus size={14} />Agregar color personalizado</button><span className="text-xs text-slate-500">Pasteles:</span>{PASTEL_COLOR_PRESETS.map((preset) => { const alreadyAdded = form.catalogColors.some((color) => color.color.toLowerCase() === preset.color.toLowerCase()); return <button key={preset.color} type="button" disabled={alreadyAdded} onClick={() => addCatalogColor(preset)} title={alreadyAdded ? `${preset.name} ya está en la lista` : `Añadir ${preset.name}`} aria-label={`Añadir color ${preset.name}`} className="h-7 w-7 rounded-full border-2 border-white shadow-sm ring-1 ring-slate-200 transition hover:scale-110 disabled:cursor-default disabled:opacity-45" style={{ backgroundColor: preset.color }} />; })}</div>
+              </div>
             </div>
           </section>
           )}

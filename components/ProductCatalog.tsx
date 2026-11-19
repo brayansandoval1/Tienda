@@ -43,6 +43,9 @@ function CatalogCard({ product, favorite, onToggleFavorite, printColor, previewC
   const printPart = getCatalogPrintPart(product);
   const hasAdminScene = Boolean(product.catalogSceneUrl || product.views[0]?.sceneBackgroundUrl);
   const canColorModel = Boolean(printPart && printPart.enabled !== false && hasAdminScene && (product.model3dUrl?.trim() || product.id === 'termo-acero-inoxidable'));
+  const catalogColors = product.catalogColors ?? (PRODUCT_COLOR_PALETTE.some((item) => item.color.toLowerCase() === (printPart?.defaultColor || '#cbd5e1').toLowerCase())
+    ? PRODUCT_COLOR_PALETTE
+    : [{ name: 'Original', color: printPart?.defaultColor || '#cbd5e1' }, ...PRODUCT_COLOR_PALETTE]);
   const detailHref = canColorModel && printPart && printColor
     ? `/producto/${product.id}?mesh=${encodeURIComponent(printPart.meshName)}&color=${encodeURIComponent(printColor)}`
     : `/producto/${product.id}`;
@@ -89,13 +92,10 @@ function CatalogCard({ product, favorite, onToggleFavorite, printColor, previewC
           <p className="shrink-0 text-sm font-bold text-violet-700">${product.price.toFixed(2)}</p>
         </div>
         <p className="mt-1.5 line-clamp-2 min-h-9 text-xs leading-5 text-slate-500">{product.description || product.category}</p>
-        {showColorPalette && canColorModel && printPart && <div className="mt-3" onClick={(event) => event.stopPropagation()}>
+        {showColorPalette && canColorModel && printPart && catalogColors.length > 0 && <div className="mt-3" onClick={(event) => event.stopPropagation()}>
           <p className="mb-2 text-[10px] font-medium text-slate-500">Color del producto</p>
           <div className="flex flex-wrap gap-2">
-            {(PRODUCT_COLOR_PALETTE.some((item) => item.color.toLowerCase() === (printPart.defaultColor || '#cbd5e1').toLowerCase())
-              ? PRODUCT_COLOR_PALETTE
-              : [{ name: 'Original', color: printPart.defaultColor || '#cbd5e1' }, ...PRODUCT_COLOR_PALETTE]
-            ).map((item) => {
+            {catalogColors.map((item) => {
               const selected = previewColor?.toLowerCase() === item.color.toLowerCase();
               return <button
                 key={`${product.id}-${item.color}`}
