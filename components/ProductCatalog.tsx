@@ -120,7 +120,6 @@ export default function ProductCatalog() {
   const [category, setCategory] = useState('Todos');
   const [query, setQuery] = useState('');
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
-  const [favoritesLoaded, setFavoritesLoaded] = useState(false);
   const [printColors, setPrintColors] = useState<Record<string, string>>({});
   const [activeColorPreviewId, setActiveColorPreviewId] = useState<string | null>(null);
 
@@ -129,7 +128,6 @@ export default function ProductCatalog() {
       const storedFavorites = JSON.parse(window.localStorage.getItem('stylecute:favorites') ?? '[]');
       if (Array.isArray(storedFavorites)) setFavoriteIds(storedFavorites.filter((id): id is string => typeof id === 'string'));
     } catch { /* Una preferencia local dañada no debe bloquear el catálogo. */ }
-    setFavoritesLoaded(true);
   }, []);
 
   const categories = useMemo(() => [...new Set(products
@@ -145,10 +143,6 @@ export default function ProductCatalog() {
       .filter((product) => !needle || `${product.name} ${product.category}`.toLocaleLowerCase('es-MX').includes(needle))
       .map((product) => ({ ...product, catalogImages: getProductImages(product) }));
   }, [category, products, query]);
-
-  const favoriteProducts = useMemo(() => products
-    .filter((product) => product.isActive !== false && favoriteIds.includes(product.id))
-    .map((product) => ({ ...product, catalogImages: getProductImages(product) })), [favoriteIds, products]);
 
   const toggleFavorite = (productId: string) => {
     const nextFavorites = favoriteIds.includes(productId)
@@ -210,11 +204,5 @@ export default function ProductCatalog() {
         )}
       </div>
     </section>
-    {favoritesLoaded && <section id="favoritos" className="scroll-mt-24 border-t border-violet-100 bg-white px-5 py-16 sm:px-8 lg:px-12">
-      <div className="mx-auto max-w-7xl">
-        <div className="flex items-end justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[.22em] text-rose-500">Tu colección</p><h2 className="mt-2 text-3xl font-semibold tracking-[-.045em] text-slate-800">Mis favoritos <span className="ml-1 text-xl font-medium text-slate-400">{favoriteProducts.length}</span></h2><p className="mt-2 text-sm text-slate-500">Guarda aquí los productos que quieras volver a ver.</p></div><Heart className="mb-1 text-rose-400" size={25} /></div>
-        {favoriteProducts.length ? <div className="mt-7 grid justify-center gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 300px))' }}>{favoriteProducts.map((product) => renderCard(product, false))}</div> : <div className="mt-6 rounded-2xl border border-dashed border-rose-200 bg-rose-50/45 px-5 py-8 text-center"><p className="text-sm font-semibold text-slate-700">Todavía no guardas favoritos</p><p className="mt-1 text-xs text-slate-500">Pulsa el corazón de cualquier producto para añadirlo aquí.</p></div>}
-      </div>
-    </section>}
   </>;
 }

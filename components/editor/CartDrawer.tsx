@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { CheckCircle2, LockKeyhole, Minus, Plus, ShoppingBag, Sparkles, Trash2, Truck, X } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Minus, Plus, ShoppingBag, Sparkles, Trash2, X } from 'lucide-react';
+import Link from 'next/link';
 import { useCartStore } from '@/src/store/useCartStore';
 
 const money = (amount: number) => `$${amount.toFixed(2)}`;
@@ -28,91 +29,51 @@ export default function CartDrawer() {
   const count = items.reduce((sum, item) => sum + (item.kind === 'catalog' ? item.quantity : item.design.quantity), 0);
 
   return (
-    <div className="fixed inset-0 z-[70] flex justify-end bg-violet-950/15 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Carrito de compras">
-      <button type="button" className="flex-1 cursor-default" aria-label="Cerrar carrito" onClick={() => setIsOpen(false)} />
-      <aside className="flex h-full w-full max-w-md flex-col border-l border-white/80 bg-[#fdfbff]/95 text-slate-800 shadow-[-30px_0_80px_rgba(109,88,150,.18)] backdrop-blur-2xl">
-        <header className="flex items-center justify-between border-b border-violet-100 px-5 py-5">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="grid h-8 w-8 place-items-center rounded-xl bg-violet-100 text-violet-600"><ShoppingBag size={16} /></span>
-              <h2 className="text-base font-semibold tracking-[-.03em]">Tu selección</h2>
-            </div>
-            <p className="mt-1 text-xs text-slate-400">{count ? `${count} pieza${count === 1 ? '' : 's'} en tu selección` : 'Tu próxima pieza única empieza aquí.'}</p>
-          </div>
-          <button type="button" onClick={() => setIsOpen(false)} className="rounded-xl border border-violet-100 bg-white p-2 text-slate-400 transition hover:bg-violet-50 hover:text-violet-700" aria-label="Cerrar carrito"><X size={17} /></button>
+    <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/45 p-2 backdrop-blur-sm sm:p-5 lg:p-8" role="dialog" aria-modal="true" aria-label="Tu carrito">
+      <button type="button" className="absolute inset-0 cursor-default" aria-label="Cerrar carrito" onClick={() => setIsOpen(false)} />
+      <section className="relative flex h-[min(94vh,900px)] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border border-white/80 bg-[#fcfbff] text-slate-800 shadow-2xl sm:rounded-3xl">
+        <header className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-5 py-4 sm:px-8 sm:py-5">
+          <div><div className="flex flex-wrap items-baseline gap-x-3 gap-y-1"><h2 className="text-2xl font-semibold tracking-[-.05em] text-slate-900 sm:text-3xl">Tu carrito</h2><span className="text-sm text-slate-500">{count} {count === 1 ? 'artículo' : 'artículos'}</span></div><p className="mt-1 text-xs text-slate-500">Puedes continuar como invitado; no necesitas crear un perfil.</p></div>
+          <button type="button" onClick={() => setIsOpen(false)} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-900" aria-label="Cerrar carrito"><X size={19} /></button>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-5">
-          {items.length > 0 && <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-xs font-medium text-emerald-700"><CheckCircle2 size={16} /> Tu selección quedó guardada en el carrito.</div>}
-          {items.length === 0 ? (
-            <div className="py-20 text-center">
-              <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-violet-100 text-violet-500"><Sparkles size={22} /></span>
-              <p className="mt-5 font-semibold text-slate-700">Aún no hay piezas aquí</p>
-              <p className="mx-auto mt-2 max-w-[220px] text-sm leading-6 text-slate-400">Explora el catálogo y crea algo que sea completamente tuyo.</p>
-              <button type="button" onClick={() => setIsOpen(false)} className="mt-6 rounded-xl bg-violet-100 px-4 py-2.5 text-sm font-semibold text-violet-700 hover:bg-violet-200">Explorar productos</button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {items.map((item) => {
-                const isCatalogItem = item.kind === 'catalog';
-                const preview = isCatalogItem ? item.imageUrl : item.design.views[0]?.files.previewImage || item.design.views[0]?.preview;
-                const productName = isCatalogItem ? item.productName : item.design.product.name;
-                const quantity = isCatalogItem ? item.quantity : item.design.quantity;
-                const minimumQuantity = item.minimumQuantity ?? 1;
-                const breakdown = isCatalogItem ? undefined : item.pricingBreakdown;
-                return (
-                  <article key={item.id} className="rounded-2xl border border-white bg-white/80 p-3 shadow-sm">
-                    <div className="flex gap-3">
-                      {preview ? <img src={preview} alt={`Diseño de ${productName}`} className="h-20 w-20 rounded-xl border border-violet-100 bg-violet-50 object-cover" /> : <div className="grid h-20 w-20 place-items-center rounded-xl bg-violet-50 text-violet-400"><Sparkles size={18} /></div>}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex gap-2">
-                          <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-700">{productName}</p>
-                          <button type="button" onClick={() => removeItem(item.id)} className="text-slate-400 transition hover:text-rose-500" aria-label="Eliminar producto"><Trash2 size={15} /></button>
-                        </div>
-                        <p className="mt-1 text-[11px] text-slate-400">{isCatalogItem ? 'Diseño base del catálogo' : 'Render personalizado · HD'}</p>
-                        {isCatalogItem && item.selectedOptions && item.selectedOptions.length > 0 && <div className="mt-1 space-y-0.5">{item.selectedOptions.map((option) => <p key={option.optionId} className="truncate text-[10px] text-slate-500">{option.optionName}: {option.valueLabel}</p>)}</div>}
-                        {isCatalogItem && item.selectedColors && item.selectedColors.length > 0 && <div className="mt-1 space-y-0.5">{item.selectedColors.map((part) => <p key={part.meshName} className="flex items-center gap-1.5 truncate text-[10px] text-slate-500"><span className="h-2.5 w-2.5 shrink-0 rounded-full border border-slate-200" style={{ backgroundColor: part.color }} />{part.label}</p>)}</div>}
-                        <div className="mt-3 flex items-center justify-between">
-                          <div className="inline-flex items-center rounded-lg border border-violet-100 bg-violet-50">
-                            <button type="button" disabled={quantity <= minimumQuantity} onClick={() => updateQuantity(item.id, quantity - 1)} className="p-1.5 text-slate-500 hover:text-violet-700 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Reducir cantidad"><Minus size={13} /></button>
-                            <span className="w-8 text-center text-xs font-semibold">{quantity}</span>
-                            <button type="button" onClick={() => updateQuantity(item.id, quantity + 1)} className="p-1.5 text-slate-500 hover:text-violet-700" aria-label="Aumentar cantidad"><Plus size={13} /></button>
-                          </div>
-                          <p className="text-sm font-semibold text-violet-600">{money(isCatalogItem ? item.totalPrice : item.totalPrice ?? item.price * quantity)}</p>
-                        </div>
-                        {minimumQuantity > 1 && <p className="mt-1 text-right text-[10px] text-slate-400">Mínimo {minimumQuantity} piezas</p>}
-                      </div>
-                    </div>
-                    {breakdown && (
-                      <details className="mt-3 border-t border-violet-100 pt-2.5">
-                        <summary className="cursor-pointer text-xs font-semibold text-violet-700">Ver desglose del precio</summary>
-                        <dl className="mt-2 space-y-1.5 text-[11px] text-slate-500">
-                          <div className="flex justify-between gap-3"><dt>Precio unitario base</dt><dd>{money(breakdown.unitBasePrice)}</dd></div>
-                          {breakdown.variantDelta !== 0 && <div className="flex justify-between gap-3"><dt>Variante</dt><dd>{breakdown.variantDelta > 0 ? '+' : ''}{money(breakdown.variantDelta)}</dd></div>}
-                          {breakdown.sidesCost > 0 && <div className="flex justify-between gap-3"><dt>{breakdown.fullWrapUsed ? 'Cobertura completa 360°' : 'Impresión en caras adicionales'}</dt><dd>+{money(breakdown.sidesCost)}</dd></div>}
-                          {breakdown.addonsCost > 0 && <div className="flex justify-between gap-3"><dt>Acabados y extras</dt><dd>+{money(breakdown.addonsCost)}</dd></div>}
-                          <div className="flex justify-between gap-3 border-t border-violet-50 pt-1.5"><dt>Subtotal unitario</dt><dd>{money(breakdown.unitSubtotal)}</dd></div>
-                          {breakdown.discountPercentage > 0 && <div className="flex justify-between gap-3 text-emerald-700"><dt>Descuento por volumen ({breakdown.discountPercentage}%)</dt><dd>−{money(breakdown.discountPerUnit * breakdown.quantity)}</dd></div>}
-                          <div className="flex justify-between gap-3"><dt>Precio unitario con descuento</dt><dd>{money(breakdown.discountedUnitPrice)}</dd></div>
-                          {breakdown.setupFee > 0 && <div className="flex justify-between gap-3"><dt>Cargo fijo de preparación</dt><dd>+{money(breakdown.setupFee)}</dd></div>}
-                          <div className="flex justify-between gap-3 border-t border-violet-100 pt-1.5 font-semibold text-slate-700"><dt>Total del pedido ({breakdown.quantity} pzas.)</dt><dd>{money(breakdown.grandTotal)}</dd></div>
-                        </dl>
-                      </details>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        {items.length === 0 ? <div className="flex flex-1 flex-col items-center justify-center px-6 text-center"><span className="grid h-16 w-16 place-items-center rounded-2xl bg-violet-100 text-violet-600"><ShoppingBag size={26} /></span><h3 className="mt-5 text-xl font-semibold text-slate-900">Tu carrito está vacío</h3><p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">Explora el catálogo para encontrar un producto o empieza a personalizar una pieza única.</p><Link href="/#catalogo" onClick={() => setIsOpen(false)} className="mt-6 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-violet-700">Explorar catálogo <ShoppingBag size={16} /></Link></div> : <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_350px] lg:grid-rows-1 xl:grid-cols-[minmax(0,1fr)_390px]">
+          <div className="min-h-0 overflow-y-auto px-4 py-4 sm:px-7 sm:py-6">
+            <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3.5 py-3 text-xs font-medium text-emerald-800"><CheckCircle2 size={16} className="shrink-0" /> Tu selección está lista para revisar.</div>
+            <div className="divide-y divide-slate-200">{items.map((item) => {
+              const isCatalogItem = item.kind === 'catalog';
+              const preview = isCatalogItem ? item.imageUrl : item.design.views[0]?.files.previewImage || item.design.views[0]?.preview;
+              const productName = isCatalogItem ? item.productName : item.design.product.name;
+              const quantity = isCatalogItem ? item.quantity : item.design.quantity;
+              const minimumQuantity = item.minimumQuantity ?? 1;
+              const lineTotal = isCatalogItem ? item.totalPrice : item.totalPrice ?? item.price * quantity;
+              const breakdown = isCatalogItem ? undefined : item.pricingBreakdown;
+              return <article key={item.id} className="py-5 first:pt-2 last:pb-2">
+                <div className="flex flex-col gap-4 sm:flex-row">
+                  {preview ? <img src={preview} alt={`Vista previa de ${productName}`} className="h-28 w-full rounded-xl border border-slate-100 bg-white object-contain p-2 sm:h-32 sm:w-36 sm:shrink-0" /> : <div className="grid h-28 w-full place-items-center rounded-xl bg-violet-50 text-violet-400 sm:h-32 sm:w-36 sm:shrink-0"><Sparkles size={24} /></div>}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start gap-3"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[.15em] text-violet-600">{isCatalogItem ? 'Producto del catálogo' : 'Diseño personalizado'}</p><h3 className="mt-1 text-base font-semibold leading-6 text-slate-900">{productName}</h3></div><button type="button" onClick={() => removeItem(item.id)} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600" aria-label={`Eliminar ${productName}`} title="Eliminar"><Trash2 size={16} /></button></div>
+                    {isCatalogItem && item.selectedOptions?.length ? <div className="mt-2 flex flex-wrap gap-1.5">{item.selectedOptions.map((option) => <span key={option.optionId} className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] text-slate-600">{option.optionName}: {option.valueLabel}</span>)}</div> : null}
+                    {isCatalogItem && item.selectedColors?.length ? <div className="mt-2 flex flex-wrap gap-2">{item.selectedColors.map((part) => <span key={part.meshName} className="inline-flex items-center gap-1.5 text-[11px] text-slate-500"><span className="h-3 w-3 rounded-full border border-slate-200" style={{ backgroundColor: part.color }} />{part.label}</span>)}</div> : null}
+                    <div className="mt-4 flex flex-wrap items-end justify-between gap-3"><div><p className="text-[11px] text-slate-500">Cantidad</p><div className="mt-1 inline-flex items-center rounded-lg border border-slate-200 bg-white"><button type="button" disabled={quantity <= minimumQuantity} onClick={() => updateQuantity(item.id, quantity - 1)} className="p-2 text-slate-500 hover:text-violet-700 disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Reducir cantidad de ${productName}`}><Minus size={14} /></button><span className="min-w-8 text-center text-sm font-semibold">{quantity}</span><button type="button" onClick={() => updateQuantity(item.id, quantity + 1)} className="p-2 text-slate-500 hover:text-violet-700" aria-label={`Aumentar cantidad de ${productName}`}><Plus size={14} /></button></div>{minimumQuantity > 1 && <p className="mt-1 text-[10px] text-slate-400">Mínimo {minimumQuantity} piezas</p>}</div><div className="text-right"><p className="text-[11px] text-slate-500">Total del artículo</p><p className="mt-1 text-lg font-semibold text-slate-900">{money(lineTotal)}</p></div></div>
+                    {breakdown && <details className="mt-3"><summary className="cursor-pointer text-xs font-medium text-violet-700">Ver desglose del precio</summary><dl className="mt-2 space-y-1 text-[11px] text-slate-500"><div className="flex justify-between gap-3"><dt>Precio base unitario</dt><dd>{money(breakdown.unitBasePrice)}</dd></div>{breakdown.variantDelta !== 0 && <div className="flex justify-between gap-3"><dt>Variante</dt><dd>{breakdown.variantDelta > 0 ? '+' : ''}{money(breakdown.variantDelta)}</dd></div>}{breakdown.sidesCost > 0 && <div className="flex justify-between gap-3"><dt>{breakdown.fullWrapUsed ? 'Cobertura completa 360°' : 'Caras adicionales'}</dt><dd>+{money(breakdown.sidesCost)}</dd></div>}{breakdown.addonsCost > 0 && <div className="flex justify-between gap-3"><dt>Acabados y extras</dt><dd>+{money(breakdown.addonsCost)}</dd></div>}{breakdown.discountPercentage > 0 && <div className="flex justify-between gap-3 text-emerald-700"><dt>Descuento por volumen ({breakdown.discountPercentage}%)</dt><dd>−{money(breakdown.discountPerUnit * breakdown.quantity)}</dd></div>}{breakdown.setupFee > 0 && <div className="flex justify-between gap-3"><dt>Preparación</dt><dd>+{money(breakdown.setupFee)}</dd></div>}<div className="flex justify-between gap-3 border-t border-slate-100 pt-1 font-semibold text-slate-700"><dt>Total del pedido</dt><dd>{money(breakdown.grandTotal)}</dd></div></dl></details>}
+                  </div>
+                </div>
+              </article>;
+            })}</div>
+            <Link href="/#catalogo" onClick={() => setIsOpen(false)} className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-violet-700 hover:text-violet-900">Seguir explorando <span aria-hidden="true">→</span></Link>
+          </div>
 
-        <footer className="border-t border-violet-100 bg-white/65 p-5">
-          <div className="mb-4 flex items-center gap-2 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2.5 text-xs text-violet-700"><Truck size={15} /><span><strong>Envío express gratis</strong> en pedidos superiores a $49.</span></div>
-          <div className="mb-4 flex items-center justify-between"><span className="text-sm text-slate-500">Total estimado</span><span className="text-xl font-semibold tracking-[-.04em] text-slate-800">{money(total)}</span></div>
-          <a href="/envio" className={`flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-500 px-4 py-3.5 text-sm font-bold text-white transition ${items.length ? 'hover:brightness-110 hover:shadow-lg hover:shadow-purple-200' : 'pointer-events-none opacity-40'}`}>Finalizar compra <LockKeyhole size={15} /></a>
-          <p className="mt-3 flex items-center justify-center gap-1.5 text-[10px] text-slate-400"><LockKeyhole size={11} /> Pago seguro y protegido</p>
-        </footer>
-      </aside>
+          <aside className="flex flex-col border-t border-slate-200 bg-white p-5 sm:p-7 lg:border-l lg:border-t-0">
+            <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-slate-400">Resumen</p><h3 className="mt-1 text-xl font-semibold text-slate-900">Tu pedido</h3></div>
+            <div className="mt-6 space-y-3 border-b border-slate-100 pb-5 text-sm"><div className="flex justify-between gap-4 text-slate-600"><span>Subtotal ({count} {count === 1 ? 'artículo' : 'artículos'})</span><span className="font-semibold text-slate-900">{money(total)}</span></div><div className="flex justify-between gap-4 text-slate-500"><span>Envío</span><span>Se calcula después</span></div></div>
+            <div className="mt-5 flex items-baseline justify-between gap-4"><span className="text-sm font-semibold text-slate-700">Total estimado</span><span className="text-2xl font-bold tracking-tight text-slate-900">{money(total)}</span></div><p className="mt-2 text-xs leading-5 text-slate-500">El envío y cualquier costo adicional se mostrarán antes de confirmar.</p>
+            <div className="mt-6 rounded-xl border border-violet-100 bg-violet-50/70 p-3.5"><p className="text-xs font-semibold text-violet-900">Compra como invitado</p><p className="mt-1 text-xs leading-5 text-violet-800/80">No necesitas crear un perfil para continuar con tu compra.</p></div>
+            <a href="/envio" className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white transition hover:brightness-110">Continuar <ArrowRight size={15} /></a>
+            <p className="mt-3 text-center text-[10px] leading-4 text-slate-400">Los métodos de pago se mostrarán cuando estén configurados.</p>
+          </aside>
+        </div>}
+      </section>
     </div>
   );
 }
